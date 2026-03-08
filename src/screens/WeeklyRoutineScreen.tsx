@@ -65,12 +65,23 @@ export function WeeklyRoutineScreen() {
           renderItem={({ item }) => {
             const projTasks = tasks.filter((t) => t.project === item.name && !t.completed);
             return (
-              <View style={[styles.projectCard, { backgroundColor: c.card, borderColor: c.border }]}>
+              <TouchableOpacity
+                style={[styles.projectCard, { backgroundColor: c.card, borderColor: c.border }]}
+                onPress={() => navigation.navigate('ProjectDetail', { projectId: item.id })}
+              >
                 <Text style={[styles.projectName, { color: c.text }]}>{item.name}</Text>
                 <Text style={[styles.projCount, { color: c.textSecondary }]}>
                   {projTasks.length} активных задач
                 </Text>
-              </View>
+                {projTasks.slice(0, 3).map((t) => (
+                  <Text key={t.id} style={[styles.projTaskPreview, { color: c.textSecondary }]} numberOfLines={1}>
+                    • {t.action}
+                  </Text>
+                ))}
+                {projTasks.length > 3 && (
+                  <Text style={[styles.projTaskPreview, { color: c.textSecondary }]}>...ещё {projTasks.length - 3}</Text>
+                )}
+              </TouchableOpacity>
             );
           }}
           ListEmptyComponent={<Text style={[styles.emptyMsg, { color: c.textSecondary }]}>Нет текущих проектов</Text>}
@@ -131,9 +142,12 @@ export function WeeklyRoutineScreen() {
           data={futureProjects}
           keyExtractor={(p) => p.id}
           renderItem={({ item }) => (
-            <View style={[styles.projectCard, { backgroundColor: c.card, borderColor: c.border }]}>
+            <TouchableOpacity
+              style={[styles.projectCard, { backgroundColor: c.card, borderColor: c.border }]}
+              onPress={() => navigation.navigate('ProjectDetail', { projectId: item.id })}
+            >
               <Text style={[styles.projectName, { color: c.textSecondary }]}>{item.name}</Text>
-            </View>
+            </TouchableOpacity>
           )}
           ListEmptyComponent={<Text style={[styles.emptyMsg, { color: c.textSecondary }]}>Нет ЯЯ-проектов</Text>}
         />
@@ -196,6 +210,7 @@ const styles = StyleSheet.create({
   projectCard: { padding: 14, borderRadius: 10, borderWidth: 1, marginHorizontal: 16, marginBottom: 8 },
   projectName: { fontSize: 16, fontWeight: '700' },
   projCount: { fontSize: 13, marginTop: 4 },
+  projTaskPreview: { fontSize: 12, marginTop: 2 },
   emptyMsg: { textAlign: 'center', paddingVertical: 40, fontSize: 15 },
   maybeRow: { flexDirection: 'row', alignItems: 'center' },
   maybeActions: { marginRight: 16, gap: 6 },

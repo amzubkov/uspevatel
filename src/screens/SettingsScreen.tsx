@@ -11,7 +11,7 @@ import { useRoutineStore } from '../store/routineStore';
 import { Task, SyncConflict } from '../types';
 
 const APPS_SCRIPT_CODE = `var SHEET_NAME = 'Tasks';
-var HEADERS = ['id','subject','action','category','contextCategory','project','notes','startDate','priority','isRecurring','completed','completedAt','createdAt','updatedAt','reminderAt'];
+var HEADERS = ['id','subject','action','category','contextCategory','project','notes','startDate','priority','isRecurring','recurDays','completed','completedAt','deadline','createdAt','updatedAt','reminderAt'];
 var ROUTINE_SHEET = 'Routine';
 var ROUTINE_HEADERS = ['date','itemId','title','completed'];
 
@@ -49,7 +49,6 @@ function doGet() {
     for (var j = 0; j < headers.length; j++) {
       var val = row[j], key = headers[j];
       if (key === 'isRecurring' || key === 'completed') obj[key] = val === true || val === 'true' || val === 'TRUE';
-      else if (key === 'priority') obj[key] = Number(val) || 0;
       else obj[key] = val === '' ? '' : String(val);
     }
     tasks.push(obj);
@@ -90,7 +89,7 @@ function doPost(e) {
   }
   for (var u = 0; u < upsert.length; u++) {
     var task = upsert[u], rowValues = [];
-    for (var h = 0; h < HEADERS.length; h++) { var val = task[HEADERS[h]]; if (val === null || val === undefined) val = ''; if (typeof val === 'boolean') val = String(val); rowValues.push(val); }
+    for (var h = 0; h < HEADERS.length; h++) { var val = task[HEADERS[h]]; if (val === null || val === undefined) val = ''; if (typeof val === 'boolean') val = String(val); if (Array.isArray(val)) val = JSON.stringify(val); rowValues.push(val); }
     var existing = idRowMap[String(task.id)];
     if (existing) sheet.getRange(existing,1,1,HEADERS.length).setValues([rowValues]);
     else sheet.appendRow(rowValues);

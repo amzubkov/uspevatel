@@ -23,7 +23,7 @@ export function QuickAddBar({ onAdd, placeholder = 'Быстрое добавл�
   return (
     <View style={[styles.container, { backgroundColor: c.card, borderColor: c.border }]}>
       <TextInput
-        style={[styles.input, { color: c.text }]}
+        style={[styles.input, { color: c.text, backgroundColor: c.background, borderColor: c.border }]}
         placeholder={placeholder}
         placeholderTextColor={c.textSecondary}
         value={text}
@@ -31,7 +31,11 @@ export function QuickAddBar({ onAdd, placeholder = 'Быстрое добавл�
         onSubmitEditing={handleAdd}
         returnKeyType="done"
       />
-      <TouchableOpacity style={[styles.button, { backgroundColor: c.primary }]} onPress={handleAdd}>
+      <TouchableOpacity
+        style={[styles.button, { backgroundColor: c.primary, opacity: text.trim() ? 1 : 0.4 }]}
+        onPress={handleAdd}
+        disabled={!text.trim()}
+      >
         <Text style={styles.buttonText}>+</Text>
       </TouchableOpacity>
     </View>
@@ -41,17 +45,19 @@ export function QuickAddBar({ onAdd, placeholder = 'Быстрое добавл�
 const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
-    padding: 8,
-    borderTopWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     alignItems: 'center',
+    gap: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  input: { flex: 1, fontSize: 15, paddingHorizontal: 12, paddingVertical: 8 },
+  input: { flex: 1, fontSize: 13, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderRadius: 6 },
   button: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  buttonText: { color: '#FFF', fontSize: 24, fontWeight: '600', marginTop: -2 },
+  buttonText: { color: '#FFF', fontSize: 18, fontWeight: '600', marginTop: -1 },
 });

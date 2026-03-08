@@ -14,6 +14,7 @@ export interface Task {
   recurDays?: number[]; // [1,3,5] = Mon,Wed,Fri
   completed: boolean;
   completedAt?: string;
+  deadline?: string; // ISO string
   createdAt: string;
   updatedAt: string;
   reminderAt?: string; // ISO string for scheduled notification
@@ -60,11 +61,11 @@ export interface Settings {
 }
 
 export const CATEGORY_LABELS: Record<Category, string> = {
-  IN: '***IN',
-  DAY: '**DAY',
-  LATER: '**LATER',
-  CONTROL: '*CONTROL',
-  MAYBE: '>>MAYBE',
+  IN: 'In',
+  DAY: 'Day',
+  LATER: 'Later',
+  CONTROL: 'Control',
+  MAYBE: 'MAYBE',
 };
 
 export const CATEGORY_SHORT: Record<Category, string> = {

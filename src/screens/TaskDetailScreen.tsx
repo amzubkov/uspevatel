@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Platform, FlatList } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Modal, FlatList } from 'react-native';
 import { useTaskStore } from '../store/taskStore';
 import { useProjectStore } from '../store/projectStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -21,6 +21,7 @@ export function TaskDetailScreen() {
   const completeTask = useTaskStore((s) => s.completeTask);
   const uncompleteTask = useTaskStore((s) => s.uncompleteTask);
   const projects = useProjectStore((s) => s.projects);
+  const addProject = useProjectStore((s) => s.addProject);
   const contextCategories = useSettingsStore((s) => s.contextCategories);
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
@@ -29,10 +30,18 @@ export function TaskDetailScreen() {
   const [action, setAction] = useState(task?.action || '');
   const [notes, setNotes] = useState(task?.notes || '');
   const [category, setCategory] = useState<Category>(task?.category || 'IN');
+  const [priority, setPriority] = useState<'high' | 'normal' | 'low'>(task?.priority || 'normal');
   const [project, setProject] = useState<string | undefined>(task?.project);
   const [contextCategory, setContextCategory] = useState<string | undefined>(task?.contextCategory);
+  const [deadline, setDeadline] = useState<string | undefined>(task?.deadline);
   const [showSubjectList, setShowSubjectList] = useState(false);
   const [showProjectList, setShowProjectList] = useState(false);
+  const [showCustomReminder, setShowCustomReminder] = useState(false);
+  const [showDeadlinePicker, setShowDeadlinePicker] = useState(false);
+  const [customDeadlineDate, setCustomDeadlineDate] = useState('');
+  const [customDeadlineTime, setCustomDeadlineTime] = useState('');
+  const [customDate, setCustomDate] = useState('');
+  const [customTime, setCustomTime] = useState('');
   const deletedRef = useRef(false);
 
   // Unique subjects from all tasks
@@ -56,11 +65,12 @@ export function TaskDetailScreen() {
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', () => {
       if (!deletedRef.current && task) {
-        updateTask(taskId, { subject, action, notes, category, project: project || undefined, contextCategory: contextCategory || undefined });
+        ensureProjectExists(project);
+        updateTask(taskId, { subject, action, notes, category, priority, project: project || undefined, contextCategory: contextCategory || undefined, deadline: deadline || undefined });
       }
     });
     return unsubscribe;
-  }, [navigation, taskId, subject, action, notes, category, project]);
+  }, [navigation, taskId, subject, action, notes, category, project, contextCategory, deadline]);
 
   if (!task) {
     return (
@@ -70,25 +80,37 @@ export function TaskDetailScreen() {
     );
   }
 
+  const ensureProjectExists = (name: string | undefined) => {
+    if (!name?.trim()) return;
+    const exists = projects.some((p) => p.name.toLowerCase() === name.trim().toLowerCase());
+    if (!exists) addProject(name.trim());
+  };
+
   const handleSave = () => {
-    updateTask(taskId, { subject, action, notes, category, project: project || undefined, contextCategory: contextCategory || undefined });
+    deletedRef.current = true;
+    ensureProjectExists(project);
+    updateTask(taskId, { subject, action, notes, category, priority, project: project || undefined, contextCategory: contextCategory || undefined, deadline: deadline || undefined });
+    navigation.goBack();
+  };
+
+  const doDelete = async () => {
+    deletedRef.current = true;
+    await cancelTaskReminder(taskId);
+    deleteTask(taskId);
     navigation.goBack();
   };
 
   const handleDelete = () => {
-    Alert.alert('Удалить задачу?', 'Это действие нельзя отменить', [
-      { text: 'Отмена', style: 'cancel' },
-      {
-        text: 'Удалить',
-        style: 'destructive',
-        onPress: async () => {
-          deletedRef.current = true;
-          await cancelTaskReminder(taskId);
-          deleteTask(taskId);
-          navigation.goBack();
-        },
-      },
-    ]);
+    if (typeof window !== 'undefined' && window.confirm) {
+      if (window.confirm('Удалить задачу? Это действие нельзя отменить')) {
+        doDelete();
+      }
+    } else {
+      Alert.alert('Удалить задачу?', 'Это действие нельзя отменить', [
+        { text: 'Отмена', style: 'cancel' },
+        { text: 'Удалить', style: 'destructive', onPress: doDelete },
+      ]);
+    }
   };
 
   const handleSetReminder = (minutes: number, label: string) => {
@@ -103,35 +125,36 @@ export function TaskDetailScreen() {
     });
   };
 
-  const handleSetReminderExact = () => {
-    Alert.prompt(
-      '🔔 Точное время',
-      'Введите время в формате ЧЧ:ММ (например 14:30)',
-      [
-        { text: 'Отмена', style: 'cancel' },
-        {
-          text: 'OK',
-          onPress: (input: string | undefined) => {
-            if (!input) return;
-            const match = input.match(/^(\d{1,2}):(\d{2})$/);
-            if (!match) { Alert.alert('Ошибка', 'Формат: ЧЧ:ММ'); return; }
-            const h = parseInt(match[1], 10);
-            const m = parseInt(match[2], 10);
-            if (h > 23 || m > 59) { Alert.alert('Ошибка', 'Неверное время'); return; }
-            const target = new Date();
-            target.setHours(h, m, 0, 0);
-            if (target <= new Date()) target.setDate(target.getDate() + 1);
-            scheduleTaskReminder(taskId, task.action, target).then((id) => {
-              if (id) {
-                updateTask(taskId, { reminderAt: target.toISOString() });
-                Alert.alert('🔔 Напоминание', `Установлено на ${h}:${String(m).padStart(2, '0')}`);
-              }
-            });
-          },
-        },
-      ],
-      'plain-text',
-    );
+  const openCustomReminder = () => {
+    const now = new Date();
+    const dd = String(now.getDate()).padStart(2, '0');
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    setCustomDate(`${dd}.${mm}.${yyyy}`);
+    setCustomTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+    setShowCustomReminder(true);
+  };
+
+  const handleCustomReminderSave = () => {
+    const dateMatch = customDate.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    const timeMatch = customTime.match(/^(\d{1,2}):(\d{2})$/);
+    if (!dateMatch) { Alert.alert('Ошибка', 'Формат даты: ДД.ММ.ГГГГ'); return; }
+    if (!timeMatch) { Alert.alert('Ошибка', 'Формат времени: ЧЧ:ММ'); return; }
+    const day = parseInt(dateMatch[1], 10);
+    const month = parseInt(dateMatch[2], 10) - 1;
+    const year = parseInt(dateMatch[3], 10);
+    const h = parseInt(timeMatch[1], 10);
+    const m = parseInt(timeMatch[2], 10);
+    if (h > 23 || m > 59) { Alert.alert('Ошибка', 'Неверное время'); return; }
+    const target = new Date(year, month, day, h, m, 0, 0);
+    if (target <= new Date()) { Alert.alert('Ошибка', 'Дата должна быть в будущем'); return; }
+    setShowCustomReminder(false);
+    scheduleTaskReminder(taskId, task.action, target).then((id) => {
+      if (id) {
+        updateTask(taskId, { reminderAt: target.toISOString() });
+        Alert.alert('🔔', `${customDate} ${customTime}`);
+      }
+    });
   };
 
   const handleCancelReminder = async () => {
@@ -142,6 +165,9 @@ export function TaskDetailScreen() {
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: c.background }]} keyboardShouldPersistTaps="handled">
+      <Text style={[styles.createdDate, { color: c.textSecondary }]}>
+        {new Date(task.createdAt).toLocaleDateString('ru-RU')}
+      </Text>
       {/* Человек с автодополнением */}
       <Text style={[styles.label, { color: c.textSecondary }]}>👤 Человек</Text>
       <TextInput
@@ -217,7 +243,7 @@ export function TaskDetailScreen() {
           <Text style={[styles.label, { color: c.textSecondary }]}>🏷 Контекст</Text>
           <View style={styles.chips}>
             <TouchableOpacity
-              style={[styles.chip, !contextCategory && { backgroundColor: c.border }]}
+              style={[styles.chip, { backgroundColor: !contextCategory ? c.border : c.card, borderWidth: 1, borderColor: c.border }]}
               onPress={() => setContextCategory(undefined)}
             >
               <Text style={[styles.chipText, { color: c.text }]}>Нет</Text>
@@ -225,7 +251,7 @@ export function TaskDetailScreen() {
             {contextCategories.map((ctx) => (
               <TouchableOpacity
                 key={ctx}
-                style={[styles.chip, contextCategory === ctx && { backgroundColor: c.warning }]}
+                style={[styles.chip, { backgroundColor: contextCategory === ctx ? c.warning : c.card, borderWidth: 1, borderColor: c.border }]}
                 onPress={() => setContextCategory(ctx)}
               >
                 <Text style={[styles.chipText, { color: contextCategory === ctx ? '#FFF' : c.text }]}>\{ctx}</Text>
@@ -241,7 +267,7 @@ export function TaskDetailScreen() {
         {CATEGORIES.map((cat) => (
           <TouchableOpacity
             key={cat}
-            style={[styles.chip, category === cat && { backgroundColor: c.primary }]}
+            style={[styles.chip, { backgroundColor: category === cat ? c.primary : c.card, borderWidth: 1, borderColor: c.border }]}
             onPress={() => setCategory(cat)}
           >
             <Text style={[styles.chipText, { color: category === cat ? '#FFF' : c.text }]}>
@@ -251,11 +277,25 @@ export function TaskDetailScreen() {
         ))}
       </View>
 
-      <View style={[styles.infoRow, { borderColor: c.border }]}>
-        <Text style={[styles.infoLabel, { color: c.textSecondary }]}>Создано</Text>
-        <Text style={[styles.infoValue, { color: c.text }]}>
-          {new Date(task.createdAt).toLocaleDateString('ru-RU')}
-        </Text>
+      {/* Приоритет */}
+      <Text style={[styles.label, { color: c.textSecondary }]}>Приоритет</Text>
+      <View style={styles.chips}>
+        {(['high', 'normal', 'low'] as const).map((p) => (
+          <TouchableOpacity
+            key={p}
+            style={[styles.chip, {
+              backgroundColor: priority === p
+                ? (p === 'high' ? '#DC2626' : p === 'normal' ? '#16A34A' : '#EAB308')
+                : c.card,
+              borderWidth: 1, borderColor: c.border,
+            }]}
+            onPress={() => setPriority(p)}
+          >
+            <Text style={[styles.chipText, { color: priority === p ? '#FFF' : c.text }]}>
+              {p === 'high' ? 'Высокий' : p === 'normal' ? 'Обычный' : 'Низкий'}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
       {task.completedAt && (
@@ -267,12 +307,63 @@ export function TaskDetailScreen() {
         </View>
       )}
 
+      {/* Дедлайн */}
+      <Text style={[styles.label, { color: c.textSecondary }]}>Дедлайн</Text>
+      {deadline ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Text style={{ color: c.text, fontSize: 15 }}>
+            ⏳ {new Date(deadline).toLocaleString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          </Text>
+          <TouchableOpacity onPress={() => setDeadline(undefined)}>
+            <Text style={{ color: c.danger, fontSize: 14, fontWeight: '600' }}>Убрать</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={styles.reminderOptions}>
+          <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => {
+            const d = new Date(); d.setHours(23, 59, 0, 0);
+            setDeadline(d.toISOString());
+          }}>
+            <Text style={[styles.reminderChipText, { color: c.text }]}>Сегодня</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => {
+            const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(23, 59, 0, 0);
+            setDeadline(d.toISOString());
+          }}>
+            <Text style={[styles.reminderChipText, { color: c.text }]}>Завтра</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => {
+            const d = new Date(); d.setDate(d.getDate() + 2); d.setHours(23, 59, 0, 0);
+            setDeadline(d.toISOString());
+          }}>
+            <Text style={[styles.reminderChipText, { color: c.text }]}>Послезавтра</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => {
+            const now = new Date();
+            setCustomDeadlineDate(`${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}.${now.getFullYear()}`);
+            setCustomDeadlineTime('23:59');
+            setShowDeadlinePicker(true);
+          }}>
+            <Text style={[styles.reminderChipText, { color: c.text }]}>Кастом</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Заметки */}
       <Text style={[styles.label, { color: c.textSecondary }]}>Заметки</Text>
       <TextInput
         style={[styles.input, styles.textArea, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
         value={notes}
         onChangeText={setNotes}
+        onFocus={() => {
+          const today = new Date().toLocaleDateString('ru-RU');
+          if (notes.startsWith(today)) return;
+          if (notes.trim()) {
+            setNotes(today + '\n' + notes);
+          } else {
+            setNotes(today + ' ');
+          }
+        }}
         multiline
         numberOfLines={4}
       />
@@ -299,21 +390,19 @@ export function TaskDetailScreen() {
           <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => {
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
-            tomorrow.setHours(9, 0, 0, 0);
+            tomorrow.setHours(10, 0, 0, 0);
             scheduleTaskReminder(taskId, task.action, tomorrow).then((id) => {
               if (id) {
                 updateTask(taskId, { reminderAt: tomorrow.toISOString() });
-                Alert.alert('🔔', 'Завтра 9:00');
+                Alert.alert('🔔', 'Завтра 10:00');
               }
             });
           }}>
             <Text style={[styles.reminderChipText, { color: c.text }]}>📅 Завтра</Text>
           </TouchableOpacity>
-          {Platform.OS === 'ios' && (
-            <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={handleSetReminderExact}>
-              <Text style={[styles.reminderChipText, { color: c.text }]}>🕐 Точное</Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={openCustomReminder}>
+            <Text style={[styles.reminderChipText, { color: c.text }]}>🕐 Кастом</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -337,12 +426,95 @@ export function TaskDetailScreen() {
       <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete}>
         <Text style={[styles.deleteBtnText, { color: c.danger }]}>Удалить задачу</Text>
       </TouchableOpacity>
+
+      <Modal visible={showDeadlinePicker} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalBox, { backgroundColor: c.card }]}>
+            <Text style={[styles.modalTitle, { color: c.text }]}>Дедлайн</Text>
+            <Text style={[styles.modalLabel, { color: c.textSecondary }]}>Дата (ДД.ММ.ГГГГ)</Text>
+            <TextInput
+              style={[styles.modalInput, { color: c.text, backgroundColor: c.background, borderColor: c.border }]}
+              value={customDeadlineDate}
+              onChangeText={setCustomDeadlineDate}
+              placeholder="01.03.2026"
+              placeholderTextColor={c.textSecondary}
+              keyboardType="numeric"
+            />
+            <Text style={[styles.modalLabel, { color: c.textSecondary }]}>Время (ЧЧ:ММ)</Text>
+            <TextInput
+              style={[styles.modalInput, { color: c.text, backgroundColor: c.background, borderColor: c.border }]}
+              value={customDeadlineTime}
+              onChangeText={setCustomDeadlineTime}
+              placeholder="23:59"
+              placeholderTextColor={c.textSecondary}
+              keyboardType="numeric"
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: c.border }]} onPress={() => setShowDeadlinePicker(false)}>
+                <Text style={[styles.modalBtnText, { color: c.text }]}>Отмена</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: c.primary }]} onPress={() => {
+                const dateMatch = customDeadlineDate.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+                const timeMatch = customDeadlineTime.match(/^(\d{1,2}):(\d{2})$/);
+                if (!dateMatch) { Alert.alert('Ошибка', 'Формат даты: ДД.ММ.ГГГГ'); return; }
+                if (!timeMatch) { Alert.alert('Ошибка', 'Формат времени: ЧЧ:ММ'); return; }
+                const target = new Date(
+                  parseInt(dateMatch[3], 10),
+                  parseInt(dateMatch[2], 10) - 1,
+                  parseInt(dateMatch[1], 10),
+                  parseInt(timeMatch[1], 10),
+                  parseInt(timeMatch[2], 10), 0, 0
+                );
+                setDeadline(target.toISOString());
+                setShowDeadlinePicker(false);
+              }}>
+                <Text style={styles.modalBtnText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showCustomReminder} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalBox, { backgroundColor: c.card }]}>
+            <Text style={[styles.modalTitle, { color: c.text }]}>Напоминание</Text>
+            <Text style={[styles.modalLabel, { color: c.textSecondary }]}>Дата (ДД.ММ.ГГГГ)</Text>
+            <TextInput
+              style={[styles.modalInput, { color: c.text, backgroundColor: c.background, borderColor: c.border }]}
+              value={customDate}
+              onChangeText={setCustomDate}
+              placeholder="01.03.2026"
+              placeholderTextColor={c.textSecondary}
+              keyboardType="numeric"
+            />
+            <Text style={[styles.modalLabel, { color: c.textSecondary }]}>Время (ЧЧ:ММ)</Text>
+            <TextInput
+              style={[styles.modalInput, { color: c.text, backgroundColor: c.background, borderColor: c.border }]}
+              value={customTime}
+              onChangeText={setCustomTime}
+              placeholder="14:30"
+              placeholderTextColor={c.textSecondary}
+              keyboardType="numeric"
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: c.border }]} onPress={() => setShowCustomReminder(false)}>
+                <Text style={[styles.modalBtnText, { color: c.text }]}>Отмена</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: c.primary }]} onPress={handleCustomReminderSave}>
+                <Text style={styles.modalBtnText}>Установить</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
+  createdDate: { fontSize: 11, textAlign: 'right', marginBottom: -8 },
   label: { fontSize: 13, fontWeight: '600', marginTop: 16, marginBottom: 6 },
   input: { borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 15 },
   textArea: { minHeight: 80, textAlignVertical: 'top' },
@@ -361,7 +533,7 @@ const styles = StyleSheet.create({
   },
   dropdownText: { fontSize: 14, fontWeight: '500' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#E5E7EB' },
+  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
   chipText: { fontSize: 13, fontWeight: '600' },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, marginTop: 8 },
   infoLabel: { fontSize: 14 },
@@ -378,4 +550,12 @@ const styles = StyleSheet.create({
   actionBtnText: { color: '#FFF', fontSize: 16, fontWeight: '600' },
   deleteBtn: { marginTop: 16, marginBottom: 40, paddingVertical: 14, alignItems: 'center' },
   deleteBtnText: { fontSize: 16, fontWeight: '600' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalBox: { width: '100%', borderRadius: 12, padding: 20 },
+  modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
+  modalLabel: { fontSize: 13, fontWeight: '600', marginBottom: 4, marginTop: 8 },
+  modalInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
+  modalActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
+  modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
+  modalBtnText: { color: '#FFF', fontSize: 15, fontWeight: '600' },
 });

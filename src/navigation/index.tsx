@@ -22,6 +22,8 @@ import { StatsScreen } from '../screens/StatsScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { SubjectTasksScreen } from '../screens/SubjectTasksScreen';
 import { RoutineScreen } from '../screens/RoutineScreen';
+import { AllScreen } from '../screens/AllScreen';
+import { CheckScreen } from '../screens/CheckScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -83,10 +85,19 @@ function CategoryTabs() {
   return (
     <Tab.Navigator screenOptions={screenOptions} initialRouteName="DAY">
       <Tab.Screen
+        name="IN"
+        component={InboxScreen}
+        options={{
+          title: 'In',
+          tabBarIcon: ({ color }) => <TabEmoji emoji="📥" color={color} />,
+          headerRight: renderHeaderRight,
+        }}
+      />
+      <Tab.Screen
         name="DAY"
         component={DayScreen}
         options={{
-          title: '**DAY',
+          title: 'Day',
           tabBarIcon: ({ color }) => <TabEmoji emoji="☀️" color={color} />,
           headerRight: renderHeaderRight,
         }}
@@ -95,17 +106,8 @@ function CategoryTabs() {
         name="ROUTINE"
         component={RoutineScreen}
         options={{
-          title: 'ROUTINE',
+          title: 'Routine',
           tabBarIcon: ({ color }) => <TabEmoji emoji="🔄" color={color} />,
-          headerRight: renderHeaderRight,
-        }}
-      />
-      <Tab.Screen
-        name="IN"
-        component={InboxScreen}
-        options={{
-          title: '***IN',
-          tabBarIcon: ({ color }) => <TabEmoji emoji="📥" color={color} />,
           headerRight: renderHeaderRight,
         }}
       />
@@ -113,7 +115,7 @@ function CategoryTabs() {
         name="LATER"
         component={LaterScreen}
         options={{
-          title: '**LATER',
+          title: 'Later',
           tabBarIcon: ({ color }) => <TabEmoji emoji="📋" color={color} />,
           headerRight: renderHeaderRight,
         }}
@@ -122,7 +124,7 @@ function CategoryTabs() {
         name="CTRL"
         component={ControlScreen}
         options={{
-          title: '*CONTROL',
+          title: 'Control',
           tabBarIcon: ({ color }) => <TabEmoji emoji="👁" color={color} />,
           headerRight: renderHeaderRight,
         }}
@@ -131,8 +133,26 @@ function CategoryTabs() {
         name="MAYBE"
         component={MaybeScreen}
         options={{
-          title: '>>MAYBE',
+          title: 'MAYBE',
           tabBarIcon: ({ color }) => <TabEmoji emoji="💭" color={color} />,
+          headerRight: renderHeaderRight,
+        }}
+      />
+      <Tab.Screen
+        name="CHECK"
+        component={CheckScreen}
+        options={{
+          title: 'Check',
+          tabBarIcon: ({ color }) => <TabEmoji emoji="✅" color={color} />,
+          headerRight: renderHeaderRight,
+        }}
+      />
+      <Tab.Screen
+        name="ALL"
+        component={AllScreen}
+        options={{
+          title: 'All',
+          tabBarIcon: ({ color }) => <TabEmoji emoji="📑" color={color} />,
           headerRight: renderHeaderRight,
         }}
       />

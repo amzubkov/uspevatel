@@ -1,8 +1,12 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { Task, CATEGORY_LABELS } from '../types';
+import { Task, Category } from '../types';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
+
+const CATEGORY_EMOJI: Record<Category, string> = {
+  IN: '📥', DAY: '☀️', LATER: '📋', CONTROL: '👁', MAYBE: '💭',
+};
 
 interface Props {
   task: Task;
@@ -33,26 +37,13 @@ export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPre
         <View style={styles.content}>
           <View style={styles.topRow}>
             <Text style={[styles.action, { color: c.text, fontSize }, task.completed && styles.completedText]} numberOfLines={2}>
-              {task.action}
+              {showCategory ? CATEGORY_EMOJI[task.category] : ''}{task.deadline ? <Text style={{ color: c.danger }}>{new Date(task.deadline).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }).replace(/\./g, '')}</Text> : null}{task.project ? <Text style={{ color: c.primary }}>{task.project} </Text> : null}{task.subject ? <Text style={{ color: c.textSecondary }}>{task.subject} </Text> : null}{task.action}
             </Text>
             {task.priority === 'high' && <View style={[styles.priorityDot, { backgroundColor: c.danger }]} />}
           </View>
           <View style={styles.tags}>
-            {task.subject ? (
-              <TouchableOpacity onPress={() => onSubjectPress?.(task.subject)} disabled={!onSubjectPress}>
-                <Text style={[styles.tagInline, { color: c.primary, fontSize: smallFont }]}>👤{task.subject}</Text>
-              </TouchableOpacity>
-            ) : null}
-            {task.project && (
-              <TouchableOpacity onPress={() => onProjectPress?.(task.project!)} disabled={!onProjectPress}>
-                <Text style={[styles.tagInline, { color: c.primary, fontSize: smallFont, backgroundColor: c.primaryLight, paddingHorizontal: 4, borderRadius: 3 }]}>{task.project}</Text>
-              </TouchableOpacity>
-            )}
             {task.contextCategory && (
               <Text style={[styles.tagInline, { color: c.warning, fontSize: smallFont }]}>\{task.contextCategory}</Text>
-            )}
-            {showCategory && (
-              <Text style={[styles.tagInline, { color: c.textSecondary, fontSize: smallFont }]}>{CATEGORY_LABELS[task.category]}</Text>
             )}
             {task.reminderAt && (
               <Text style={[styles.tagInline, { color: c.warning, fontSize: smallFont }]}>

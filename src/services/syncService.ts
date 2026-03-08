@@ -3,18 +3,39 @@ import { RoutineItem } from '../store/routineStore';
 
 const TASK_FIELDS: (keyof Task)[] = [
   'id', 'subject', 'action', 'category', 'contextCategory', 'project',
-  'notes', 'startDate', 'priority', 'isRecurring', 'completed',
-  'completedAt', 'createdAt', 'updatedAt', 'reminderAt',
+  'notes', 'startDate', 'priority', 'isRecurring', 'recurDays', 'completed',
+  'completedAt', 'deadline', 'createdAt', 'updatedAt', 'reminderAt',
 ];
 
+async function gasFetch(url: string, options?: RequestInit): Promise<string> {
+  // Simple approach: let browser handle redirects
+  const res = await fetch(url, { ...options, redirect: 'follow' });
+  const text = await res.text();
+  console.log('[SYNC]', options?.method || 'GET', 'status:', res.status, 'body:', text.substring(0, 500));
+  return extractJson(text, res.status);
+}
+
+function extractJson(text: string, status: number): string {
+  const trimmed = text.trim();
+  // Clean JSON
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return trimmed;
+  // Google XSSI prefix like )]}'\n or )]}';\n
+  const xssiClean = trimmed.replace(/^\)\]\}['";,\s]*/, '').trim();
+  if (xssiClean.startsWith('{') || xssiClean.startsWith('[')) return xssiClean;
+  // Try to extract JSON from HTML
+  const match = trimmed.match(/(\{[^<]*\}|\[[^<]*\])/);
+  if (match) return match[0];
+  throw new Error(`Not JSON (status ${status}): ${trimmed.substring(0, 300)}`);
+}
+
 export async function fetchRemoteTasks(url: string): Promise<Task[]> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-  }
-  const data = await res.json();
+  const text = await gasFetch(url);
+  const data = JSON.parse(text);
   if (!Array.isArray(data)) {
-    throw new Error('Expected array of tasks from remote');
+    if (data && Array.isArray(data.tasks)) return data.tasks.map(normalizeRemoteTask);
+    // Empty object {} means empty sheet — treat as no tasks
+    if (data && typeof data === 'object' && Object.keys(data).length === 0) return [];
+    throw new Error(`Expected array, got: ${text.substring(0, 300)}`);
   }
   return data.map(normalizeRemoteTask);
 }
@@ -24,15 +45,11 @@ export async function pushChanges(
   upsert: Task[],
   deleteIds: string[]
 ): Promise<void> {
-  const res = await fetch(url, {
+  await gasFetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({ upsert, deleteIds }),
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Push failed: ${res.status} ${text}`);
-  }
 }
 
 export function computeSync(
@@ -101,15 +118,11 @@ export async function pushRoutineLog(
     completed: completedToday[item.id] === dateStr,
   }));
 
-  const res = await fetch(url, {
+  await gasFetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({ routineLog: entries }),
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Routine push failed: ${res.status} ${text}`);
-  }
 }
 
 function findDiffFields(a: Task, b: Task): string[] {
@@ -141,9 +154,14 @@ function normalizeRemoteTask(raw: Record<string, unknown>): Task {
       ? String(raw.priority)
       : 'normal') as Task['priority'],
     isRecurring: raw.isRecurring === true || raw.isRecurring === 'true',
-    recurDays: Array.isArray(raw.recurDays) ? raw.recurDays as number[] : undefined,
+    recurDays: Array.isArray(raw.recurDays)
+      ? raw.recurDays as number[]
+      : typeof raw.recurDays === 'string' && raw.recurDays
+        ? JSON.parse(raw.recurDays as string)
+        : undefined,
     completed: raw.completed === true || raw.completed === 'true',
     completedAt: raw.completedAt ? String(raw.completedAt) : undefined,
+    deadline: raw.deadline ? String(raw.deadline) : undefined,
     createdAt: String(raw.createdAt ?? new Date().toISOString()),
     updatedAt: String(raw.updatedAt ?? new Date().toISOString()),
     reminderAt: raw.reminderAt ? String(raw.reminderAt) : undefined,

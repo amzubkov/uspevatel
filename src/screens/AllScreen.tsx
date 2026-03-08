@@ -5,17 +5,12 @@ import { useSettingsStore } from '../store/settingsStore';
 import { useProjectStore } from '../store/projectStore';
 import { colors } from '../utils/theme';
 import { TaskCard } from '../components/TaskCard';
-import { SwipeableTask } from '../components/SwipeableTask';
-import { QuickAddBar } from '../components/QuickAddBar';
 import { SearchBar } from '../components/SearchBar';
-import { FilterBar, applyFilters, sortByPriorityDeadline } from '../components/FilterBar';
+import { FilterBar, applyFilters, hideOldCompleted, sortByPriorityDeadline } from '../components/FilterBar';
 import { useNavigation } from '@react-navigation/native';
 
-export function MaybeScreen() {
+export function AllScreen() {
   const allTasks = useTaskStore((s) => s.tasks);
-  const addTask = useTaskStore((s) => s.addTask);
-  const moveTask = useTaskStore((s) => s.moveTask);
-  const deleteTask = useTaskStore((s) => s.deleteTask);
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
   const navigation = useNavigation<any>();
@@ -25,10 +20,8 @@ export function MaybeScreen() {
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
 
-  const categoryTasks = useMemo(() => allTasks.filter((t) => t.category === 'MAYBE' && !t.completed), [allTasks]);
-
   const tasks = useMemo(() => {
-    let filtered = applyFilters(categoryTasks, deadlineFilter, projectFilter, subjectFilter);
+    let filtered = applyFilters(hideOldCompleted(allTasks), deadlineFilter, projectFilter, subjectFilter);
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter(
@@ -36,11 +29,12 @@ export function MaybeScreen() {
           t.action.toLowerCase().includes(q) ||
           t.subject.toLowerCase().includes(q) ||
           (t.project || '').toLowerCase().includes(q) ||
-          t.notes.toLowerCase().includes(q)
+          t.notes.toLowerCase().includes(q) ||
+          t.category.toLowerCase().includes(q)
       );
     }
     return sortByPriorityDeadline(filtered);
-  }, [categoryTasks, searchQuery, deadlineFilter, projectFilter, subjectFilter]);
+  }, [allTasks, searchQuery, deadlineFilter, projectFilter, subjectFilter]);
 
   const navigateSubject = (subject: string) => navigation.navigate('SubjectTasks', { subject });
   const navigateProject = (projectName: string) => {
@@ -50,15 +44,11 @@ export function MaybeScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
-      <QuickAddBar
-        placeholder="Новая идея..."
-        onAdd={(action) => addTask({ subject: '', action, category: 'MAYBE', notes: '', priority: 'normal', isRecurring: false })}
-      />
       <SearchBar value={searchQuery} onChangeText={setSearchQuery} />
       {tasks.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={{ fontSize: 48 }}>💭</Text>
-          <Text style={[styles.emptyText, { color: c.textSecondary }]}>Нет идей и мечтаний</Text>
+          <Text style={{ fontSize: 48 }}>📋</Text>
+          <Text style={[styles.emptyText, { color: c.textSecondary }]}>Нет задач</Text>
         </View>
       ) : (
         <FlatList
@@ -66,27 +56,18 @@ export function MaybeScreen() {
           keyExtractor={(t) => t.id}
           renderItem={({ item, index }) => (
             <View style={{ backgroundColor: index % 2 === 1 ? (theme === 'dark' ? '#252525' : '#F0F0F0') : 'transparent' }}>
-              <SwipeableTask
-                rightActions={[
-                  { label: 'DAY', color: '#F59E0B', onPress: () => moveTask(item.id, 'DAY') },
-                  { label: 'LATER', color: '#3B82F6', onPress: () => moveTask(item.id, 'LATER') },
-                ]}
-                leftActions={[
-                  { label: 'Удалить', color: '#DC2626', onPress: () => deleteTask(item.id) },
-                ]}
-              >
-                <TaskCard
-                  task={item}
-                  onPress={() => navigation.navigate('TaskDetail', { taskId: item.id })}
-                  onSubjectPress={navigateSubject}
-                  onProjectPress={navigateProject}
-                />
-              </SwipeableTask>
+              <TaskCard
+                task={item}
+                onPress={() => navigation.navigate('TaskDetail', { taskId: item.id })}
+                onSubjectPress={navigateSubject}
+                onProjectPress={navigateProject}
+                showCategory
+              />
             </View>
           )}
         />
       )}
-      <FilterBar deadlineFilter={deadlineFilter} projectFilter={projectFilter} subjectFilter={subjectFilter} onDeadlineChange={setDeadlineFilter} onProjectChange={setProjectFilter} onSubjectChange={setSubjectFilter} tasks={categoryTasks} />
+      <FilterBar deadlineFilter={deadlineFilter} projectFilter={projectFilter} subjectFilter={subjectFilter} onDeadlineChange={setDeadlineFilter} onProjectChange={setProjectFilter} onSubjectChange={setSubjectFilter} tasks={allTasks} />
     </View>
   );
 }
