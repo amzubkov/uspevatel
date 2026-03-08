@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet, Alert } from 'react-native';
+import React, { useState, useMemo, useCallback } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
+import { QuickAddBar } from '../components/QuickAddBar';
 import { useRoutineStore, RoutineItem } from '../store/routineStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
@@ -7,8 +9,7 @@ import { colors } from '../utils/theme';
 export function RoutineScreen() {
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
-  const { items, addItem, removeItem, toggleComplete, isCompletedToday, getCompletedCount } = useRoutineStore();
-  const [newTitle, setNewTitle] = useState('');
+  const { items, addItem, removeItem, toggleComplete, isCompletedToday, getCompletedCount, reorderItems } = useRoutineStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const updateItem = useRoutineStore((s) => s.updateItem);
@@ -17,12 +18,12 @@ export function RoutineScreen() {
   const totalCount = items.length;
   const progress = totalCount > 0 ? completedCount / totalCount : 0;
 
-  const handleAdd = () => {
-    const trimmed = newTitle.trim();
-    if (!trimmed) return;
-    addItem(trimmed);
-    setNewTitle('');
-  };
+  // Sort: uncompleted first (preserve order), completed at bottom
+  const sortedItems = useMemo(() => {
+    const uncompleted = items.filter((i) => !isCompletedToday(i.id));
+    const completed = items.filter((i) => isCompletedToday(i.id));
+    return [...uncompleted, ...completed];
+  }, [items, isCompletedToday]);
 
   const handleRemove = (item: RoutineItem) => {
     Alert.alert('Удалить?', `"${item.title}"`, [
@@ -44,46 +45,64 @@ export function RoutineScreen() {
     setEditText('');
   };
 
-  const renderItem = ({ item, index }: { item: RoutineItem; index: number }) => {
+  const handleDragEnd = useCallback(({ data }: { data: RoutineItem[] }) => {
+    const reordered = data.map((item, index) => ({ ...item, order: index }));
+    reorderItems(reordered);
+  }, [reorderItems]);
+
+  const renderItem = useCallback(({ item, drag, isActive, getIndex }: RenderItemParams<RoutineItem>) => {
     const done = isCompletedToday(item.id);
-    const isEditing = editingId === item.id;
+    const index = getIndex() ?? 0;
     const bgColor = index % 2 === 1 ? (theme === 'dark' ? '#252525' : '#F0F0F0') : 'transparent';
 
     return (
-      <View style={[styles.row, { backgroundColor: bgColor }]}>
+      <ScaleDecorator>
         <TouchableOpacity
-          style={[styles.checkbox, { borderColor: done ? c.success : c.border, backgroundColor: done ? c.success : 'transparent' }]}
-          onPress={() => toggleComplete(item.id)}
+          activeOpacity={0.7}
+          onLongPress={drag}
+          disabled={isActive}
+          style={[styles.row, { backgroundColor: isActive ? (theme === 'dark' ? '#333' : '#E0E0E0') : bgColor }]}
         >
-          {done && <Text style={styles.checkmark}>✓</Text>}
-        </TouchableOpacity>
-
-        {isEditing ? (
-          <TextInput
-            style={[styles.editInput, { color: c.text, borderColor: c.border, backgroundColor: c.card }]}
-            value={editText}
-            onChangeText={setEditText}
-            onSubmitEditing={saveEdit}
-            onBlur={saveEdit}
-            autoFocus
-          />
-        ) : (
-          <TouchableOpacity style={styles.titleArea} onLongPress={() => startEdit(item)}>
-            <Text style={[styles.title, { color: done ? c.textSecondary : c.text, textDecorationLine: done ? 'line-through' : 'none' }]}>
-              {item.title}
-            </Text>
+          <TouchableOpacity
+            style={[styles.checkbox, { borderColor: done ? c.success : c.border, backgroundColor: done ? c.success : 'transparent' }]}
+            onPress={() => toggleComplete(item.id)}
+          >
+            {done && <Text style={styles.checkmark}>✓</Text>}
           </TouchableOpacity>
-        )}
 
-        <TouchableOpacity onPress={() => handleRemove(item)} style={styles.deleteBtn}>
-          <Text style={{ color: c.danger, fontSize: 16 }}>✕</Text>
+          {editingId === item.id ? (
+            <TextInput
+              style={[styles.editInput, { color: c.text, borderColor: c.border, backgroundColor: c.card }]}
+              value={editText}
+              onChangeText={setEditText}
+              onSubmitEditing={saveEdit}
+              onBlur={saveEdit}
+              autoFocus
+            />
+          ) : (
+            <TouchableOpacity style={styles.titleArea} onLongPress={() => startEdit(item)}>
+              <Text style={[styles.title, { color: done ? c.textSecondary : c.text, textDecorationLine: done ? 'line-through' : 'none' }]}>
+                {item.title}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          <Text style={[styles.dragHandle, { color: c.textSecondary }]}>⠿</Text>
+
+          <TouchableOpacity onPress={() => handleRemove(item)} style={styles.deleteBtn}>
+            <Text style={{ color: c.danger, fontSize: 16 }}>✕</Text>
+          </TouchableOpacity>
         </TouchableOpacity>
-      </View>
+      </ScaleDecorator>
     );
-  };
+  }, [editingId, editText, theme, c, isCompletedToday, toggleComplete]);
 
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
+      <QuickAddBar
+        placeholder="Новая ежедневная задача..."
+        onAdd={(title) => addItem(title)}
+      />
       {/* Progress bar */}
       {totalCount > 0 && (
         <View style={styles.progressSection}>
@@ -96,11 +115,12 @@ export function RoutineScreen() {
         </View>
       )}
 
-      {/* List */}
-      <FlatList
-        data={items}
+      {/* Draggable List */}
+      <DraggableFlatList
+        data={sortedItems}
         keyExtractor={(i) => i.id}
         renderItem={renderItem}
+        onDragEnd={handleDragEnd}
         contentContainerStyle={items.length === 0 ? styles.emptyContainer : undefined}
         ListEmptyComponent={
           <View style={styles.empty}>
@@ -110,26 +130,6 @@ export function RoutineScreen() {
           </View>
         }
       />
-
-      {/* Add input */}
-      <View style={[styles.addRow, { backgroundColor: c.card, borderTopColor: c.border }]}>
-        <TextInput
-          style={[styles.addInput, { color: c.text, backgroundColor: c.background, borderColor: c.border }]}
-          value={newTitle}
-          onChangeText={setNewTitle}
-          placeholder="Новая ежедневная задача..."
-          placeholderTextColor={c.textSecondary}
-          onSubmitEditing={handleAdd}
-          returnKeyType="done"
-        />
-        <TouchableOpacity
-          style={[styles.addBtn, { backgroundColor: c.primary, opacity: newTitle.trim() ? 1 : 0.4 }]}
-          onPress={handleAdd}
-          disabled={!newTitle.trim()}
-        >
-          <Text style={styles.addBtnText}>+</Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
@@ -140,17 +140,14 @@ const styles = StyleSheet.create({
   progressBar: { height: 6, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 3 },
   progressText: { fontSize: 13, fontWeight: '600', marginTop: 6, textAlign: 'center' },
-  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 12 },
+  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 },
   checkbox: { width: 28, height: 28, borderRadius: 14, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   checkmark: { color: '#FFF', fontSize: 16, fontWeight: '700' },
   titleArea: { flex: 1 },
   title: { fontSize: 16 },
   editInput: { flex: 1, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, fontSize: 16 },
+  dragHandle: { fontSize: 20, paddingHorizontal: 4 },
   deleteBtn: { padding: 4 },
-  addRow: { flexDirection: 'row', padding: 12, gap: 8, borderTopWidth: 1 },
-  addInput: { flex: 1, borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15 },
-  addBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  addBtnText: { color: '#FFF', fontSize: 24, fontWeight: '600' },
   emptyContainer: { flex: 1 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { fontSize: 18, fontWeight: '600', marginTop: 12 },
