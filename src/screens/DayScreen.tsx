@@ -6,20 +6,28 @@ import { useProjectStore } from '../store/projectStore';
 import { colors } from '../utils/theme';
 import { TaskCard } from '../components/TaskCard';
 import { SwipeableTask } from '../components/SwipeableTask';
+import { QuickAddBar } from '../components/QuickAddBar';
 import { SearchBar } from '../components/SearchBar';
+import { FilterBar, applyFilters, hideOldCompleted, sortByPriorityDeadline } from '../components/FilterBar';
 import { useNavigation } from '@react-navigation/native';
 
 export function DayScreen() {
   const allTasks = useTaskStore((s) => s.tasks);
+  const addTask = useTaskStore((s) => s.addTask);
   const { completeTask, uncompleteTask, moveTask } = useTaskStore();
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
   const navigation = useNavigation<any>();
   const projects = useProjectStore((s) => s.projects);
   const [searchQuery, setSearchQuery] = useState('');
+  const [deadlineFilter, setDeadlineFilter] = useState<'all' | 'today'>('all');
+  const [projectFilter, setProjectFilter] = useState<string | null>(null);
+  const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
+
+  const categoryTasks = useMemo(() => hideOldCompleted(allTasks.filter((t) => t.category === 'DAY')), [allTasks]);
 
   const dayTasks = useMemo(() => {
-    let filtered = allTasks.filter((t) => t.category === 'DAY');
+    let filtered = applyFilters(categoryTasks, deadlineFilter, projectFilter, subjectFilter);
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter(
@@ -31,10 +39,10 @@ export function DayScreen() {
       );
     }
     return filtered;
-  }, [allTasks, searchQuery]);
+  }, [categoryTasks, searchQuery, deadlineFilter, projectFilter, subjectFilter]);
 
-  const urgent = dayTasks.filter((t) => t.startDate && !t.completed);
-  const normal = dayTasks.filter((t) => !t.startDate && !t.completed);
+  const urgent = sortByPriorityDeadline(dayTasks.filter((t) => t.startDate && !t.completed));
+  const normal = sortByPriorityDeadline(dayTasks.filter((t) => !t.startDate && !t.completed));
   const completed = dayTasks.filter((t) => t.completed);
 
   const sections = [
@@ -53,6 +61,10 @@ export function DayScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
+      <QuickAddBar
+        placeholder="Добавить в DAY..."
+        onAdd={(action) => addTask({ subject: '', action, category: 'DAY', notes: '', priority: 'normal', isRecurring: false })}
+      />
       <SearchBar value={searchQuery} onChangeText={setSearchQuery} />
       {sections.length === 0 ? (
         <View style={styles.empty}>
@@ -92,6 +104,7 @@ export function DayScreen() {
           }}
         />
       )}
+      <FilterBar deadlineFilter={deadlineFilter} projectFilter={projectFilter} subjectFilter={subjectFilter} onDeadlineChange={setDeadlineFilter} onProjectChange={setProjectFilter} onSubjectChange={setSubjectFilter} tasks={categoryTasks} />
     </View>
   );
 }
@@ -101,5 +114,5 @@ const styles = StyleSheet.create({
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { fontSize: 18, fontWeight: '600', marginTop: 12 },
   emptyHint: { fontSize: 14, marginTop: 4 },
-  sectionHeader: { fontSize: 13, fontWeight: '600', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4, textTransform: 'uppercase' },
+  sectionHeader: { fontSize: 12, fontWeight: '600', paddingHorizontal: 16, paddingTop: 8, paddingBottom: 2, textTransform: 'uppercase' },
 });
