@@ -5,9 +5,9 @@ import { useSettingsStore } from '../store/settingsStore';
 import { useProjectStore } from '../store/projectStore';
 import { colors } from '../utils/theme';
 import { TaskCard } from '../components/TaskCard';
-import { SwipeableTask } from '../components/SwipeableTask';
 import { QuickAddBar } from '../components/QuickAddBar';
 import { SearchBar } from '../components/SearchBar';
+import { FilterBar, applyFilters, sortByPriorityDeadline } from '../components/FilterBar';
 import { useNavigation } from '@react-navigation/native';
 
 export function InboxScreen() {
@@ -20,9 +20,14 @@ export function InboxScreen() {
   const navigation = useNavigation<any>();
   const projects = useProjectStore((s) => s.projects);
   const [searchQuery, setSearchQuery] = useState('');
+  const [deadlineFilter, setDeadlineFilter] = useState<'all' | 'today'>('all');
+  const [projectFilter, setProjectFilter] = useState<string | null>(null);
+  const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
+
+  const categoryTasks = useMemo(() => allTasks.filter((t) => t.category === 'IN' && !t.completed), [allTasks]);
 
   const tasks = useMemo(() => {
-    let filtered = allTasks.filter((t) => t.category === 'IN' && !t.completed);
+    let filtered = applyFilters(categoryTasks, deadlineFilter, projectFilter, subjectFilter);
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter(
@@ -33,8 +38,8 @@ export function InboxScreen() {
           t.notes.toLowerCase().includes(q)
       );
     }
-    return filtered;
-  }, [allTasks, searchQuery]);
+    return sortByPriorityDeadline(filtered);
+  }, [categoryTasks, searchQuery, deadlineFilter, projectFilter, subjectFilter]);
 
   const navigateSubject = (subject: string) => navigation.navigate('SubjectTasks', { subject });
   const navigateProject = (projectName: string) => {
@@ -60,27 +65,17 @@ export function InboxScreen() {
           keyExtractor={(t) => t.id}
           renderItem={({ item, index }) => (
             <View style={{ backgroundColor: index % 2 === 1 ? (theme === 'dark' ? '#252525' : '#F0F0F0') : 'transparent' }}>
-              <SwipeableTask
-                rightActions={[
-                  { label: 'DAY', color: '#F59E0B', onPress: () => moveTask(item.id, 'DAY') },
-                  { label: 'LATER', color: '#3B82F6', onPress: () => moveTask(item.id, 'LATER') },
-                  { label: 'CTRL', color: '#8B5CF6', onPress: () => moveTask(item.id, 'CONTROL') },
-                ]}
-                leftActions={[
-                  { label: 'Удалить', color: '#DC2626', onPress: () => deleteTask(item.id) },
-                ]}
-              >
-                <TaskCard
-                  task={item}
-                  onPress={() => navigation.navigate('TaskDetail', { taskId: item.id })}
-                  onSubjectPress={navigateSubject}
-                  onProjectPress={navigateProject}
-                />
-              </SwipeableTask>
+              <TaskCard
+                task={item}
+                onPress={() => navigation.navigate('TaskDetail', { taskId: item.id })}
+                onSubjectPress={navigateSubject}
+                onProjectPress={navigateProject}
+              />
             </View>
           )}
         />
       )}
+      <FilterBar deadlineFilter={deadlineFilter} projectFilter={projectFilter} subjectFilter={subjectFilter} onDeadlineChange={setDeadlineFilter} onProjectChange={setProjectFilter} onSubjectChange={setSubjectFilter} tasks={categoryTasks} />
     </View>
   );
 }
