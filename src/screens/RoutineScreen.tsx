@@ -121,7 +121,7 @@ export function RoutineScreen() {
         keyExtractor={(i) => i.id}
         renderItem={renderItem}
         onDragEnd={handleDragEnd}
-        contentContainerStyle={items.length === 0 ? styles.emptyContainer : undefined}
+        contentContainerStyle={items.length === 0 ? styles.emptyContainer : { paddingBottom: 80 }}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={{ fontSize: 48 }}>🔄</Text>
