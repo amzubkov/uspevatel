@@ -2,7 +2,7 @@
   "expo": {
     "name": "uspevatel-app",
     "slug": "uspevatel-app",
-    "version": "2.0.0",
+    "version": "4.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -22,7 +22,7 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "versionCode": 2,
+      "versionCode": 4,
       "predictiveBackGestureEnabled": false
     },
     "web": {
