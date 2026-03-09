@@ -25,6 +25,7 @@ import { RoutineScreen } from '../screens/RoutineScreen';
 import { AllScreen } from '../screens/AllScreen';
 import { CheckScreen } from '../screens/CheckScreen';
 import { SportScreen } from '../screens/SportScreen';
+import { ExerciseDetailScreen } from '../screens/ExerciseDetailScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -195,6 +196,7 @@ export function AppNavigator() {
         <Stack.Screen name="DailyRoutine" component={DailyRoutineScreen} options={{ title: 'Ежедневный регламент' }} />
         <Stack.Screen name="WeeklyRoutine" component={WeeklyRoutineScreen} options={{ title: 'Еженедельный обзор' }} />
         <Stack.Screen name="Sport" component={SportScreen} options={{ title: 'Спорт' }} />
+        <Stack.Screen name="ExerciseDetail" component={ExerciseDetailScreen} options={{ title: 'Упражнение' }} />
         <Stack.Screen name="Stats" component={StatsScreen} options={{ title: 'Статистика' }} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Настройки' }} />
       </Stack.Navigator>

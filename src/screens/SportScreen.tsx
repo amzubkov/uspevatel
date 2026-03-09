@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, ScrollView, StyleSheet, Alert } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSportStore, SportEntry } from '../store/sportStore';
+import { ExercisesScreen } from './ExercisesScreen';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
 
@@ -419,6 +420,14 @@ export function SportScreen() {
         options={{
           title: 'Вес',
           tabBarIcon: () => <Text style={{ fontSize: 18 }}>⚖️</Text>,
+        }}
+      />
+      <SportTab.Screen
+        name="Exercises"
+        component={ExercisesScreen}
+        options={{
+          title: 'Упражнения',
+          tabBarIcon: () => <Text style={{ fontSize: 18 }}>📋</Text>,
         }}
       />
       <SportTab.Screen
