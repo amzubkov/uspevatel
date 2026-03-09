@@ -40,9 +40,6 @@ const HeaderButtons = React.memo(function HeaderButtons() {
 
   return (
     <View style={hStyles.row}>
-      <TouchableOpacity style={hStyles.btn} onPress={() => navigation.navigate('AddTask')}>
-        <Text style={[hStyles.emoji, { color: c.primary }]}>➕</Text>
-      </TouchableOpacity>
       <TouchableOpacity style={hStyles.btn} onPress={() => navigation.navigate('DailyRoutine')}>
         <Text style={hStyles.emoji}>📅</Text>
       </TouchableOpacity>
