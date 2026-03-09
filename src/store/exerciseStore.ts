@@ -7,7 +7,8 @@ export interface Exercise {
   id: string;
   name: string;
   imageUri?: string; // local file URI
-  weightType: 'none' | 'dumbbells' | 'barbell'; // тип нагрузки
+  weightType: 'none' | 'dumbbells' | 'barbell';
+  tag?: string; // группа мышц
 }
 
 export interface ExerciseLog {
@@ -23,7 +24,7 @@ export interface ExerciseLog {
 interface ExerciseState {
   exercises: Exercise[];
   logs: ExerciseLog[];
-  addExercise: (name: string, weightType: Exercise['weightType'], imageUri?: string) => void;
+  addExercise: (name: string, weightType: Exercise['weightType'], imageUri?: string, tag?: string) => void;
   updateExercise: (id: string, updates: Partial<Pick<Exercise, 'name' | 'imageUri' | 'weightType'>>) => void;
   removeExercise: (id: string) => void;
   addLog: (exerciseId: string, weight: number, reps: number, sets: number) => void;
@@ -46,8 +47,8 @@ export const useExerciseStore = create<ExerciseState>()(
       exercises: [],
       logs: [],
 
-      addExercise: (name, weightType, imageUri) => {
-        const exercise: Exercise = { id: Crypto.randomUUID(), name, weightType, imageUri };
+      addExercise: (name, weightType, imageUri, tag) => {
+        const exercise: Exercise = { id: Crypto.randomUUID(), name, weightType, imageUri, ...(tag ? { tag } : {}) };
         set((s) => ({ exercises: [...s.exercises, exercise] }));
       },
 
