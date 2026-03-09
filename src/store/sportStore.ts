@@ -3,19 +3,18 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import * as Crypto from 'expo-crypto';
 import { zustandStorage } from '../utils/storage';
 
-export interface PullUpEntry {
+export interface SportEntry {
   id: string;
+  type: 'pullups' | 'abs';
   count: number;
   date: string; // YYYY-MM-DD
   time: string; // HH:MM
 }
 
 interface SportState {
-  pullUps: PullUpEntry[];
-  addPullUps: (count: number) => void;
-  removePullUp: (id: string) => void;
-  getTodayTotal: () => number;
-  getTodayEntries: () => PullUpEntry[];
+  entries: SportEntry[];
+  addEntry: (type: SportEntry['type'], count: number) => void;
+  removeEntry: (id: string) => void;
 }
 
 function todayStr(): string {
@@ -30,36 +29,38 @@ function nowTime(): string {
 
 export const useSportStore = create<SportState>()(
   persist(
-    (set, get) => ({
-      pullUps: [],
+    (set) => ({
+      entries: [],
 
-      addPullUps: (count) => {
-        const entry: PullUpEntry = {
+      addEntry: (type, count) => {
+        const entry: SportEntry = {
           id: Crypto.randomUUID(),
+          type,
           count,
           date: todayStr(),
           time: nowTime(),
         };
-        set((s) => ({ pullUps: [entry, ...s.pullUps] }));
+        set((s) => ({ entries: [entry, ...s.entries] }));
       },
 
-      removePullUp: (id) => {
-        set((s) => ({ pullUps: s.pullUps.filter((e) => e.id !== id) }));
-      },
-
-      getTodayTotal: () => {
-        const today = todayStr();
-        return get().pullUps.filter((e) => e.date === today).reduce((sum, e) => sum + e.count, 0);
-      },
-
-      getTodayEntries: () => {
-        const today = todayStr();
-        return get().pullUps.filter((e) => e.date === today);
+      removeEntry: (id) => {
+        set((s) => ({ entries: s.entries.filter((e) => e.id !== id) }));
       },
     }),
     {
       name: 'sport-storage',
       storage: createJSONStorage(() => zustandStorage),
+      migrate: (persisted: any) => {
+        // Migrate from old format (pullUps array) to new (entries array)
+        if (persisted && persisted.pullUps && !persisted.entries) {
+          return {
+            ...persisted,
+            entries: persisted.pullUps.map((e: any) => ({ ...e, type: 'pullups' })),
+          };
+        }
+        return persisted;
+      },
+      version: 1,
     }
   )
 );
