@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, FlatList, ScrollView, StyleSheet, Alert } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, FlatList, ScrollView, StyleSheet, Alert } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSportStore, SportEntry } from '../store/sportStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -114,6 +114,74 @@ function AbsTab() {
 
 function TricepsTab() {
   return <ExerciseTab type="triceps" unit="раз" quickCounts={[1, 5, 10, 20]} />;
+}
+
+function WeightTab() {
+  const theme = useSettingsStore((s) => s.theme);
+  const c = colors[theme];
+  const entries = useSportStore((s) => s.entries);
+  const addEntry = useSportStore((s) => s.addEntry);
+  const removeEntry = useSportStore((s) => s.removeEntry);
+  const today = useTodayStr();
+  const [weightInput, setWeightInput] = useState('');
+
+  const weightEntries = useMemo(() => entries.filter((e) => e.type === 'weight'), [entries]);
+  const todayWeight = useMemo(() => weightEntries.find((e) => e.date === today), [weightEntries, today]);
+  const last14 = useMemo(() => {
+    const seen = new Set<string>();
+    return weightEntries.filter((e) => { if (seen.has(e.date)) return false; seen.add(e.date); return true; }).slice(0, 14);
+  }, [weightEntries]);
+
+  const handleAdd = () => {
+    const val = parseFloat(weightInput.replace(',', '.'));
+    if (!val || val < 20 || val > 300) return;
+    addEntry('weight', val);
+    setWeightInput('');
+  };
+
+  return (
+    <View style={[styles.container, { backgroundColor: c.background }]}>
+      <View style={[styles.todayCard, { backgroundColor: c.card, borderColor: c.border }]}>
+        <Text style={[styles.todayLabel, { color: c.textSecondary }]}>Сегодня</Text>
+        <Text style={[styles.todayCount, { color: c.primary }]}>{todayWeight ? todayWeight.count : '—'}</Text>
+        <Text style={[styles.todayUnit, { color: c.textSecondary }]}>кг</Text>
+      </View>
+
+      <View style={[styles.weightInputRow]}>
+        <TextInput
+          style={[styles.weightInput, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
+          value={weightInput}
+          onChangeText={setWeightInput}
+          placeholder="Вес, кг"
+          placeholderTextColor={c.textSecondary}
+          keyboardType="decimal-pad"
+          onSubmitEditing={handleAdd}
+        />
+        <TouchableOpacity style={[styles.quickBtn, { backgroundColor: c.primary }]} onPress={handleAdd}>
+          <Text style={styles.quickBtnText}>✓</Text>
+        </TouchableOpacity>
+      </View>
+
+      <Text style={[styles.sectionTitle, { color: c.textSecondary }]}>История</Text>
+      <FlatList
+        data={last14}
+        keyExtractor={(e) => e.id}
+        renderItem={({ item, index }) => (
+          <TouchableOpacity
+            onLongPress={() => Alert.alert('Удалить?', `${item.count} кг`, [
+              { text: 'Отмена', style: 'cancel' },
+              { text: 'Удалить', style: 'destructive', onPress: () => removeEntry(item.id) },
+            ])}
+            style={[styles.entryRow, { backgroundColor: index % 2 === 1 ? (theme === 'dark' ? '#252525' : '#F0F0F0') : 'transparent' }]}
+          >
+            <Text style={[styles.entryTime, { color: c.textSecondary }]}>{item.date}</Text>
+            <Text style={[styles.entryCount, { color: c.text }]}>{item.count} кг</Text>
+          </TouchableOpacity>
+        )}
+        contentContainerStyle={{ paddingBottom: 80 }}
+      />
+    </View>
+  );
 }
 
 // ─── Run tab ───
@@ -346,6 +414,14 @@ export function SportScreen() {
         }}
       />
       <SportTab.Screen
+        name="Weight"
+        component={WeightTab}
+        options={{
+          title: 'Вес',
+          tabBarIcon: () => <Text style={{ fontSize: 18 }}>⚖️</Text>,
+        }}
+      />
+      <SportTab.Screen
         name="SportStats"
         component={StatsTab}
         options={{
@@ -375,6 +451,8 @@ const styles = StyleSheet.create({
   historyTotal: { fontSize: 14, fontWeight: '600' },
   runBtn: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   runBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
+  weightInputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 12, marginTop: 16, marginBottom: 16 },
+  weightInput: { flex: 1, borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, fontSize: 18 },
   statsHeader: { fontSize: 16, fontWeight: '700', marginBottom: 8 },
   statsRow: { flexDirection: 'row', gap: 8 },
   statCard: { flex: 1, alignItems: 'center', paddingVertical: 14, borderRadius: 10, borderWidth: 1 },
