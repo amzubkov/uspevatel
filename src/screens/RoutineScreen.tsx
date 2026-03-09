@@ -9,12 +9,24 @@ import { colors } from '../utils/theme';
 export function RoutineScreen() {
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
-  const { items, addItem, removeItem, toggleComplete, isCompletedToday, getCompletedCount, reorderItems } = useRoutineStore();
+  const items = useRoutineStore((s) => s.items);
+  const completedToday = useRoutineStore((s) => s.completedToday);
+  const addItem = useRoutineStore((s) => s.addItem);
+  const removeItem = useRoutineStore((s) => s.removeItem);
+  const toggleComplete = useRoutineStore((s) => s.toggleComplete);
+  const reorderItems = useRoutineStore((s) => s.reorderItems);
+  const updateItem = useRoutineStore((s) => s.updateItem);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
-  const updateItem = useRoutineStore((s) => s.updateItem);
 
-  const completedCount = getCompletedCount();
+  const today = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
+
+  const isCompletedToday = useCallback((id: string) => completedToday[id] === today, [completedToday, today]);
+
+  const completedCount = useMemo(() => Object.values(completedToday).filter((d) => d === today).length, [completedToday, today]);
   const totalCount = items.length;
   const progress = totalCount > 0 ? completedCount / totalCount : 0;
 
@@ -23,7 +35,7 @@ export function RoutineScreen() {
     const uncompleted = items.filter((i) => !isCompletedToday(i.id));
     const completed = items.filter((i) => isCompletedToday(i.id));
     return [...uncompleted, ...completed];
-  }, [items, isCompletedToday]);
+  }, [items, completedToday, isCompletedToday]);
 
   const handleRemove = (item: RoutineItem) => {
     Alert.alert('Удалить?', `"${item.title}"`, [
@@ -95,7 +107,7 @@ export function RoutineScreen() {
         </TouchableOpacity>
       </ScaleDecorator>
     );
-  }, [editingId, editText, theme, c, isCompletedToday, toggleComplete]);
+  }, [editingId, editText, theme, c, completedToday, isCompletedToday, toggleComplete]);
 
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
