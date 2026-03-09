@@ -55,9 +55,6 @@ const HeaderButtons = React.memo(function HeaderButtons() {
       <TouchableOpacity style={hStyles.btn} onPress={() => navigation.navigate('Projects')}>
         <Text style={hStyles.emoji}>📂</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={hStyles.btn} onPress={() => navigation.navigate('Stats')}>
-        <Text style={hStyles.emoji}>📈</Text>
-      </TouchableOpacity>
       <TouchableOpacity style={hStyles.btn} onPress={() => navigation.navigate('Settings')}>
         <Text style={hStyles.emoji}>⚙️</Text>
       </TouchableOpacity>

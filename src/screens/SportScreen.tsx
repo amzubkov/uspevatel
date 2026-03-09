@@ -112,6 +112,100 @@ function AbsTab() {
   return <ExerciseTab type="abs" unit="раз" quickCounts={[1, 5, 10, 20]} />;
 }
 
+// ─── Run tab ───
+const RUN_OPTIONS = [
+  { label: '⚽ Футбол', value: 'football' },
+  { label: '5 км', value: '5km' },
+  { label: '10 км', value: '10km' },
+  { label: '20 км', value: '20km' },
+];
+
+function RunTab() {
+  const theme = useSettingsStore((s) => s.theme);
+  const c = colors[theme];
+  const entries = useSportStore((s) => s.entries);
+  const addEntry = useSportStore((s) => s.addEntry);
+  const removeEntry = useSportStore((s) => s.removeEntry);
+  const today = useTodayStr();
+
+  const todayRuns = useMemo(() => entries.filter((e) => e.type === 'run' && e.date === today), [entries, today]);
+  const allRuns = useMemo(() => entries.filter((e) => e.type === 'run'), [entries]);
+
+  const groupedByDate = useMemo(() => {
+    const map = new Map<string, SportEntry[]>();
+    for (const e of allRuns) {
+      const arr = map.get(e.date) || [];
+      arr.push(e);
+      map.set(e.date, arr);
+    }
+    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [allRuns]);
+
+  const handleRemove = (entry: SportEntry) => {
+    Alert.alert('Удалить?', `${entry.label || 'бег'} в ${entry.time}`, [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: () => removeEntry(entry.id) },
+    ]);
+  };
+
+  return (
+    <View style={[styles.container, { backgroundColor: c.background }]}>
+      <View style={[styles.todayCard, { backgroundColor: c.card, borderColor: c.border }]}>
+        <Text style={[styles.todayLabel, { color: c.textSecondary }]}>Сегодня</Text>
+        <Text style={[styles.todayCount, { color: c.primary }]}>{todayRuns.length}</Text>
+        <Text style={[styles.todayUnit, { color: c.textSecondary }]}>тренировок</Text>
+      </View>
+
+      <View style={styles.quickRow}>
+        {RUN_OPTIONS.map((opt) => (
+          <TouchableOpacity
+            key={opt.value}
+            style={[styles.runBtn, { backgroundColor: c.primary }]}
+            onPress={() => addEntry('run', 1, opt.value)}
+          >
+            <Text style={styles.runBtnText}>{opt.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {todayRuns.length > 0 && (
+        <Text style={[styles.sectionTitle, { color: c.textSecondary }]}>Сегодня</Text>
+      )}
+      <FlatList
+        data={todayRuns}
+        keyExtractor={(e) => e.id}
+        renderItem={({ item, index }) => (
+          <TouchableOpacity
+            onLongPress={() => handleRemove(item)}
+            style={[styles.entryRow, { backgroundColor: index % 2 === 1 ? (theme === 'dark' ? '#252525' : '#F0F0F0') : 'transparent' }]}
+          >
+            <Text style={[styles.entryTime, { color: c.textSecondary }]}>{item.time}</Text>
+            <Text style={[styles.entryCount, { color: c.text }]}>
+              {RUN_OPTIONS.find((o) => o.value === item.label)?.label || item.label}
+            </Text>
+          </TouchableOpacity>
+        )}
+        contentContainerStyle={{ paddingBottom: 16 }}
+        ListFooterComponent={
+          groupedByDate.length > 1 ? (
+            <View style={{ marginTop: 16 }}>
+              <Text style={[styles.sectionTitle, { color: c.textSecondary }]}>История</Text>
+              {groupedByDate.filter(([date]) => date !== today).slice(0, 14).map(([date, dayEntries]) => (
+                <View key={date} style={[styles.historyRow, { borderColor: c.border }]}>
+                  <Text style={[styles.historyDate, { color: c.text }]}>{date}</Text>
+                  <Text style={[styles.historyTotal, { color: c.primary }]}>
+                    {dayEntries.map((e) => RUN_OPTIONS.find((o) => o.value === e.label)?.label || e.label).join(', ')}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null
+        }
+      />
+    </View>
+  );
+}
+
 // ─── Stats tab ───
 function StatsTab() {
   const theme = useSettingsStore((s) => s.theme);
@@ -121,24 +215,26 @@ function StatsTab() {
 
   const todayPullUps = useMemo(() => entries.filter((e) => e.type === 'pullups' && e.date === today).reduce((s, e) => s + e.count, 0), [entries, today]);
   const todayAbs = useMemo(() => entries.filter((e) => e.type === 'abs' && e.date === today).reduce((s, e) => s + e.count, 0), [entries, today]);
-  const todaySets = useMemo(() => entries.filter((e) => e.date === today).length, [entries, today]);
+  const todayRuns = useMemo(() => entries.filter((e) => e.type === 'run' && e.date === today).length, [entries, today]);
 
   // Last 7 days
   const last7 = useMemo(() => {
-    const days: { date: string; pullups: number; abs: number }[] = [];
+    const days: { date: string; pullups: number; abs: number; runs: number }[] = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const pullups = entries.filter((e) => e.type === 'pullups' && e.date === ds).reduce((s, e) => s + e.count, 0);
       const abs = entries.filter((e) => e.type === 'abs' && e.date === ds).reduce((s, e) => s + e.count, 0);
-      days.push({ date: ds, pullups, abs });
+      const runs = entries.filter((e) => e.type === 'run' && e.date === ds).length;
+      days.push({ date: ds, pullups, abs, runs });
     }
     return days;
   }, [entries]);
 
   const weekPullUps = last7.reduce((s, d) => s + d.pullups, 0);
   const weekAbs = last7.reduce((s, d) => s + d.abs, 0);
+  const weekRuns = last7.reduce((s, d) => s + d.runs, 0);
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: c.background }]} contentContainerStyle={{ padding: 12 }}>
@@ -146,15 +242,15 @@ function StatsTab() {
       <View style={styles.statsRow}>
         <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
           <Text style={[styles.statNum, { color: c.primary }]}>{todayPullUps}</Text>
-          <Text style={[styles.statLabel, { color: c.textSecondary }]}>подтягиваний</Text>
+          <Text style={[styles.statLabel, { color: c.textSecondary }]}>подтяг.</Text>
         </View>
         <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
           <Text style={[styles.statNum, { color: c.primary }]}>{todayAbs}</Text>
           <Text style={[styles.statLabel, { color: c.textSecondary }]}>пресс</Text>
         </View>
         <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
-          <Text style={[styles.statNum, { color: c.primary }]}>{todaySets}</Text>
-          <Text style={[styles.statLabel, { color: c.textSecondary }]}>подходов</Text>
+          <Text style={[styles.statNum, { color: c.primary }]}>{todayRuns}</Text>
+          <Text style={[styles.statLabel, { color: c.textSecondary }]}>бег</Text>
         </View>
       </View>
 
@@ -162,11 +258,15 @@ function StatsTab() {
       <View style={styles.statsRow}>
         <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
           <Text style={[styles.statNum, { color: c.primary }]}>{weekPullUps}</Text>
-          <Text style={[styles.statLabel, { color: c.textSecondary }]}>подтягиваний</Text>
+          <Text style={[styles.statLabel, { color: c.textSecondary }]}>подтяг.</Text>
         </View>
         <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
           <Text style={[styles.statNum, { color: c.primary }]}>{weekAbs}</Text>
           <Text style={[styles.statLabel, { color: c.textSecondary }]}>пресс</Text>
+        </View>
+        <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
+          <Text style={[styles.statNum, { color: c.primary }]}>{weekRuns}</Text>
+          <Text style={[styles.statLabel, { color: c.textSecondary }]}>бег</Text>
         </View>
       </View>
 
@@ -175,7 +275,8 @@ function StatsTab() {
         <View key={day.date} style={[styles.dayRow, { borderColor: c.border }]}>
           <Text style={[styles.dayDate, { color: c.text }]}>{day.date}</Text>
           <Text style={[styles.dayVal, { color: c.primary }]}>{day.pullups} подт.</Text>
-          <Text style={[styles.dayVal, { color: c.primary }]}>{day.abs} пресс</Text>
+          <Text style={[styles.dayVal, { color: c.primary }]}>{day.abs} пр.</Text>
+          <Text style={[styles.dayVal, { color: c.primary }]}>{day.runs > 0 ? `${day.runs} бег` : ''}</Text>
         </View>
       ))}
     </ScrollView>
@@ -214,6 +315,14 @@ export function SportScreen() {
         }}
       />
       <SportTab.Screen
+        name="Run"
+        component={RunTab}
+        options={{
+          title: 'Бег',
+          tabBarIcon: () => <Text style={{ fontSize: 18 }}>🏃</Text>,
+        }}
+      />
+      <SportTab.Screen
         name="SportStats"
         component={StatsTab}
         options={{
@@ -240,7 +349,9 @@ const styles = StyleSheet.create({
   entryCount: { fontSize: 15, fontWeight: '600' },
   historyRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 0.5 },
   historyDate: { fontSize: 14 },
-  historyTotal: { fontSize: 15, fontWeight: '700' },
+  historyTotal: { fontSize: 14, fontWeight: '600' },
+  runBtn: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  runBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
   statsHeader: { fontSize: 16, fontWeight: '700', marginBottom: 8 },
   statsRow: { flexDirection: 'row', gap: 8 },
   statCard: { flex: 1, alignItems: 'center', paddingVertical: 14, borderRadius: 10, borderWidth: 1 },

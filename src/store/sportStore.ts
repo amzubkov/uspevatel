@@ -5,7 +5,8 @@ import { zustandStorage } from '../utils/storage';
 
 export interface SportEntry {
   id: string;
-  type: 'pullups' | 'abs';
+  type: 'pullups' | 'abs' | 'run';
+  label?: string; // e.g. 'football', '5km', '10km', '20km'
   count: number;
   date: string; // YYYY-MM-DD
   time: string; // HH:MM
@@ -13,7 +14,7 @@ export interface SportEntry {
 
 interface SportState {
   entries: SportEntry[];
-  addEntry: (type: SportEntry['type'], count: number) => void;
+  addEntry: (type: SportEntry['type'], count: number, label?: string) => void;
   removeEntry: (id: string) => void;
 }
 
@@ -32,13 +33,14 @@ export const useSportStore = create<SportState>()(
     (set) => ({
       entries: [],
 
-      addEntry: (type, count) => {
+      addEntry: (type, count, label) => {
         const entry: SportEntry = {
           id: Crypto.randomUUID(),
           type,
           count,
           date: todayStr(),
           time: nowTime(),
+          ...(label ? { label } : {}),
         };
         set((s) => ({ entries: [entry, ...s.entries] }));
       },
