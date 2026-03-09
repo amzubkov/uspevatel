@@ -8,4 +8,7 @@ config.transformer = {
   unstable_allowRequireContext: true,
 };
 
+// Support GIF assets
+config.resolver.assetExts = [...(config.resolver.assetExts || []), 'gif'];
+
 module.exports = config;

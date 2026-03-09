@@ -1,10 +1,16 @@
 import 'react-native-gesture-handler';
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { AppNavigator } from './src/navigation';
 import { useSettingsStore } from './src/store/settingsStore';
+import { useTaskStore } from './src/store/taskStore';
+import { useProjectStore } from './src/store/projectStore';
+import { useRoutineStore } from './src/store/routineStore';
+import { useChecklistStore } from './src/store/checklistStore';
+import { useSportStore } from './src/store/sportStore';
+import { useExerciseStore } from './src/store/exerciseStore';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -23,13 +29,54 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
   }
 }
 
-export default function App() {
+function AppLoader() {
+  const [ready, setReady] = useState(false);
   const theme = useSettingsStore((s) => s.theme);
+  const loadSettings = useSettingsStore((s) => s.load);
+  const loadTasks = useTaskStore((s) => s.load);
+  const loadProjects = useProjectStore((s) => s.load);
+  const loadRoutines = useRoutineStore((s) => s.load);
+  const loadChecklist = useChecklistStore((s) => s.load);
+  const loadSport = useSportStore((s) => s.load);
+  const loadExercises = useExerciseStore((s) => s.load);
+
+  useEffect(() => {
+    (async () => {
+      // Settings first (theme needed for UI), then rest in parallel
+      await loadSettings();
+      await Promise.all([
+        loadTasks(),
+        loadProjects(),
+        loadRoutines(),
+        loadChecklist(),
+        loadSport(),
+        loadExercises(),
+      ]);
+      setReady(true);
+    })();
+  }, []);
+
+  if (!ready) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme === 'dark' ? '#1A1A1A' : '#FFF' }}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <AppNavigator />
+    </>
+  );
+}
+
+export default function App() {
   return (
     <ErrorBoundary>
       <GestureHandlerRootView style={{ flex: 1 }}>
-        <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        <AppNavigator />
+        <AppLoader />
       </GestureHandlerRootView>
     </ErrorBoundary>
   );

@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Modal, FlatList } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Modal, FlatList, Image } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { useTaskStore } from '../store/taskStore';
 import { useProjectStore } from '../store/projectStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -17,6 +18,8 @@ export function TaskDetailScreen() {
   const allTasks = useTaskStore((s) => s.tasks);
   const task = useMemo(() => allTasks.find((t) => t.id === taskId), [allTasks, taskId]);
   const updateTask = useTaskStore((s) => s.updateTask);
+  const addImageToTask = useTaskStore((s) => s.addImageToTask);
+  const removeImageFromTask = useTaskStore((s) => s.removeImageFromTask);
   const deleteTask = useTaskStore((s) => s.deleteTask);
   const completeTask = useTaskStore((s) => s.completeTask);
   const uncompleteTask = useTaskStore((s) => s.uncompleteTask);
@@ -368,6 +371,32 @@ export function TaskDetailScreen() {
         numberOfLines={4}
       />
 
+      {/* Фото */}
+      <Text style={[styles.label, { color: c.textSecondary }]}>Фото</Text>
+      {task.imageBase64 ? (
+        <View style={{ marginBottom: 12 }}>
+          <Image source={{ uri: task.imageBase64 }} style={{ width: '100%', height: 200, borderRadius: 8 }} resizeMode="cover" />
+          <TouchableOpacity style={{ position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, width: 24, height: 24, alignItems: 'center', justifyContent: 'center' }} onPress={() => removeImageFromTask(taskId)}>
+            <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700' }}>×</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+          <TouchableOpacity style={[styles.photoBtn, { borderColor: c.border }]} onPress={async () => {
+            const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
+            if (!r.canceled && r.assets[0]) addImageToTask(taskId, r.assets[0].uri);
+          }}>
+            <Text style={{ color: c.textSecondary, fontSize: 13 }}>Галерея</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.photoBtn, { borderColor: c.border }]} onPress={async () => {
+            const r = await ImagePicker.launchCameraAsync({ quality: 0.7 });
+            if (!r.canceled && r.assets[0]) addImageToTask(taskId, r.assets[0].uri);
+          }}>
+            <Text style={{ color: c.textSecondary, fontSize: 13 }}>Камера</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Напоминание */}
       <Text style={[styles.label, { color: c.textSecondary }]}>🔔 Напоминание</Text>
       {task.reminderAt ? (
@@ -538,6 +567,7 @@ const styles = StyleSheet.create({
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, marginTop: 8 },
   infoLabel: { fontSize: 14 },
   infoValue: { fontSize: 14, fontWeight: '500' },
+  photoBtn: { flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderStyle: 'dashed' as any, alignItems: 'center' },
   reminderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 },
   reminderText: { fontSize: 15, fontWeight: '500' },
   reminderBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },

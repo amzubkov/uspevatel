@@ -18,6 +18,7 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   reminderAt?: string; // ISO string for scheduled notification
+  imageBase64?: string; // base64 data URI from DB BLOB
 }
 
 export interface SyncConflict {
