@@ -112,6 +112,10 @@ function AbsTab() {
   return <ExerciseTab type="abs" unit="раз" quickCounts={[1, 5, 10, 20]} />;
 }
 
+function TricepsTab() {
+  return <ExerciseTab type="triceps" unit="раз" quickCounts={[1, 5, 10, 20]} />;
+}
+
 // ─── Run tab ───
 const RUN_OPTIONS = [
   { label: '⚽ Футбол', value: 'football' },
@@ -215,25 +219,28 @@ function StatsTab() {
 
   const todayPullUps = useMemo(() => entries.filter((e) => e.type === 'pullups' && e.date === today).reduce((s, e) => s + e.count, 0), [entries, today]);
   const todayAbs = useMemo(() => entries.filter((e) => e.type === 'abs' && e.date === today).reduce((s, e) => s + e.count, 0), [entries, today]);
+  const todayTriceps = useMemo(() => entries.filter((e) => e.type === 'triceps' && e.date === today).reduce((s, e) => s + e.count, 0), [entries, today]);
   const todayRuns = useMemo(() => entries.filter((e) => e.type === 'run' && e.date === today).length, [entries, today]);
 
   // Last 7 days
   const last7 = useMemo(() => {
-    const days: { date: string; pullups: number; abs: number; runs: number }[] = [];
+    const days: { date: string; pullups: number; abs: number; triceps: number; runs: number }[] = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const pullups = entries.filter((e) => e.type === 'pullups' && e.date === ds).reduce((s, e) => s + e.count, 0);
       const abs = entries.filter((e) => e.type === 'abs' && e.date === ds).reduce((s, e) => s + e.count, 0);
+      const triceps = entries.filter((e) => e.type === 'triceps' && e.date === ds).reduce((s, e) => s + e.count, 0);
       const runs = entries.filter((e) => e.type === 'run' && e.date === ds).length;
-      days.push({ date: ds, pullups, abs, runs });
+      days.push({ date: ds, pullups, abs, triceps, runs });
     }
     return days;
   }, [entries]);
 
   const weekPullUps = last7.reduce((s, d) => s + d.pullups, 0);
   const weekAbs = last7.reduce((s, d) => s + d.abs, 0);
+  const weekTriceps = last7.reduce((s, d) => s + d.triceps, 0);
   const weekRuns = last7.reduce((s, d) => s + d.runs, 0);
 
   return (
@@ -247,6 +254,10 @@ function StatsTab() {
         <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
           <Text style={[styles.statNum, { color: c.primary }]}>{todayAbs}</Text>
           <Text style={[styles.statLabel, { color: c.textSecondary }]}>пресс</Text>
+        </View>
+        <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
+          <Text style={[styles.statNum, { color: c.primary }]}>{todayTriceps}</Text>
+          <Text style={[styles.statLabel, { color: c.textSecondary }]}>трицепс</Text>
         </View>
         <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
           <Text style={[styles.statNum, { color: c.primary }]}>{todayRuns}</Text>
@@ -265,6 +276,10 @@ function StatsTab() {
           <Text style={[styles.statLabel, { color: c.textSecondary }]}>пресс</Text>
         </View>
         <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
+          <Text style={[styles.statNum, { color: c.primary }]}>{weekTriceps}</Text>
+          <Text style={[styles.statLabel, { color: c.textSecondary }]}>трицепс</Text>
+        </View>
+        <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
           <Text style={[styles.statNum, { color: c.primary }]}>{weekRuns}</Text>
           <Text style={[styles.statLabel, { color: c.textSecondary }]}>бег</Text>
         </View>
@@ -276,7 +291,7 @@ function StatsTab() {
           <Text style={[styles.dayDate, { color: c.text }]}>{day.date}</Text>
           <Text style={[styles.dayVal, { color: c.primary }]}>{day.pullups} подт.</Text>
           <Text style={[styles.dayVal, { color: c.primary }]}>{day.abs} пр.</Text>
-          <Text style={[styles.dayVal, { color: c.primary }]}>{day.runs > 0 ? `${day.runs} бег` : ''}</Text>
+          <Text style={[styles.dayVal, { color: c.primary }]}>{day.triceps} тр.</Text>
         </View>
       ))}
     </ScrollView>
@@ -312,6 +327,14 @@ export function SportScreen() {
         options={{
           title: 'Пресс',
           tabBarIcon: () => <Text style={{ fontSize: 18 }}>🔥</Text>,
+        }}
+      />
+      <SportTab.Screen
+        name="Triceps"
+        component={TricepsTab}
+        options={{
+          title: 'Трицепс',
+          tabBarIcon: () => <Text style={{ fontSize: 18 }}>💪</Text>,
         }}
       />
       <SportTab.Screen

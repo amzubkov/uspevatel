@@ -5,7 +5,7 @@ import { zustandStorage } from '../utils/storage';
 
 export interface SportEntry {
   id: string;
-  type: 'pullups' | 'abs' | 'run';
+  type: 'pullups' | 'abs' | 'triceps' | 'run';
   label?: string; // e.g. 'football', '5km', '10km', '20km'
   count: number;
   date: string; // YYYY-MM-DD
