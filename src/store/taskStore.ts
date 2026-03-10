@@ -49,10 +49,33 @@ function rowToTask(r: any): Task {
   };
 }
 
-function blobToBase64(data: Uint8Array): string {
+function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = '';
-  for (let i = 0; i < data.length; i++) binary += String.fromCharCode(data[i]);
-  return `data:image/jpeg;base64,${btoa(binary)}`;
+  const len = bytes.length;
+  for (let i = 0; i < len; i++) binary += String.fromCharCode(bytes[i]);
+  // Use global btoa if available (modern Hermes), otherwise manual encode
+  if (typeof btoa === 'function') return btoa(binary);
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = '';
+  for (let i = 0; i < binary.length; i += 3) {
+    const a = binary.charCodeAt(i);
+    const b = i + 1 < binary.length ? binary.charCodeAt(i + 1) : 0;
+    const c2 = i + 2 < binary.length ? binary.charCodeAt(i + 2) : 0;
+    result += chars[a >> 2] + chars[((a & 3) << 4) | (b >> 4)];
+    result += i + 1 < binary.length ? chars[((b & 15) << 2) | (c2 >> 6)] : '=';
+    result += i + 2 < binary.length ? chars[c2 & 63] : '=';
+  }
+  return result;
+}
+
+function toUint8Array(data: Uint8Array | ArrayBuffer): Uint8Array {
+  if (data instanceof Uint8Array) return data;
+  return new Uint8Array(data);
+}
+
+function blobToBase64(data: Uint8Array | ArrayBuffer): string {
+  const bytes = toUint8Array(data);
+  return `data:image/jpeg;base64,${uint8ArrayToBase64(bytes)}`;
 }
 
 function rowToWeekStats(r: any): WeekStats {
@@ -166,14 +189,30 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
   addImageToTask: async (id, imageUri) => {
     try {
       const b64 = await FileSystem.readAsStringAsync(imageUri, { encoding: 'base64' });
-      const binary = atob(b64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      // Decode base64 to bytes for BLOB storage
+      const raw = b64.replace(/[^A-Za-z0-9+/]/g, '');
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+      const lookup = new Uint8Array(128);
+      for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
+      const byteLen = (raw.length * 3) >> 2;
+      const bytes = new Uint8Array(byteLen);
+      let p = 0;
+      for (let i = 0; i < raw.length; i += 4) {
+        const a = lookup[raw.charCodeAt(i)];
+        const b2 = lookup[raw.charCodeAt(i + 1)];
+        const c = i + 2 < raw.length ? lookup[raw.charCodeAt(i + 2)] : 0;
+        const d = i + 3 < raw.length ? lookup[raw.charCodeAt(i + 3)] : 0;
+        bytes[p++] = (a << 2) | (b2 >> 4);
+        if (i + 2 < raw.length) bytes[p++] = ((b2 & 15) << 4) | (c >> 2);
+        if (i + 3 < raw.length) bytes[p++] = ((c & 3) << 6) | d;
+      }
       const dataUri = `data:image/jpeg;base64,${b64}`;
       set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, imageBase64: dataUri } : t) }));
       const db = await getDb();
       await db.runAsync('UPDATE tasks SET image_data = ? WHERE id = ?', [bytes, id]);
-    } catch {}
+    } catch (e) {
+      console.error('addImageToTask error:', e);
+    }
   },
 
   removeImageFromTask: async (id) => {

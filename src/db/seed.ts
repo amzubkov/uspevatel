@@ -14,9 +14,23 @@ async function loadImageBlob(exerciseId: number): Promise<Uint8Array | null> {
     await resolved.downloadAsync();
     if (!resolved.localUri) return null;
     const base64 = await FileSystem.readAsStringAsync(resolved.localUri, { encoding: 'base64' });
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    // Decode base64 to bytes without atob (may not exist in Hermes)
+    const raw = base64.replace(/[^A-Za-z0-9+/]/g, '');
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const lookup = new Uint8Array(128);
+    for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
+    const byteLen = (raw.length * 3) >> 2;
+    const bytes = new Uint8Array(byteLen);
+    let p = 0;
+    for (let i = 0; i < raw.length; i += 4) {
+      const a = lookup[raw.charCodeAt(i)];
+      const b = lookup[raw.charCodeAt(i + 1)];
+      const c = i + 2 < raw.length ? lookup[raw.charCodeAt(i + 2)] : 0;
+      const d = i + 3 < raw.length ? lookup[raw.charCodeAt(i + 3)] : 0;
+      bytes[p++] = (a << 2) | (b >> 4);
+      if (i + 2 < raw.length) bytes[p++] = ((b & 15) << 4) | (c >> 2);
+      if (i + 3 < raw.length) bytes[p++] = ((c & 3) << 6) | d;
+    }
     return bytes;
   } catch {
     return null;
