@@ -12,7 +12,6 @@ import {
   Clipboard,
   Platform,
   Linking,
-  PermissionsAndroid,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as LegacyFS from "expo-file-system/legacy";
@@ -30,11 +29,9 @@ import { SyncConflictModal } from "../components/SyncConflictModal";
 import { useRoutineStore } from "../store/routineStore";
 import { Task, SyncConflict } from "../types";
 import {
+  describeSyncFolder,
   getSyncFolder,
   setSyncFolder,
-  closeDb,
-  getDb,
-  copyDataToSyncFolder,
 } from "../db/database";
 
 const APPS_SCRIPT_CODE = `var SHEET_NAME = 'Tasks';
@@ -152,80 +149,31 @@ export function SettingsScreen() {
   const routineCompleted = useRoutineStore((s) => s.completedToday);
 
   // Sync folder
-  const [syncFolderInput, setSyncFolderInput] = useState(getSyncFolder() || "");
+  const initialSyncFolder = getSyncFolder();
+  const [selectedSyncFolder, setSelectedSyncFolder] = useState(
+    initialSyncFolder || "",
+  );
+  const [syncFolderInput, setSyncFolderInput] = useState(
+    describeSyncFolder(initialSyncFolder) || "",
+  );
   const [syncFolderStatus, setSyncFolderStatus] = useState<string | null>(null);
 
-  const normalizeAndroidDirectoryPath = useCallback((value: string): string => {
-    const cleaned = value
-      .trim()
-      .replace(/^file:\/\//, "")
-      .replace(/\/+$/, "");
-    if (!cleaned) return "";
-    return cleaned.startsWith("/") ? cleaned : `/${cleaned}`;
-  }, []);
-
-  const androidDirectoryUriToPath = useCallback(
-    (uri: string): string | null => {
-      try {
-        const match =
-          uri.match(/\/tree\/([^/]+)/) || uri.match(/\/document\/([^/]+)/);
-        if (!match?.[1]) return null;
-        const decoded = decodeURIComponent(match[1]);
-        const colonIndex = decoded.indexOf(":");
-        if (colonIndex < 0) return null;
-        const volume = decoded.slice(0, colonIndex);
-        const relative = decoded.slice(colonIndex + 1).replace(/^\/+/, "");
-        const prefix =
-          volume === "primary" ? "/storage/emulated/0" : `/storage/${volume}`;
-        return relative ? `${prefix}/${relative}` : prefix;
-      } catch {
-        return null;
-      }
-    },
-    [],
-  );
-
-  const applySyncFolder = useCallback(
-    async (rawPath: string | null, details?: string) => {
-      const path = rawPath ? normalizeAndroidDirectoryPath(rawPath) : "";
-      if (!path) {
-        await setSyncFolder(null);
-        setSyncFolderInput("");
-        setSyncFolderStatus("Папка сброшена. Перезапустите приложение.");
-        return;
-      }
-      if (Platform.OS === "android" && Platform.Version < 30) {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-        );
-        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          setSyncFolderStatus("Нет разрешения на запись");
-          return;
-        }
-      }
-      try {
-        await closeDb();
-        const { copied } = await copyDataToSyncFolder(path);
-        await setSyncFolder(path);
-        await getDb();
-        setSyncFolderInput(path);
-        const copiedInfo = copied.length
-          ? `\nСкопировано: ${copied.join(", ")}`
-          : "";
-        const extraInfo = details ? `\n${details}` : "";
-        setSyncFolderStatus(
-          `Подключено: ${path}${copiedInfo}${extraInfo}\nПерезапустите приложение для полной синхронизации.`,
-        );
-      } catch (e: any) {
-        setSyncFolderStatus(`Ошибка: ${e?.message || String(e)}`);
-      }
-    },
-    [normalizeAndroidDirectoryPath],
-  );
-
   const handleSetSyncFolder = useCallback(async () => {
-    await applySyncFolder(syncFolderInput.trim() || null);
-  }, [applySyncFolder, syncFolderInput]);
+    const nextFolder = selectedSyncFolder || syncFolderInput.trim();
+    if (!nextFolder) {
+      await setSyncFolder(null);
+      setSelectedSyncFolder("");
+      setSyncFolderInput("");
+      setSyncFolderStatus("Папка сброшена. Синк по кнопке отключён.");
+      return;
+    }
+    await setSyncFolder(nextFolder);
+    setSelectedSyncFolder(nextFolder);
+    setSyncFolderInput(describeSyncFolder(nextFolder) || nextFolder);
+    setSyncFolderStatus(
+      "Папка сохранена. Теперь синк запускается кнопкой в верхней панели.",
+    );
+  }, [selectedSyncFolder, syncFolderInput]);
 
   const handlePickAndroidSyncFolder = useCallback(async () => {
     if (Platform.OS !== "android") return;
@@ -236,21 +184,18 @@ export function SettingsScreen() {
         setSyncFolderStatus("Выбор папки отменён");
         return;
       }
-      const resolvedPath = androidDirectoryUriToPath(permission.directoryUri);
-      if (!resolvedPath) {
-        setSyncFolderStatus(
-          `Не удалось преобразовать URI папки в путь:\n${permission.directoryUri}`,
-        );
-        return;
-      }
-      await applySyncFolder(
-        resolvedPath,
-        "Папка выбрана через системный Android picker",
+      await setSyncFolder(permission.directoryUri);
+      setSelectedSyncFolder(permission.directoryUri);
+      setSyncFolderInput(
+        describeSyncFolder(permission.directoryUri) || permission.directoryUri,
+      );
+      setSyncFolderStatus(
+        "Папка выбрана. Теперь синк запускается кнопкой в верхней панели.",
       );
     } catch (e: any) {
       setSyncFolderStatus(`Ошибка: ${e?.message || String(e)}`);
     }
-  }, [androidDirectoryUriToPath, applySyncFolder]);
+  }, []);
 
   // Sync state
   const [syncUrlInput, setSyncUrlInput] = useState(syncUrl);
@@ -488,10 +433,10 @@ export function SettingsScreen() {
       </Text>
       <Text style={[styles.hint, { color: c.textSecondary }]}>
         {Platform.OS === "android"
-          ? "На Android лучше выбирать папку через системный диалог. Путь подставится автоматически."
+          ? "На Android эта папка используется как внешняя sync-папка. Рабочая база остаётся внутри приложения."
           : "Путь к папке Dropbox для синхронизации с десктопом."}
         {"\n"}
-        Напр. /storage/emulated/0/Documents/uspevatel
+        После выбора синк запускается кнопкой в верхней панели.
       </Text>
       {Platform.OS === "android" && (
         <TouchableOpacity
@@ -516,7 +461,10 @@ export function SettingsScreen() {
             },
           ]}
           value={syncFolderInput}
-          onChangeText={setSyncFolderInput}
+          onChangeText={(text) => {
+            setSyncFolderInput(text);
+            setSelectedSyncFolder(text.trim());
+          }}
           placeholder="/storage/emulated/0/Documents/uspevatel"
           placeholderTextColor={c.textSecondary}
           autoCapitalize="none"
@@ -527,16 +475,19 @@ export function SettingsScreen() {
         style={[
           styles.exportBtn,
           {
-            backgroundColor: syncFolderInput.trim()
-              ? c.primary
-              : c.textSecondary,
+            backgroundColor:
+              selectedSyncFolder || syncFolderInput.trim()
+                ? c.primary
+                : c.textSecondary,
             marginTop: 8,
           },
         ]}
         onPress={handleSetSyncFolder}
       >
         <Text style={styles.exportBtnText}>
-          {syncFolderInput.trim() ? "Подключить этот путь" : "Сбросить папку"}
+          {selectedSyncFolder || syncFolderInput.trim()
+            ? "Сохранить папку"
+            : "Сбросить папку"}
         </Text>
       </TouchableOpacity>
       {syncFolderStatus && (

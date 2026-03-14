@@ -1,58 +1,63 @@
-import { useState, useEffect, useCallback } from 'react';
-
-interface Settings {
-  syncUrl: string;
-  theme: 'light' | 'dark';
-  fontSize: number;
-  contextCategories: string[];
-  lastSyncAt: string | null;
-}
-
-const DEFAULTS: Settings = {
-  syncUrl: '',
-  theme: 'dark',
-  fontSize: 15,
-  contextCategories: [],
-  lastSyncAt: null,
-};
-
-function loadSettings(): Settings {
-  try {
-    const raw = localStorage.getItem('uspevatel-settings');
-    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
-  } catch {}
-  return { ...DEFAULTS };
-}
-
-function saveSettings(s: Settings) {
-  localStorage.setItem('uspevatel-settings', JSON.stringify(s));
-}
+import { useState, useEffect, useCallback } from "react";
+import {
+  AppSettings,
+  DEFAULT_APP_SETTINGS,
+  loadAppSettings,
+  onSyncFolderChanged,
+  saveAppSettings,
+} from "../services/db";
 
 export function useSettings() {
-  const [settings, setSettingsState] = useState<Settings>(loadSettings);
+  const [settings, setSettingsState] =
+    useState<AppSettings>(DEFAULT_APP_SETTINGS);
 
-  const update = useCallback((partial: Partial<Settings>) => {
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      const next = await loadAppSettings();
+      if (!cancelled) setSettingsState(next);
+    };
+
+    load();
+    const unsubscribe = onSyncFolderChanged(() => {
+      load();
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  const update = useCallback((partial: Partial<AppSettings>) => {
     setSettingsState((prev) => {
       const next = { ...prev, ...partial };
       if (next.fontSize < 12) next.fontSize = 12;
       if (next.fontSize > 20) next.fontSize = 20;
-      saveSettings(next);
+      void saveAppSettings(next);
       return next;
     });
   }, []);
 
-  const addContextCategory = useCallback((name: string): boolean => {
-    const s = loadSettings();
-    if (s.contextCategories.length >= 5) return false;
-    if (s.contextCategories.includes(name)) return false;
-    update({ contextCategories: [...s.contextCategories, name] });
-    return true;
-  }, [update]);
+  const addContextCategory = useCallback(
+    (name: string): boolean => {
+      if (settings.contextCategories.length >= 5) return false;
+      if (settings.contextCategories.includes(name)) return false;
+      update({ contextCategories: [...settings.contextCategories, name] });
+      return true;
+    },
+    [settings.contextCategories, update],
+  );
 
-  const removeContextCategory = useCallback((name: string) => {
-    const s = loadSettings();
-    update({ contextCategories: s.contextCategories.filter((c) => c !== name) });
-  }, [update]);
+  const removeContextCategory = useCallback(
+    (name: string) => {
+      update({
+        contextCategories: settings.contextCategories.filter((c) => c !== name),
+      });
+    },
+    [settings.contextCategories, update],
+  );
 
   return { ...settings, update, addContextCategory, removeContextCategory };
 }

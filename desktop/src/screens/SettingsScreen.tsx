@@ -1,11 +1,18 @@
-import React, { useState, useCallback } from 'react';
-import { useApp } from '../context/AppContext';
-import { colors } from '../styles/theme';
-import { syncLog } from '../shared/syncService';
-import { save, open } from '@tauri-apps/plugin-dialog';
-import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
-import { useDatabase } from '../context/DatabaseContext';
-import { openDatabase, setSyncFolderSetting } from '../services/db';
+import React, { useState, useCallback, useEffect } from "react";
+import { useApp } from "../context/AppContext";
+import { colors } from "../styles/theme";
+import { syncLog } from "../shared/syncService";
+import { save, open } from "@tauri-apps/plugin-dialog";
+import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
+import { useDatabase } from "../context/DatabaseContext";
+import {
+  clearAllData,
+  exportAllData,
+  importAllData,
+  migrateLegacyDesktopDataToDb,
+  openDatabase,
+  setSyncFolderSetting,
+} from "../services/db";
 
 const APPS_SCRIPT_CODE = `var SHEET_NAME = 'Tasks';
 var HEADERS = ['id','subject','action','category','contextCategory','project','notes','startDate','priority','isRecurring','recurDays','completed','completedAt','deadline','createdAt','updatedAt','reminderAt'];
@@ -100,18 +107,27 @@ export function SettingsScreen() {
 
   const [syncUrlInput, setSyncUrlInput] = useState(settings.syncUrl);
   const [showScript, setShowScript] = useState(false);
-  const [newContext, setNewContext] = useState('');
+  const [newContext, setNewContext] = useState("");
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
+  useEffect(() => {
+    setSyncUrlInput(settings.syncUrl);
+  }, [settings.syncUrl]);
+
   const handleSync = useCallback(async () => {
-    if (!settings.syncUrl) { setSyncStatus('Укажите URL'); return; }
-    setSyncStatus('Загрузка...');
+    if (!settings.syncUrl) {
+      setSyncStatus("Укажите URL");
+      return;
+    }
+    setSyncStatus("Загрузка...");
     try {
       await refresh();
       settings.update({ lastSyncAt: new Date().toISOString() });
-      setSyncStatus('Синхронизировано');
+      setSyncStatus("Синхронизировано");
     } catch (err) {
-      setSyncStatus(`Ошибка: ${err instanceof Error ? err.message : String(err)}`);
+      setSyncStatus(
+        `Ошибка: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }, [settings, refresh]);
 
@@ -119,10 +135,14 @@ export function SettingsScreen() {
     const trimmed = newContext.trim();
     if (!trimmed) return;
     if (!settings.addContextCategory(trimmed)) {
-      alert(settings.contextCategories.length >= 5 ? 'Максимум 5 контекстных категорий' : 'Уже существует');
+      alert(
+        settings.contextCategories.length >= 5
+          ? "Максимум 5 контекстных категорий"
+          : "Уже существует",
+      );
       return;
     }
-    setNewContext('');
+    setNewContext("");
   };
 
   const { syncFolder, reload } = useDatabase();
@@ -132,41 +152,33 @@ export function SettingsScreen() {
     try {
       const path = await open({ directory: true });
       if (!path) return;
-      setSyncFolderSetting(path as string);
       await openDatabase(path as string);
+      const migration = await migrateLegacyDesktopDataToDb();
+      setSyncFolderSetting(path as string);
       await reload();
-      setFolderStatus(`Подключено: ${path}`);
+      await refresh();
+      const notes =
+        migration.imported.length > 0
+          ? ` Импортировано: ${migration.imported.join(", ")}.`
+          : migration.skipped.length > 0
+            ? ` База уже содержала данные: ${migration.skipped.join(", ")}.`
+            : "";
+      setFolderStatus(`Подключено: ${path}.${notes}`);
     } catch (e) {
       setFolderStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [reload]);
+  }, [refresh, reload]);
 
   const [dataStatus, setDataStatus] = useState<string | null>(null);
-
-  const collectAllData = () => {
-    const keys = [
-      'tasks', 'projects', 'sport_entries', 'exercises', 'workout_logs',
-      'flights', 'routine_items', 'routine_completions', 'checklist',
-      'uspevatel-settings',
-    ];
-    const data: Record<string, any> = {};
-    for (const key of keys) {
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        try { data[key] = JSON.parse(raw); } catch { data[key] = raw; }
-      }
-    }
-    return data;
-  };
 
   const handleExportToFile = async () => {
     try {
       const path = await save({
-        defaultPath: 'uspevatel-backup.json',
-        filters: [{ name: 'JSON', extensions: ['json'] }],
+        defaultPath: "uspevatel-backup.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
       });
       if (!path) return;
-      const data = collectAllData();
+      const data = await exportAllData();
       await writeTextFile(path, JSON.stringify(data, null, 2));
       setDataStatus(`Сохранено: ${path}`);
     } catch (e) {
@@ -178,129 +190,364 @@ export function SettingsScreen() {
     try {
       const path = await open({
         multiple: false,
-        filters: [{ name: 'JSON', extensions: ['json'] }],
+        filters: [{ name: "JSON", extensions: ["json"] }],
       });
       if (!path) return;
       const raw = await readTextFile(path as string);
       const data = JSON.parse(raw);
-      if (typeof data !== 'object' || !data) { setDataStatus('Неверный формат файла'); return; }
-      if (!window.confirm('Заменить все данные из файла? Текущие данные будут перезаписаны.')) return;
-      for (const [key, value] of Object.entries(data)) {
-        localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+      if (typeof data !== "object" || !data) {
+        setDataStatus("Неверный формат файла");
+        return;
       }
-      setDataStatus('Импорт завершён. Перезагрузка...');
-      setTimeout(() => window.location.reload(), 500);
+      if (
+        !window.confirm(
+          "Заменить все данные из файла? Текущие данные будут перезаписаны.",
+        )
+      )
+        return;
+      await importAllData(data);
+      setDataStatus("Импорт завершён. Перезагрузка...");
+      await reload();
+      await refresh();
     } catch (e) {
       setDataStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
-  const handleExport = () => {
-    const data = collectAllData();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const handleExport = async () => {
+    const data = await exportAllData();
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    a.download = 'uspevatel-backup.json';
+    a.download = "uspevatel-backup.json";
     a.click();
     URL.revokeObjectURL(url);
   };
 
   return (
-    <div style={{ padding: 16, overflow: 'auto', height: '100%', backgroundColor: c.background }}>
-      <h2 style={{ color: c.text, fontSize: 28, fontWeight: 800, marginBottom: 16 }}>Настройки</h2>
+    <div
+      style={{
+        padding: 16,
+        overflow: "auto",
+        height: "100%",
+        backgroundColor: c.background,
+      }}
+    >
+      <h2
+        style={{
+          color: c.text,
+          fontSize: 28,
+          fontWeight: 800,
+          marginBottom: 16,
+        }}
+      >
+        Настройки
+      </h2>
 
       {/* Font Size */}
-      <h3 style={{ color: c.text, fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Размер шрифта: {settings.fontSize}</h3>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <button onClick={() => settings.update({ fontSize: settings.fontSize - 1 })}
-          style={{ width: 48, height: 48, borderRadius: 10, border: `1px solid ${c.border}`, backgroundColor: c.card, color: c.text, fontSize: 18, fontWeight: 700 }}>A-</button>
-        <div style={{ flex: 1, textAlign: 'center' }}>
-          <span style={{ color: c.text, fontSize: settings.fontSize }}>Пример текста</span>
+      <h3
+        style={{
+          color: c.text,
+          fontSize: 18,
+          fontWeight: 700,
+          marginBottom: 8,
+        }}
+      >
+        Размер шрифта: {settings.fontSize}
+      </h3>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button
+          onClick={() => settings.update({ fontSize: settings.fontSize - 1 })}
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 10,
+            border: `1px solid ${c.border}`,
+            backgroundColor: c.card,
+            color: c.text,
+            fontSize: 18,
+            fontWeight: 700,
+          }}
+        >
+          A-
+        </button>
+        <div style={{ flex: 1, textAlign: "center" }}>
+          <span style={{ color: c.text, fontSize: settings.fontSize }}>
+            Пример текста
+          </span>
         </div>
-        <button onClick={() => settings.update({ fontSize: settings.fontSize + 1 })}
-          style={{ width: 48, height: 48, borderRadius: 10, border: `1px solid ${c.border}`, backgroundColor: c.card, color: c.text, fontSize: 18, fontWeight: 700 }}>A+</button>
+        <button
+          onClick={() => settings.update({ fontSize: settings.fontSize + 1 })}
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 10,
+            border: `1px solid ${c.border}`,
+            backgroundColor: c.card,
+            color: c.text,
+            fontSize: 18,
+            fontWeight: 700,
+          }}
+        >
+          A+
+        </button>
       </div>
 
       {/* Theme */}
-      <h3 style={{ color: c.text, fontSize: 18, fontWeight: 700, marginTop: 24, marginBottom: 8 }}>Тема</h3>
-      <div style={{ display: 'flex', gap: 12 }}>
-        <button onClick={() => settings.update({ theme: 'light' })}
-          style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: settings.theme === 'light' ? c.primary : '#E5E7EB', color: settings.theme === 'light' ? '#fff' : c.text, fontWeight: 600, fontSize: 15 }}>
+      <h3
+        style={{
+          color: c.text,
+          fontSize: 18,
+          fontWeight: 700,
+          marginTop: 24,
+          marginBottom: 8,
+        }}
+      >
+        Тема
+      </h3>
+      <div style={{ display: "flex", gap: 12 }}>
+        <button
+          onClick={() => settings.update({ theme: "light" })}
+          style={{
+            flex: 1,
+            padding: 12,
+            borderRadius: 10,
+            backgroundColor: settings.theme === "light" ? c.primary : "#E5E7EB",
+            color: settings.theme === "light" ? "#fff" : c.text,
+            fontWeight: 600,
+            fontSize: 15,
+          }}
+        >
           Светлая
         </button>
-        <button onClick={() => settings.update({ theme: 'dark' })}
-          style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: settings.theme === 'dark' ? c.primary : '#E5E7EB', color: settings.theme === 'dark' ? '#fff' : c.text, fontWeight: 600, fontSize: 15 }}>
+        <button
+          onClick={() => settings.update({ theme: "dark" })}
+          style={{
+            flex: 1,
+            padding: 12,
+            borderRadius: 10,
+            backgroundColor: settings.theme === "dark" ? c.primary : "#E5E7EB",
+            color: settings.theme === "dark" ? "#fff" : c.text,
+            fontWeight: 600,
+            fontSize: 15,
+          }}
+        >
           Тёмная
         </button>
       </div>
 
       {/* Sync Folder (SQLite) */}
-      <h3 style={{ color: c.text, fontSize: 18, fontWeight: 700, marginTop: 24, marginBottom: 8 }}>Папка синхронизации (SQLite)</h3>
+      <h3
+        style={{
+          color: c.text,
+          fontSize: 18,
+          fontWeight: 700,
+          marginTop: 24,
+          marginBottom: 8,
+        }}
+      >
+        Папка синхронизации (SQLite)
+      </h3>
       <p style={{ color: c.textSecondary, fontSize: 13, marginBottom: 8 }}>
-        Укажите папку Dropbox с файлом uspevatel.db для синхронизации с телефоном
+        Укажите папку Dropbox с файлом uspevatel.db для синхронизации с
+        телефоном
       </p>
       {syncFolder && (
-        <div style={{ padding: '8px 12px', borderRadius: 8, backgroundColor: c.card, border: `1px solid ${c.border}`, marginBottom: 8 }}>
-          <span style={{ color: c.text, fontSize: 13, fontFamily: 'monospace' }}>{syncFolder}</span>
+        <div
+          style={{
+            padding: "8px 12px",
+            borderRadius: 8,
+            backgroundColor: c.card,
+            border: `1px solid ${c.border}`,
+            marginBottom: 8,
+          }}
+        >
+          <span
+            style={{ color: c.text, fontSize: 13, fontFamily: "monospace" }}
+          >
+            {syncFolder}
+          </span>
         </div>
       )}
-      <button onClick={handleChooseFolder}
-        style={{ width: '100%', padding: 14, borderRadius: 10, backgroundColor: syncFolder ? c.card : c.primary, color: syncFolder ? c.text : '#fff', fontWeight: 600, fontSize: 15, border: syncFolder ? `1px solid ${c.border}` : 'none' }}>
-        {syncFolder ? 'Изменить папку...' : 'Выбрать папку...'}
+      <button
+        onClick={handleChooseFolder}
+        style={{
+          width: "100%",
+          padding: 14,
+          borderRadius: 10,
+          backgroundColor: syncFolder ? c.card : c.primary,
+          color: syncFolder ? c.text : "#fff",
+          fontWeight: 600,
+          fontSize: 15,
+          border: syncFolder ? `1px solid ${c.border}` : "none",
+        }}
+      >
+        {syncFolder ? "Изменить папку..." : "Выбрать папку..."}
       </button>
       {folderStatus && (
-        <div style={{ backgroundColor: c.card, borderRadius: 8, padding: 10, marginTop: 8, border: `1px solid ${c.border}` }}>
+        <div
+          style={{
+            backgroundColor: c.card,
+            borderRadius: 8,
+            padding: 10,
+            marginTop: 8,
+            border: `1px solid ${c.border}`,
+          }}
+        >
           <span style={{ color: c.text, fontSize: 13 }}>{folderStatus}</span>
         </div>
       )}
 
       {/* Context Categories */}
-      <h3 style={{ color: c.text, fontSize: 18, fontWeight: 700, marginTop: 24, marginBottom: 8 }}>Контекстные категории</h3>
-      <p style={{ color: c.textSecondary, fontSize: 13, marginBottom: 8 }}>Максимум 5. Используйте для группировки задач.</p>
+      <h3
+        style={{
+          color: c.text,
+          fontSize: 18,
+          fontWeight: 700,
+          marginTop: 24,
+          marginBottom: 8,
+        }}
+      >
+        Контекстные категории
+      </h3>
+      <p style={{ color: c.textSecondary, fontSize: 13, marginBottom: 8 }}>
+        Максимум 5. Используйте для группировки задач.
+      </p>
       {settings.contextCategories.map((ctx) => (
-        <div key={ctx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${c.border}` }}>
-          <span style={{ color: c.text, fontSize: 15, fontWeight: 500 }}>\{ctx}</span>
-          <button onClick={() => settings.removeContextCategory(ctx)} style={{ color: c.danger, fontSize: 14, fontWeight: 600 }}>Удалить</button>
+        <div
+          key={ctx}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "10px 0",
+            borderBottom: `1px solid ${c.border}`,
+          }}
+        >
+          <span style={{ color: c.text, fontSize: 15, fontWeight: 500 }}>
+            \{ctx}
+          </span>
+          <button
+            onClick={() => settings.removeContextCategory(ctx)}
+            style={{ color: c.danger, fontSize: 14, fontWeight: 600 }}
+          >
+            Удалить
+          </button>
         </div>
       ))}
-      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
         <input
-          type="text" value={newContext} onChange={(e) => setNewContext(e.target.value)}
+          type="text"
+          value={newContext}
+          onChange={(e) => setNewContext(e.target.value)}
           placeholder="обдумывать, прочитать..."
-          onKeyDown={(e) => { if (e.key === 'Enter') handleAddContext(); }}
-          style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${c.border}`, backgroundColor: c.card, color: c.text, fontSize: 15 }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleAddContext();
+          }}
+          style={{
+            flex: 1,
+            padding: "8px 12px",
+            borderRadius: 8,
+            border: `1px solid ${c.border}`,
+            backgroundColor: c.card,
+            color: c.text,
+            fontSize: 15,
+          }}
         />
-        <button onClick={handleAddContext}
-          style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: c.primary, color: '#fff', fontSize: 20, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+        <button
+          onClick={handleAddContext}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            backgroundColor: c.primary,
+            color: "#fff",
+            fontSize: 20,
+            fontWeight: 600,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          +
+        </button>
       </div>
 
       {/* Google Sheets Sync */}
-      <h3 style={{ color: c.text, fontSize: 18, fontWeight: 700, marginTop: 24, marginBottom: 8 }}>Google Sheets</h3>
-      <p style={{ color: c.textSecondary, fontSize: 13, marginBottom: 8 }}>Прямое подключение к Google Таблице</p>
-      <div style={{ display: 'flex', gap: 8 }}>
+      <h3
+        style={{
+          color: c.text,
+          fontSize: 18,
+          fontWeight: 700,
+          marginTop: 24,
+          marginBottom: 8,
+        }}
+      >
+        Google Sheets
+      </h3>
+      <p style={{ color: c.textSecondary, fontSize: 13, marginBottom: 8 }}>
+        Прямое подключение к Google Таблице
+      </p>
+      <div style={{ display: "flex", gap: 8 }}>
         <input
-          type="text" value={syncUrlInput} onChange={(e) => setSyncUrlInput(e.target.value)}
+          type="text"
+          value={syncUrlInput}
+          onChange={(e) => setSyncUrlInput(e.target.value)}
           placeholder="https://script.google.com/macros/s/.../exec"
-          style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${c.border}`, backgroundColor: c.card, color: c.text, fontSize: 13 }}
+          style={{
+            flex: 1,
+            padding: "8px 12px",
+            borderRadius: 8,
+            border: `1px solid ${c.border}`,
+            backgroundColor: c.card,
+            color: c.text,
+            fontSize: 13,
+          }}
         />
-        <button onClick={() => { settings.update({ syncUrl: syncUrlInput.trim() }); setSyncStatus('URL сохранён'); }}
-          style={{ padding: '8px 16px', borderRadius: 8, backgroundColor: c.primary, color: '#fff', fontWeight: 600, fontSize: 13 }}>
+        <button
+          onClick={() => {
+            settings.update({ syncUrl: syncUrlInput.trim() });
+            setSyncStatus("URL сохранён");
+          }}
+          style={{
+            padding: "8px 16px",
+            borderRadius: 8,
+            backgroundColor: c.primary,
+            color: "#fff",
+            fontWeight: 600,
+            fontSize: 13,
+          }}
+        >
           Сохранить
         </button>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', marginTop: 12, gap: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          marginTop: 12,
+          gap: 12,
+        }}
+      >
         <button
           onClick={handleSync}
           disabled={loading || !settings.syncUrl}
           style={{
-            flex: 1, padding: 14, borderRadius: 10, backgroundColor: c.primary,
-            color: '#fff', fontWeight: 600, fontSize: 16,
+            flex: 1,
+            padding: 14,
+            borderRadius: 10,
+            backgroundColor: c.primary,
+            color: "#fff",
+            fontWeight: 600,
+            fontSize: 16,
             opacity: loading || !settings.syncUrl ? 0.5 : 1,
           }}
         >
-          {loading ? 'Загрузка...' : 'Синхронизация'}
+          {loading ? "Загрузка..." : "Синхронизация"}
         </button>
       </div>
 
@@ -311,85 +558,253 @@ export function SettingsScreen() {
       )}
 
       {syncStatus && (
-        <div style={{ backgroundColor: c.card, borderRadius: 8, padding: 10, marginTop: 8, border: `1px solid ${c.border}` }}>
+        <div
+          style={{
+            backgroundColor: c.card,
+            borderRadius: 8,
+            padding: 10,
+            marginTop: 8,
+            border: `1px solid ${c.border}`,
+          }}
+        >
           <span style={{ color: c.text, fontSize: 13 }}>{syncStatus}</span>
         </div>
       )}
 
-      <button onClick={() => setShowScript(!showScript)} style={{ marginTop: 12, color: c.primary, fontSize: 14, fontWeight: 600 }}>
-        {showScript ? '▼ Скрыть инструкцию' : '▶ Как настроить синхронизацию'}
+      <button
+        onClick={() => setShowScript(!showScript)}
+        style={{
+          marginTop: 12,
+          color: c.primary,
+          fontSize: 14,
+          fontWeight: 600,
+        }}
+      >
+        {showScript ? "▼ Скрыть инструкцию" : "▶ Как настроить синхронизацию"}
       </button>
 
       {showScript && (
-        <div style={{ backgroundColor: c.card, borderRadius: 8, padding: 12, marginTop: 8, border: `1px solid ${c.border}` }}>
-          <p style={{ color: c.text, fontSize: 13, lineHeight: 1.6, marginBottom: 8, whiteSpace: 'pre-line' }}>
-            {'1. Создайте Google Таблицу\n2. Откройте: Расширения → Apps Script\n3. Удалите всё в Code.gs\n4. Вставьте код (кнопка ниже)\n5. Нажмите Развернуть → Новое развёртывание\n6. Тип: Веб-приложение\n   • Выполнять как: Я\n   • Доступ: Все\n7. Нажмите Развернуть, подтвердите\n8. Скопируйте URL и вставьте выше'}
+        <div
+          style={{
+            backgroundColor: c.card,
+            borderRadius: 8,
+            padding: 12,
+            marginTop: 8,
+            border: `1px solid ${c.border}`,
+          }}
+        >
+          <p
+            style={{
+              color: c.text,
+              fontSize: 13,
+              lineHeight: 1.6,
+              marginBottom: 8,
+              whiteSpace: "pre-line",
+            }}
+          >
+            {
+              "1. Создайте Google Таблицу\n2. Откройте: Расширения → Apps Script\n3. Удалите всё в Code.gs\n4. Вставьте код (кнопка ниже)\n5. Нажмите Развернуть → Новое развёртывание\n6. Тип: Веб-приложение\n   • Выполнять как: Я\n   • Доступ: Все\n7. Нажмите Развернуть, подтвердите\n8. Скопируйте URL и вставьте выше"
+            }
           </p>
-          <button onClick={() => { navigator.clipboard.writeText(APPS_SCRIPT_CODE); alert('Код скопирован в буфер обмена'); }}
-            style={{ padding: 14, borderRadius: 10, backgroundColor: '#2E7D32', color: '#fff', fontWeight: 600, fontSize: 16, width: '100%' }}>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(APPS_SCRIPT_CODE);
+              alert("Код скопирован в буфер обмена");
+            }}
+            style={{
+              padding: 14,
+              borderRadius: 10,
+              backgroundColor: "#2E7D32",
+              color: "#fff",
+              fontWeight: 600,
+              fontSize: 16,
+              width: "100%",
+            }}
+          >
             Скопировать код скрипта
           </button>
         </div>
       )}
 
       {/* Data */}
-      <h3 style={{ color: c.text, fontSize: 18, fontWeight: 700, marginTop: 24, marginBottom: 8 }}>Данные</h3>
-      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${c.border}` }}>
+      <h3
+        style={{
+          color: c.text,
+          fontSize: 18,
+          fontWeight: 700,
+          marginTop: 24,
+          marginBottom: 8,
+        }}
+      >
+        Данные
+      </h3>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          padding: "10px 0",
+          borderBottom: `1px solid ${c.border}`,
+        }}
+      >
         <span style={{ color: c.textSecondary, fontSize: 15 }}>Задач</span>
-        <span style={{ color: c.text, fontSize: 15, fontWeight: 600 }}>{tasks.length}</span>
+        <span style={{ color: c.text, fontSize: 15, fontWeight: 600 }}>
+          {tasks.length}
+        </span>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${c.border}` }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          padding: "10px 0",
+          borderBottom: `1px solid ${c.border}`,
+        }}
+      >
         <span style={{ color: c.textSecondary, fontSize: 15 }}>Проектов</span>
-        <span style={{ color: c.text, fontSize: 15, fontWeight: 600 }}>{projects.length}</span>
+        <span style={{ color: c.text, fontSize: 15, fontWeight: 600 }}>
+          {projects.length}
+        </span>
       </div>
 
-      <h3 style={{ color: c.text, fontSize: 18, fontWeight: 700, marginTop: 24, marginBottom: 8 }}>Сохранение / Загрузка</h3>
+      <h3
+        style={{
+          color: c.text,
+          fontSize: 18,
+          fontWeight: 700,
+          marginTop: 24,
+          marginBottom: 8,
+        }}
+      >
+        Сохранение / Загрузка
+      </h3>
       <p style={{ color: c.textSecondary, fontSize: 13, marginBottom: 8 }}>
-        Экспорт и импорт всех данных (задачи, проекты, спорт, упражнения, перелёты, рутина, чеклист)
+        Экспорт и импорт всех данных (задачи, проекты, спорт, упражнения,
+        перелёты, рутина, чеклист)
       </p>
 
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={handleExportToFile}
-          style={{ flex: 1, padding: 14, borderRadius: 10, backgroundColor: c.primary, color: '#fff', fontWeight: 600, fontSize: 15 }}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          onClick={handleExportToFile}
+          style={{
+            flex: 1,
+            padding: 14,
+            borderRadius: 10,
+            backgroundColor: c.primary,
+            color: "#fff",
+            fontWeight: 600,
+            fontSize: 15,
+          }}
+        >
           Сохранить в файл...
         </button>
-        <button onClick={handleImportFromFile}
-          style={{ flex: 1, padding: 14, borderRadius: 10, backgroundColor: c.success, color: '#fff', fontWeight: 600, fontSize: 15 }}>
+        <button
+          onClick={handleImportFromFile}
+          style={{
+            flex: 1,
+            padding: 14,
+            borderRadius: 10,
+            backgroundColor: c.success,
+            color: "#fff",
+            fontWeight: 600,
+            fontSize: 15,
+          }}
+        >
           Загрузить из файла...
         </button>
       </div>
 
-      <button onClick={handleExport}
-        style={{ marginTop: 8, width: '100%', padding: 10, borderRadius: 8, border: `1px solid ${c.border}`, backgroundColor: c.card, color: c.text, fontWeight: 500, fontSize: 13 }}>
+      <button
+        onClick={() => {
+          void handleExport();
+        }}
+        style={{
+          marginTop: 8,
+          width: "100%",
+          padding: 10,
+          borderRadius: 8,
+          border: `1px solid ${c.border}`,
+          backgroundColor: c.card,
+          color: c.text,
+          fontWeight: 500,
+          fontSize: 13,
+        }}
+      >
         Скачать через браузер (fallback)
       </button>
 
       {dataStatus && (
-        <div style={{ backgroundColor: c.card, borderRadius: 8, padding: 10, marginTop: 8, border: `1px solid ${c.border}` }}>
+        <div
+          style={{
+            backgroundColor: c.card,
+            borderRadius: 8,
+            padding: 10,
+            marginTop: 8,
+            border: `1px solid ${c.border}`,
+          }}
+        >
           <span style={{ color: c.text, fontSize: 13 }}>{dataStatus}</span>
         </div>
       )}
 
       <button
         onClick={() => {
-          if (window.confirm('Удалить все данные? Это действие нельзя отменить!')) {
-            localStorage.clear();
-            window.location.reload();
+          if (
+            window.confirm("Удалить все данные? Это действие нельзя отменить!")
+          ) {
+            void clearAllData()
+              .then(async () => {
+                await reload();
+                await refresh();
+                setDataStatus("Все данные удалены");
+              })
+              .catch((e) => {
+                setDataStatus(
+                  `Ошибка: ${e instanceof Error ? e.message : String(e)}`,
+                );
+              });
           }
         }}
-        style={{ marginTop: 16, width: '100%', padding: 14, color: c.danger, fontSize: 16, fontWeight: 600 }}
+        style={{
+          marginTop: 16,
+          width: "100%",
+          padding: 14,
+          color: c.danger,
+          fontSize: 16,
+          fontWeight: 600,
+        }}
       >
         Удалить все данные
       </button>
 
       {/* Debug Log */}
-      <h3 style={{ color: c.text, fontSize: 18, fontWeight: 700, marginTop: 24, marginBottom: 8 }}>Debug Log</h3>
-      <div style={{
-        backgroundColor: '#000', color: '#0f0', borderRadius: 8, padding: 12,
-        fontSize: 11, fontFamily: 'monospace', maxHeight: 300, overflow: 'auto',
-        whiteSpace: 'pre-wrap', wordBreak: 'break-all', marginBottom: 40,
-      }}>
-        {syncLog.length === 0 ? 'No logs yet. Try creating a task or pressing Sync.' : syncLog.join('\n')}
+      <h3
+        style={{
+          color: c.text,
+          fontSize: 18,
+          fontWeight: 700,
+          marginTop: 24,
+          marginBottom: 8,
+        }}
+      >
+        Debug Log
+      </h3>
+      <div
+        style={{
+          backgroundColor: "#000",
+          color: "#0f0",
+          borderRadius: 8,
+          padding: 12,
+          fontSize: 11,
+          fontFamily: "monospace",
+          maxHeight: 300,
+          overflow: "auto",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-all",
+          marginBottom: 40,
+        }}
+      >
+        {syncLog.length === 0
+          ? "No logs yet. Try creating a task or pressing Sync."
+          : syncLog.join("\n")}
       </div>
     </div>
   );
