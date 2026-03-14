@@ -1,15 +1,41 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Share, ActivityIndicator, Clipboard, Platform, Linking, PermissionsAndroid } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useSettingsStore } from '../store/settingsStore';
-import { useTaskStore } from '../store/taskStore';
-import { useProjectStore } from '../store/projectStore';
-import { colors } from '../utils/theme';
-import { fetchRemoteTasks, pushChanges, computeSync, pushRoutineLog } from '../services/syncService';
-import { SyncConflictModal } from '../components/SyncConflictModal';
-import { useRoutineStore } from '../store/routineStore';
-import { Task, SyncConflict } from '../types';
-import { getSyncFolder, setSyncFolder, closeDb, getDb, copyDataToSyncFolder } from '../db/database';
+import React, { useState, useCallback } from "react";
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  ScrollView,
+  StyleSheet,
+  Alert,
+  Share,
+  ActivityIndicator,
+  Clipboard,
+  Platform,
+  Linking,
+  PermissionsAndroid,
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as LegacyFS from "expo-file-system/legacy";
+import { useSettingsStore } from "../store/settingsStore";
+import { useTaskStore } from "../store/taskStore";
+import { useProjectStore } from "../store/projectStore";
+import { colors } from "../utils/theme";
+import {
+  fetchRemoteTasks,
+  pushChanges,
+  computeSync,
+  pushRoutineLog,
+} from "../services/syncService";
+import { SyncConflictModal } from "../components/SyncConflictModal";
+import { useRoutineStore } from "../store/routineStore";
+import { Task, SyncConflict } from "../types";
+import {
+  getSyncFolder,
+  setSyncFolder,
+  closeDb,
+  getDb,
+  copyDataToSyncFolder,
+} from "../db/database";
 
 const APPS_SCRIPT_CODE = `var SHEET_NAME = 'Tasks';
 var HEADERS = ['id','subject','action','category','contextCategory','project','notes','startDate','priority','isRecurring','recurDays','completed','completedAt','deadline','createdAt','updatedAt','reminderAt'];
@@ -101,7 +127,9 @@ function doPost(e) {
 export function SettingsScreen() {
   const contextCategories = useSettingsStore((s) => s.contextCategories);
   const addContextCategory = useSettingsStore((s) => s.addContextCategory);
-  const removeContextCategory = useSettingsStore((s) => s.removeContextCategory);
+  const removeContextCategory = useSettingsStore(
+    (s) => s.removeContextCategory,
+  );
   const setTheme = useSettingsStore((s) => s.setTheme);
   const theme = useSettingsStore((s) => s.theme);
   const fontSize = useSettingsStore((s) => s.fontSize) ?? 15;
@@ -117,42 +145,112 @@ export function SettingsScreen() {
   const addKnownSyncIds = useSettingsStore((s) => s.addKnownSyncIds);
   const importTask = useTaskStore((s) => s.importTask);
   const c = colors[theme];
-  const [newContext, setNewContext] = useState('');
+  const [newContext, setNewContext] = useState("");
   const tasks = useTaskStore((s) => s.tasks);
   const projects = useProjectStore((s) => s.projects);
   const routineItems = useRoutineStore((s) => s.items);
   const routineCompleted = useRoutineStore((s) => s.completedToday);
 
   // Sync folder
-  const [syncFolderInput, setSyncFolderInput] = useState(getSyncFolder() || '');
+  const [syncFolderInput, setSyncFolderInput] = useState(getSyncFolder() || "");
   const [syncFolderStatus, setSyncFolderStatus] = useState<string | null>(null);
 
-  const handleSetSyncFolder = useCallback(async () => {
-    const path = syncFolderInput.trim();
-    if (!path) {
-      await setSyncFolder(null);
-      setSyncFolderStatus('Папка сброшена. Перезапустите приложение.');
-      return;
-    }
-    // Request storage permissions on Android < 30
-    if (Platform.OS === 'android' && Platform.Version < 30) {
-      const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
-      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-        setSyncFolderStatus('Нет разрешения на запись');
+  const normalizeAndroidDirectoryPath = useCallback((value: string): string => {
+    const cleaned = value
+      .trim()
+      .replace(/^file:\/\//, "")
+      .replace(/\/+$/, "");
+    if (!cleaned) return "";
+    return cleaned.startsWith("/") ? cleaned : `/${cleaned}`;
+  }, []);
+
+  const androidDirectoryUriToPath = useCallback(
+    (uri: string): string | null => {
+      try {
+        const match =
+          uri.match(/\/tree\/([^/]+)/) || uri.match(/\/document\/([^/]+)/);
+        if (!match?.[1]) return null;
+        const decoded = decodeURIComponent(match[1]);
+        const colonIndex = decoded.indexOf(":");
+        if (colonIndex < 0) return null;
+        const volume = decoded.slice(0, colonIndex);
+        const relative = decoded.slice(colonIndex + 1).replace(/^\/+/, "");
+        const prefix =
+          volume === "primary" ? "/storage/emulated/0" : `/storage/${volume}`;
+        return relative ? `${prefix}/${relative}` : prefix;
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
+
+  const applySyncFolder = useCallback(
+    async (rawPath: string | null, details?: string) => {
+      const path = rawPath ? normalizeAndroidDirectoryPath(rawPath) : "";
+      if (!path) {
+        await setSyncFolder(null);
+        setSyncFolderInput("");
+        setSyncFolderStatus("Папка сброшена. Перезапустите приложение.");
         return;
       }
-    }
+      if (Platform.OS === "android" && Platform.Version < 30) {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          setSyncFolderStatus("Нет разрешения на запись");
+          return;
+        }
+      }
+      try {
+        await closeDb();
+        const { copied } = await copyDataToSyncFolder(path);
+        await setSyncFolder(path);
+        await getDb();
+        setSyncFolderInput(path);
+        const copiedInfo = copied.length
+          ? `\nСкопировано: ${copied.join(", ")}`
+          : "";
+        const extraInfo = details ? `\n${details}` : "";
+        setSyncFolderStatus(
+          `Подключено: ${path}${copiedInfo}${extraInfo}\nПерезапустите приложение для полной синхронизации.`,
+        );
+      } catch (e: any) {
+        setSyncFolderStatus(`Ошибка: ${e?.message || String(e)}`);
+      }
+    },
+    [normalizeAndroidDirectoryPath],
+  );
+
+  const handleSetSyncFolder = useCallback(async () => {
+    await applySyncFolder(syncFolderInput.trim() || null);
+  }, [applySyncFolder, syncFolderInput]);
+
+  const handlePickAndroidSyncFolder = useCallback(async () => {
+    if (Platform.OS !== "android") return;
     try {
-      await closeDb();
-      const { copied } = await copyDataToSyncFolder(path);
-      await setSyncFolder(path);
-      await getDb();
-      const info = copied.length ? `\nСкопировано: ${copied.join(', ')}` : '';
-      setSyncFolderStatus(`Подключено: ${path}${info}\nПерезапустите приложение для полной синхронизации.`);
+      const permission =
+        await LegacyFS.StorageAccessFramework.requestDirectoryPermissionsAsync();
+      if (!permission.granted || !permission.directoryUri) {
+        setSyncFolderStatus("Выбор папки отменён");
+        return;
+      }
+      const resolvedPath = androidDirectoryUriToPath(permission.directoryUri);
+      if (!resolvedPath) {
+        setSyncFolderStatus(
+          `Не удалось преобразовать URI папки в путь:\n${permission.directoryUri}`,
+        );
+        return;
+      }
+      await applySyncFolder(
+        resolvedPath,
+        "Папка выбрана через системный Android picker",
+      );
     } catch (e: any) {
       setSyncFolderStatus(`Ошибка: ${e?.message || String(e)}`);
     }
-  }, [syncFolderInput]);
+  }, [androidDirectoryUriToPath, applySyncFolder]);
 
   // Sync state
   const [syncUrlInput, setSyncUrlInput] = useState(syncUrl);
@@ -164,38 +262,61 @@ export function SettingsScreen() {
   const [pendingExport, setPendingExport] = useState<Task[]>([]);
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
 
-  const finishSync = useCallback(async (url: string, toExport: Task[], deleteIds: string[], toImport: Task[]) => {
-    try {
-      if (toExport.length > 0 || deleteIds.length > 0) {
-        setSyncStatus('Отправка задач в таблицу...');
-        await pushChanges(url, toExport, deleteIds);
+  const finishSync = useCallback(
+    async (
+      url: string,
+      toExport: Task[],
+      deleteIds: string[],
+      toImport: Task[],
+    ) => {
+      try {
+        if (toExport.length > 0 || deleteIds.length > 0) {
+          setSyncStatus("Отправка задач в таблицу...");
+          await pushChanges(url, toExport, deleteIds);
+        }
+        if (routineItems.length > 0) {
+          setSyncStatus("Отправка рутины в таблицу...");
+          await pushRoutineLog(url, routineItems, routineCompleted);
+        }
+        for (const t of toImport) importTask(t);
+        const allIds = [
+          ...tasks.map((t) => t.id),
+          ...toImport.map((t) => t.id),
+        ];
+        addKnownSyncIds(allIds);
+        setLastSyncAt(new Date().toISOString());
+        const parts: string[] = [];
+        if (toExport.length) parts.push(`${toExport.length} экспорт`);
+        if (toImport.length) parts.push(`${toImport.length} импорт`);
+        if (deleteIds.length) parts.push(`${deleteIds.length} удалено`);
+        if (routineItems.length) parts.push(`${routineItems.length} рутина`);
+        setSyncStatus(parts.length ? parts.join(", ") : "Всё актуально");
+      } catch (err) {
+        setSyncStatus(
+          `Ошибка: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      } finally {
+        setSyncing(false);
       }
-      if (routineItems.length > 0) {
-        setSyncStatus('Отправка рутины в таблицу...');
-        await pushRoutineLog(url, routineItems, routineCompleted);
-      }
-      for (const t of toImport) importTask(t);
-      const allIds = [...tasks.map((t) => t.id), ...toImport.map((t) => t.id)];
-      addKnownSyncIds(allIds);
-      setLastSyncAt(new Date().toISOString());
-      const parts: string[] = [];
-      if (toExport.length) parts.push(`${toExport.length} экспорт`);
-      if (toImport.length) parts.push(`${toImport.length} импорт`);
-      if (deleteIds.length) parts.push(`${deleteIds.length} удалено`);
-      if (routineItems.length) parts.push(`${routineItems.length} рутина`);
-      setSyncStatus(parts.length ? parts.join(', ') : 'Всё актуально');
-    } catch (err) {
-      setSyncStatus(`Ошибка: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setSyncing(false);
-    }
-  }, [tasks, importTask, addKnownSyncIds, setLastSyncAt, routineItems, routineCompleted]);
+    },
+    [
+      tasks,
+      importTask,
+      addKnownSyncIds,
+      setLastSyncAt,
+      routineItems,
+      routineCompleted,
+    ],
+  );
 
   const handleSync = useCallback(async () => {
     const url = syncUrl.trim();
-    if (!url) { setSyncStatus('Укажите URL'); return; }
+    if (!url) {
+      setSyncStatus("Укажите URL");
+      return;
+    }
     setSyncing(true);
-    setSyncStatus('Загрузка из таблицы...');
+    setSyncStatus("Загрузка из таблицы...");
     try {
       const remote = await fetchRemoteTasks(url);
       setSyncStatus(`Получено ${remote.length}. Сравнение...`);
@@ -206,14 +327,26 @@ export function SettingsScreen() {
         setConflicts(result.conflicts);
         setConflictIndex(0);
         setSyncing(false);
-        setSyncStatus(`${result.toExport.length} экспорт, ${result.toImport.length} импорт, ${result.conflicts.length} конфликтов`);
+        setSyncStatus(
+          `${result.toExport.length} экспорт, ${result.toImport.length} импорт, ${result.conflicts.length} конфликтов`,
+        );
         for (const t of result.toImport) importTask(t);
-        addKnownSyncIds([...result.toImport.map((t) => t.id), ...result.toExport.map((t) => t.id)]);
+        addKnownSyncIds([
+          ...result.toImport.map((t) => t.id),
+          ...result.toExport.map((t) => t.id),
+        ]);
         return;
       }
-      await finishSync(url, result.toExport, result.toDeleteFromSheet, result.toImport);
+      await finishSync(
+        url,
+        result.toExport,
+        result.toDeleteFromSheet,
+        result.toImport,
+      );
     } catch (err) {
-      setSyncStatus(`Ошибка: ${err instanceof Error ? err.message : String(err)}`);
+      setSyncStatus(
+        `Ошибка: ${err instanceof Error ? err.message : String(err)}`,
+      );
       setSyncing(false);
     }
   }, [syncUrl, tasks, knownSyncIds, addKnownSyncIds, importTask, finishSync]);
@@ -231,24 +364,35 @@ export function SettingsScreen() {
     });
   }, [conflicts.length, syncUrl, pendingExport, pendingDeleteIds, finishSync]);
 
-  const handleKeepLocal = useCallback((conflict: SyncConflict) => {
-    setPendingExport((prev) => [...prev, conflict.localTask]);
-    advanceConflict();
-  }, [advanceConflict]);
+  const handleKeepLocal = useCallback(
+    (conflict: SyncConflict) => {
+      setPendingExport((prev) => [...prev, conflict.localTask]);
+      advanceConflict();
+    },
+    [advanceConflict],
+  );
 
-  const handleTakeRemote = useCallback((conflict: SyncConflict) => {
-    importTask(conflict.remoteTask);
-    advanceConflict();
-  }, [importTask, advanceConflict]);
+  const handleTakeRemote = useCallback(
+    (conflict: SyncConflict) => {
+      importTask(conflict.remoteTask);
+      advanceConflict();
+    },
+    [importTask, advanceConflict],
+  );
 
   const handleAddContext = () => {
     const trimmed = newContext.trim();
     if (!trimmed) return;
     if (!addContextCategory(trimmed)) {
-      Alert.alert('Ошибка', contextCategories.length >= 5 ? 'Максимум 5 контекстных категорий' : 'Уже существует');
+      Alert.alert(
+        "Ошибка",
+        contextCategories.length >= 5
+          ? "Максимум 5 контекстных категорий"
+          : "Уже существует",
+      );
       return;
     }
-    setNewContext('');
+    setNewContext("");
   };
 
   const handleExport = async () => {
@@ -272,10 +416,15 @@ export function SettingsScreen() {
       <Text style={[styles.title, { color: c.text }]}>Настройки</Text>
 
       {/* Font Size */}
-      <Text style={[styles.sectionTitle, { color: c.text }]}>Размер шрифта: {fontSize}</Text>
+      <Text style={[styles.sectionTitle, { color: c.text }]}>
+        Размер шрифта: {fontSize}
+      </Text>
       <View style={styles.fontSizeRow}>
         <TouchableOpacity
-          style={[styles.fontBtn, { backgroundColor: c.card, borderColor: c.border }]}
+          style={[
+            styles.fontBtn,
+            { backgroundColor: c.card, borderColor: c.border },
+          ]}
           onPress={() => setFontSize(fontSize - 1)}
         >
           <Text style={[styles.fontBtnText, { color: c.text }]}>A-</Text>
@@ -284,7 +433,10 @@ export function SettingsScreen() {
           <Text style={[{ color: c.text, fontSize }]}>Пример текста</Text>
         </View>
         <TouchableOpacity
-          style={[styles.fontBtn, { backgroundColor: c.card, borderColor: c.border }]}
+          style={[
+            styles.fontBtn,
+            { backgroundColor: c.card, borderColor: c.border },
+          ]}
           onPress={() => setFontSize(fontSize + 1)}
         >
           <Text style={[styles.fontBtnText, { color: c.text }]}>A+</Text>
@@ -292,31 +444,77 @@ export function SettingsScreen() {
       </View>
 
       {/* Theme */}
-      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>Тема</Text>
+      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>
+        Тема
+      </Text>
       <View style={styles.themeRow}>
         <TouchableOpacity
-          style={[styles.themeBtn, theme === 'light' && { backgroundColor: c.primary }]}
-          onPress={() => setTheme('light')}
+          style={[
+            styles.themeBtn,
+            theme === "light" && { backgroundColor: c.primary },
+          ]}
+          onPress={() => setTheme("light")}
         >
-          <Text style={[styles.themeBtnText, { color: theme === 'light' ? '#FFF' : c.text }]}>☀️ Светлая</Text>
+          <Text
+            style={[
+              styles.themeBtnText,
+              { color: theme === "light" ? "#FFF" : c.text },
+            ]}
+          >
+            ☀️ Светлая
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.themeBtn, theme === 'dark' && { backgroundColor: c.primary }]}
-          onPress={() => setTheme('dark')}
+          style={[
+            styles.themeBtn,
+            theme === "dark" && { backgroundColor: c.primary },
+          ]}
+          onPress={() => setTheme("dark")}
         >
-          <Text style={[styles.themeBtnText, { color: theme === 'dark' ? '#FFF' : c.text }]}>🌙 Тёмная</Text>
+          <Text
+            style={[
+              styles.themeBtnText,
+              { color: theme === "dark" ? "#FFF" : c.text },
+            ]}
+          >
+            🌙 Тёмная
+          </Text>
         </TouchableOpacity>
       </View>
 
       {/* Sync Folder */}
-      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>Папка синхронизации</Text>
+      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>
+        Папка синхронизации
+      </Text>
       <Text style={[styles.hint, { color: c.textSecondary }]}>
-        Путь к папке Dropbox для синхронизации с десктопом.{'\n'}
+        {Platform.OS === "android"
+          ? "На Android лучше выбирать папку через системный диалог. Путь подставится автоматически."
+          : "Путь к папке Dropbox для синхронизации с десктопом."}
+        {"\n"}
         Напр. /storage/emulated/0/Documents/uspevatel
       </Text>
+      {Platform.OS === "android" && (
+        <TouchableOpacity
+          style={[
+            styles.exportBtn,
+            { backgroundColor: c.primary, marginTop: 8 },
+          ]}
+          onPress={handlePickAndroidSyncFolder}
+        >
+          <Text style={styles.exportBtnText}>Выбрать папку на Android</Text>
+        </TouchableOpacity>
+      )}
       <View style={styles.addContextRow}>
         <TextInput
-          style={[styles.addContextInput, { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13 }]}
+          style={[
+            styles.addContextInput,
+            {
+              color: c.text,
+              backgroundColor: c.card,
+              borderColor: c.border,
+              fontSize: 13,
+            },
+          ]}
           value={syncFolderInput}
           onChangeText={setSyncFolderInput}
           placeholder="/storage/emulated/0/Documents/uspevatel"
@@ -326,20 +524,47 @@ export function SettingsScreen() {
         />
       </View>
       <TouchableOpacity
-        style={[styles.exportBtn, { backgroundColor: syncFolderInput.trim() ? c.primary : c.textSecondary, marginTop: 8 }]}
+        style={[
+          styles.exportBtn,
+          {
+            backgroundColor: syncFolderInput.trim()
+              ? c.primary
+              : c.textSecondary,
+            marginTop: 8,
+          },
+        ]}
         onPress={handleSetSyncFolder}
       >
-        <Text style={styles.exportBtnText}>{syncFolderInput.trim() ? 'Установить папку' : 'Сбросить папку'}</Text>
+        <Text style={styles.exportBtnText}>
+          {syncFolderInput.trim() ? "Подключить этот путь" : "Сбросить папку"}
+        </Text>
       </TouchableOpacity>
       {syncFolderStatus && (
-        <View style={[{ backgroundColor: c.card, borderRadius: 8, padding: 10, marginTop: 8, borderWidth: 1, borderColor: c.border }]}>
-          <Text style={{ color: c.text, fontSize: 13 }}>{syncFolderStatus}</Text>
+        <View
+          style={[
+            {
+              backgroundColor: c.card,
+              borderRadius: 8,
+              padding: 10,
+              marginTop: 8,
+              borderWidth: 1,
+              borderColor: c.border,
+            },
+          ]}
+        >
+          <Text style={{ color: c.text, fontSize: 13 }}>
+            {syncFolderStatus}
+          </Text>
         </View>
       )}
 
       {/* Context Categories */}
-      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>Контекстные категории</Text>
-      <Text style={[styles.hint, { color: c.textSecondary }]}>Максимум 5. Используйте для группировки задач.</Text>
+      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>
+        Контекстные категории
+      </Text>
+      <Text style={[styles.hint, { color: c.textSecondary }]}>
+        Максимум 5. Используйте для группировки задач.
+      </Text>
       {contextCategories.map((ctx) => (
         <View key={ctx} style={[styles.contextRow, { borderColor: c.border }]}>
           <Text style={[styles.contextName, { color: c.text }]}>\{ctx}</Text>
@@ -350,26 +575,42 @@ export function SettingsScreen() {
       ))}
       <View style={styles.addContextRow}>
         <TextInput
-          style={[styles.addContextInput, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
+          style={[
+            styles.addContextInput,
+            { color: c.text, backgroundColor: c.card, borderColor: c.border },
+          ]}
           value={newContext}
           onChangeText={setNewContext}
           placeholder="обдумывать, прочитать..."
           placeholderTextColor={c.textSecondary}
           onSubmitEditing={handleAddContext}
         />
-        <TouchableOpacity style={[styles.addContextBtn, { backgroundColor: c.primary }]} onPress={handleAddContext}>
+        <TouchableOpacity
+          style={[styles.addContextBtn, { backgroundColor: c.primary }]}
+          onPress={handleAddContext}
+        >
           <Text style={styles.addContextBtnText}>+</Text>
         </TouchableOpacity>
       </View>
 
       {/* Google Sheets Sync */}
-      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>Google Sheets</Text>
+      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>
+        Google Sheets
+      </Text>
       <Text style={[styles.hint, { color: c.textSecondary }]}>
         Двусторонняя синхронизация задач с Google Таблицей
       </Text>
       <View style={styles.addContextRow}>
         <TextInput
-          style={[styles.addContextInput, { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13 }]}
+          style={[
+            styles.addContextInput,
+            {
+              color: c.text,
+              backgroundColor: c.card,
+              borderColor: c.border,
+              fontSize: 13,
+            },
+          ]}
           value={syncUrlInput}
           onChangeText={setSyncUrlInput}
           placeholder="https://script.google.com/macros/s/.../exec"
@@ -378,15 +619,33 @@ export function SettingsScreen() {
           autoCorrect={false}
         />
         <TouchableOpacity
-          style={[styles.addContextBtn, { backgroundColor: c.primary, width: 80, borderRadius: 8 }]}
-          onPress={() => { setSyncUrl(syncUrlInput.trim()); setSyncStatus('URL сохранён'); }}
+          style={[
+            styles.addContextBtn,
+            { backgroundColor: c.primary, width: 80, borderRadius: 8 },
+          ]}
+          onPress={() => {
+            setSyncUrl(syncUrlInput.trim());
+            setSyncStatus("URL сохранён");
+          }}
         >
-          <Text style={[styles.addContextBtnText, { fontSize: 13 }]}>Сохранить</Text>
+          <Text style={[styles.addContextBtnText, { fontSize: 13 }]}>
+            Сохранить
+          </Text>
         </TouchableOpacity>
       </View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 12 }}>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          marginTop: 12,
+          gap: 12,
+        }}
+      >
         <TouchableOpacity
-          style={[styles.exportBtn, { opacity: syncing || !syncUrl ? 0.5 : 1, marginTop: 0, flex: 1 }]}
+          style={[
+            styles.exportBtn,
+            { opacity: syncing || !syncUrl ? 0.5 : 1, marginTop: 0, flex: 1 },
+          ]}
           onPress={handleSync}
           disabled={syncing || !syncUrl}
         >
@@ -403,7 +662,18 @@ export function SettingsScreen() {
         </Text>
       )}
       {syncStatus && (
-        <View style={[{ backgroundColor: c.card, borderRadius: 8, padding: 10, marginTop: 8, borderWidth: 1, borderColor: c.border }]}>
+        <View
+          style={[
+            {
+              backgroundColor: c.card,
+              borderRadius: 8,
+              padding: 10,
+              marginTop: 8,
+              borderWidth: 1,
+              borderColor: c.border,
+            },
+          ]}
+        >
           <Text style={{ color: c.text, fontSize: 13 }}>{syncStatus}</Text>
         </View>
       )}
@@ -413,20 +683,46 @@ export function SettingsScreen() {
         style={{ marginTop: 12 }}
         onPress={() => setShowScript(!showScript)}
       >
-        <Text style={{ color: c.primary, fontSize: 14, fontWeight: '600' }}>
-          {showScript ? '▼ Скрыть инструкцию' : '▶ Как настроить синхронизацию'}
+        <Text style={{ color: c.primary, fontSize: 14, fontWeight: "600" }}>
+          {showScript ? "▼ Скрыть инструкцию" : "▶ Как настроить синхронизацию"}
         </Text>
       </TouchableOpacity>
       {showScript && (
-        <View style={[{ backgroundColor: c.card, borderRadius: 8, padding: 12, marginTop: 8, borderWidth: 1, borderColor: c.border }]}>
-          <Text style={{ color: c.text, fontSize: 13, lineHeight: 20, marginBottom: 8 }}>
-            {'1. Создайте Google Таблицу\n2. Откройте: Расширения → Apps Script\n3. Удалите всё в Code.gs\n4. Вставьте код (кнопка ниже)\n5. Нажмите Развернуть → Новое развёртывание\n6. Тип: Веб-приложение\n   • Выполнять как: Я\n   • Доступ: Все\n7. Нажмите Развернуть, подтвердите\n8. Скопируйте URL и вставьте выше'}
+        <View
+          style={[
+            {
+              backgroundColor: c.card,
+              borderRadius: 8,
+              padding: 12,
+              marginTop: 8,
+              borderWidth: 1,
+              borderColor: c.border,
+            },
+          ]}
+        >
+          <Text
+            style={{
+              color: c.text,
+              fontSize: 13,
+              lineHeight: 20,
+              marginBottom: 8,
+            }}
+          >
+            {
+              "1. Создайте Google Таблицу\n2. Откройте: Расширения → Apps Script\n3. Удалите всё в Code.gs\n4. Вставьте код (кнопка ниже)\n5. Нажмите Развернуть → Новое развёртывание\n6. Тип: Веб-приложение\n   • Выполнять как: Я\n   • Доступ: Все\n7. Нажмите Развернуть, подтвердите\n8. Скопируйте URL и вставьте выше"
+            }
           </Text>
           <TouchableOpacity
-            style={[styles.exportBtn, { backgroundColor: '#2E7D32', marginTop: 4 }]}
+            style={[
+              styles.exportBtn,
+              { backgroundColor: "#2E7D32", marginTop: 4 },
+            ]}
             onPress={() => {
               Clipboard.setString(APPS_SCRIPT_CODE);
-              Alert.alert('Скопировано', 'Код скрипта скопирован в буфер обмена. Вставьте его в Apps Script.');
+              Alert.alert(
+                "Скопировано",
+                "Код скрипта скопирован в буфер обмена. Вставьте его в Apps Script.",
+              );
             }}
           >
             <Text style={styles.exportBtnText}>Скопировать код скрипта</Text>
@@ -435,37 +731,52 @@ export function SettingsScreen() {
       )}
 
       {/* Data */}
-      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>Данные</Text>
+      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>
+        Данные
+      </Text>
       <View style={[styles.infoRow, { borderColor: c.border }]}>
-        <Text style={[styles.infoLabel, { color: c.textSecondary }]}>Задач</Text>
-        <Text style={[styles.infoValue, { color: c.text }]}>{tasks.length}</Text>
+        <Text style={[styles.infoLabel, { color: c.textSecondary }]}>
+          Задач
+        </Text>
+        <Text style={[styles.infoValue, { color: c.text }]}>
+          {tasks.length}
+        </Text>
       </View>
       <View style={[styles.infoRow, { borderColor: c.border }]}>
-        <Text style={[styles.infoLabel, { color: c.textSecondary }]}>Проектов</Text>
-        <Text style={[styles.infoValue, { color: c.text }]}>{projects.length}</Text>
+        <Text style={[styles.infoLabel, { color: c.textSecondary }]}>
+          Проектов
+        </Text>
+        <Text style={[styles.infoValue, { color: c.text }]}>
+          {projects.length}
+        </Text>
       </View>
 
-      <TouchableOpacity style={[styles.exportBtn, { backgroundColor: c.primary }]} onPress={handleExport}>
+      <TouchableOpacity
+        style={[styles.exportBtn, { backgroundColor: c.primary }]}
+        onPress={handleExport}
+      >
         <Text style={styles.exportBtnText}>Экспортировать данные</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
         style={[styles.dangerBtn]}
         onPress={() =>
-          Alert.alert('Удалить все данные?', 'Это действие нельзя отменить!', [
-            { text: 'Отмена', style: 'cancel' },
+          Alert.alert("Удалить все данные?", "Это действие нельзя отменить!", [
+            { text: "Отмена", style: "cancel" },
             {
-              text: 'Удалить',
-              style: 'destructive',
+              text: "Удалить",
+              style: "destructive",
               onPress: async () => {
                 await AsyncStorage.clear();
-                Alert.alert('Готово', 'Перезапустите приложение');
+                Alert.alert("Готово", "Перезапустите приложение");
               },
             },
           ])
         }
       >
-        <Text style={[styles.dangerBtnText, { color: c.danger }]}>Удалить все данные</Text>
+        <Text style={[styles.dangerBtnText, { color: c.danger }]}>
+          Удалить все данные
+        </Text>
       </TouchableOpacity>
 
       {conflicts.length > 0 && (
@@ -474,7 +785,10 @@ export function SettingsScreen() {
           currentIndex={conflictIndex}
           onKeepLocal={handleKeepLocal}
           onTakeRemote={handleTakeRemote}
-          onClose={() => { setConflicts([]); setSyncStatus('Синхронизация отменена'); }}
+          onClose={() => {
+            setConflicts([]);
+            setSyncStatus("Синхронизация отменена");
+          }}
         />
       )}
     </ScrollView>
@@ -483,28 +797,75 @@ export function SettingsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
-  title: { fontSize: 28, fontWeight: '800', marginBottom: 16 },
-  sectionTitle: { fontSize: 18, fontWeight: '700', marginBottom: 8 },
+  title: { fontSize: 28, fontWeight: "800", marginBottom: 16 },
+  sectionTitle: { fontSize: 18, fontWeight: "700", marginBottom: 8 },
   hint: { fontSize: 13, marginBottom: 8 },
-  fontSizeRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  fontBtn: { width: 48, height: 48, borderRadius: 10, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  fontBtnText: { fontSize: 18, fontWeight: '700' },
-  fontPreview: { flex: 1, alignItems: 'center' },
-  contextRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1 },
-  contextName: { fontSize: 15, fontWeight: '500' },
-  removeBtn: { fontSize: 14, fontWeight: '600' },
-  addContextRow: { flexDirection: 'row', marginTop: 8, gap: 8 },
-  addContextInput: { flex: 1, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 15 },
-  addContextBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  addContextBtnText: { color: '#FFF', fontSize: 20, fontWeight: '600' },
-  themeRow: { flexDirection: 'row', gap: 12 },
-  themeBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: '#E5E7EB' },
-  themeBtnText: { fontSize: 15, fontWeight: '600' },
-  infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1 },
+  fontSizeRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  fontBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fontBtnText: { fontSize: 18, fontWeight: "700" },
+  fontPreview: { flex: 1, alignItems: "center" },
+  contextRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
+  contextName: { fontSize: 15, fontWeight: "500" },
+  removeBtn: { fontSize: 14, fontWeight: "600" },
+  addContextRow: { flexDirection: "row", marginTop: 8, gap: 8 },
+  addContextInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 15,
+  },
+  addContextBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addContextBtnText: { color: "#FFF", fontSize: 20, fontWeight: "600" },
+  themeRow: { flexDirection: "row", gap: 12 },
+  themeBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    backgroundColor: "#E5E7EB",
+  },
+  themeBtnText: { fontSize: 15, fontWeight: "600" },
+  infoRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
   infoLabel: { fontSize: 15 },
-  infoValue: { fontSize: 15, fontWeight: '600' },
-  exportBtn: { marginTop: 16, paddingVertical: 14, borderRadius: 10, alignItems: 'center' },
-  exportBtnText: { color: '#FFF', fontSize: 16, fontWeight: '600' },
-  dangerBtn: { marginTop: 16, marginBottom: 40, paddingVertical: 14, alignItems: 'center' },
-  dangerBtnText: { fontSize: 16, fontWeight: '600' },
+  infoValue: { fontSize: 15, fontWeight: "600" },
+  exportBtn: {
+    marginTop: 16,
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+  exportBtnText: { color: "#FFF", fontSize: 16, fontWeight: "600" },
+  dangerBtn: {
+    marginTop: 16,
+    marginBottom: 40,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  dangerBtnText: { fontSize: 16, fontWeight: "600" },
 });
