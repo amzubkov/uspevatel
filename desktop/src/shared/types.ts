@@ -18,6 +18,7 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   reminderAt?: string;
+  imageUri?: string;
 }
 
 export interface Project {

@@ -1,10 +1,90 @@
 import * as SQLite from 'expo-sqlite';
 import { seedExercises } from './seed';
 import { migrateFromAsyncStorage } from './migrate';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Paths } from 'expo-file-system';
+import * as LegacyFS from 'expo-file-system/legacy';
 
 let _db: SQLite.SQLiteDatabase | null = null;
+let _syncFolder: string | null = null;
 
-const SCHEMA_VERSION = 2;
+const SYNC_FOLDER_KEY = 'uspevatel_sync_folder';
+
+/** Get the current sync folder (null = use default app sandbox) */
+export function getSyncFolder(): string | null { return _syncFolder; }
+
+/** Get the base directory for images — syncFolder or Paths.document */
+export function getImageBaseDir(): string { return _syncFolder || Paths.document.uri; }
+
+/** Read sync folder from AsyncStorage (call once on startup) */
+export async function loadSyncFolder(): Promise<string | null> {
+  _syncFolder = await AsyncStorage.getItem(SYNC_FOLDER_KEY);
+  return _syncFolder;
+}
+
+/** Save sync folder to AsyncStorage */
+export async function setSyncFolder(folder: string | null): Promise<void> {
+  _syncFolder = folder;
+  if (folder) await AsyncStorage.setItem(SYNC_FOLDER_KEY, folder);
+  else await AsyncStorage.removeItem(SYNC_FOLDER_KEY);
+}
+
+/** Close current DB connection (call before switching sync folder) */
+export async function closeDb(): Promise<void> {
+  if (_db) {
+    try { await _db.closeAsync(); } catch {}
+    _db = null;
+  }
+}
+
+/** Copy DB + image folders from current location to target sync folder */
+export async function copyDataToSyncFolder(targetFolder: string): Promise<{ copied: string[] }> {
+  const copied: string[] = [];
+  const srcBase = Paths.document.uri;
+  const target = targetFolder.startsWith('file://') ? targetFolder : 'file://' + targetFolder;
+
+  // Ensure target folder exists
+  const targetInfo = await LegacyFS.getInfoAsync(target);
+  if (!targetInfo.exists) {
+    await LegacyFS.makeDirectoryAsync(target, { intermediates: true });
+  }
+
+  // Copy DB file (expo-sqlite stores it in SQLite/ subdirectory)
+  const srcDbUri = srcBase + '/SQLite/uspevatel.db';
+  const srcDbInfo = await LegacyFS.getInfoAsync(srcDbUri);
+  if (srcDbInfo.exists) {
+    const destSqliteDir = target + '/SQLite';
+    const destDirInfo = await LegacyFS.getInfoAsync(destSqliteDir);
+    if (!destDirInfo.exists) {
+      await LegacyFS.makeDirectoryAsync(destSqliteDir, { intermediates: true });
+    }
+    const destDbUri = destSqliteDir + '/uspevatel.db';
+    const destDbInfo = await LegacyFS.getInfoAsync(destDbUri);
+    if (!destDbInfo.exists) {
+      await LegacyFS.copyAsync({ from: srcDbUri, to: destDbUri });
+      copied.push('uspevatel.db');
+    }
+  }
+
+  // Copy image folders
+  const imageDirs = ['task_images', 'flight_images', 'exercise_images'];
+  for (const dir of imageDirs) {
+    const srcDir = srcBase + '/' + dir;
+    const srcInfo = await LegacyFS.getInfoAsync(srcDir);
+    if (srcInfo.exists) {
+      const destDir = target + '/' + dir;
+      const destInfo = await LegacyFS.getInfoAsync(destDir);
+      if (!destInfo.exists) {
+        await LegacyFS.copyAsync({ from: srcDir, to: destDir });
+        copied.push(dir);
+      }
+    }
+  }
+
+  return { copied };
+}
+
+const SCHEMA_VERSION = 3;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -66,6 +146,22 @@ CREATE TABLE IF NOT EXISTS checklist (
   done INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS flights (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL DEFAULT 'flight' CHECK(kind IN ('flight','hotel')),
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned','booked','completed','cancelled')),
+  depart_date TEXT NOT NULL,
+  depart_time TEXT,
+  arrive_date TEXT,
+  arrive_time TEXT,
+  notes TEXT NOT NULL DEFAULT '',
+  image_data TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_flights_depart ON flights(depart_date);
 
 CREATE TABLE IF NOT EXISTS sport_entries (
   id TEXT PRIMARY KEY,
@@ -153,7 +249,7 @@ CREATE INDEX IF NOT EXISTS idx_workout_logs_date ON workout_logs(date);
 export async function getDb(): Promise<SQLite.SQLiteDatabase> {
   if (_db) return _db;
 
-  const db = await SQLite.openDatabaseAsync('uspevatel.db');
+  const db = await SQLite.openDatabaseAsync('uspevatel.db', {}, _syncFolder || undefined);
   await db.execAsync('PRAGMA journal_mode = WAL;');
   await db.execAsync('PRAGMA foreign_keys = ON;');
   await db.execAsync(SCHEMA);
@@ -175,6 +271,26 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
     // Backfill preset exercise images from bundled assets
     const { backfillExerciseImages } = require('./seed');
     await backfillExerciseImages(db);
+  }
+
+  if (currentVer < 3) {
+    // v3: flights table
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS flights (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL DEFAULT 'flight' CHECK(kind IN ('flight','hotel')),
+        title TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned','booked','completed','cancelled')),
+        depart_date TEXT NOT NULL,
+        depart_time TEXT,
+        arrive_date TEXT,
+        arrive_time TEXT,
+        notes TEXT NOT NULL DEFAULT '',
+        image_data TEXT,
+        created_at TEXT NOT NULL
+      );`);
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_flights_depart ON flights(depart_date);');
+    } catch {}
   }
 
   if (currentVer < SCHEMA_VERSION) {

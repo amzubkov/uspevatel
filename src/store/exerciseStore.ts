@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import * as FileSystem from 'expo-file-system';
-import { getDb } from '../db/database';
+import { Alert } from 'react-native';
+import { File, Paths, Directory } from 'expo-file-system';
+import { getDb, getImageBaseDir } from '../db/database';
 
 export interface Exercise {
   id: number;
@@ -54,13 +55,29 @@ interface ExerciseState {
   getExercisesForDay: (dayId: number) => Exercise[];
 }
 
+function resolveImageUri(val: any): string | null {
+  if (!val) return null;
+  if (typeof val === 'string') {
+    if (val.startsWith('file://') || val.startsWith('content://') || val.startsWith('data:')) return val;
+    return getImageBaseDir() + '/' + val;
+  }
+  return null;
+}
+
 function rowToExercise(r: any): Exercise {
+  const blobImage = r.image_data
+    ? (typeof r.image_data === 'string'
+        ? resolveImageUri(r.image_data)
+        : (r.image_data instanceof Uint8Array || r.image_data instanceof ArrayBuffer)
+          ? blobToBase64Uri(r.image_data, r.media_type)
+          : null)
+    : null;
   return {
     id: r.id,
     name: r.name,
     description: r.description || null,
     imageUri: r.image_uri || null,
-    imageBase64: r.image_data ? blobToBase64Uri(r.image_data, r.media_type) : null,
+    imageBase64: blobImage,
     orderNum: r.order_num || 0,
     tag: r.tag || null,
     weightType: r.weight_type ?? 10,
@@ -147,53 +164,79 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
 
   addExercise: async (name, weightType, tag, description, imageUri) => {
     const db = await getDb();
-    let imageBlob: Uint8Array | null = null;
-    let imageBase64: string | null = null;
+    let relPath: string | null = null;
+    let absUri: string | null = null;
     if (imageUri) {
       try {
-        const b64 = await FileSystem.readAsStringAsync(imageUri, { encoding: 'base64' });
-        // Decode base64 to bytes for BLOB storage
-        const raw = b64.replace(/[^A-Za-z0-9+/]/g, '');
-        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-        const lookup = new Uint8Array(128);
-        for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
-        const byteLen = (raw.length * 3) >> 2;
-        const bytes = new Uint8Array(byteLen);
-        let p = 0;
-        for (let i = 0; i < raw.length; i += 4) {
-          const a = lookup[raw.charCodeAt(i)];
-          const b2 = lookup[raw.charCodeAt(i + 1)];
-          const cv = i + 2 < raw.length ? lookup[raw.charCodeAt(i + 2)] : 0;
-          const d = i + 3 < raw.length ? lookup[raw.charCodeAt(i + 3)] : 0;
-          bytes[p++] = (a << 2) | (b2 >> 4);
-          if (i + 2 < raw.length) bytes[p++] = ((b2 & 15) << 4) | (cv >> 2);
-          if (i + 3 < raw.length) bytes[p++] = ((cv & 3) << 6) | d;
-        }
-        imageBlob = bytes;
-        imageBase64 = `data:image/jpeg;base64,${b64}`;
-      } catch (e) {
-        console.error('addExercise image error:', e);
+        const dir = new Directory(getImageBaseDir(), 'exercise_images');
+        if (!dir.exists) dir.create();
+        const ext = imageUri.split('.').pop()?.split('?')[0] || 'jpg';
+        // Use temp name first, rename after we get the id
+        const tmpName = `tmp_${Date.now()}.${ext}`;
+        const tmpDest = new File(dir, tmpName);
+        const src = new File(imageUri);
+        if (src.exists) src.move(tmpDest);
+        // Insert first to get ID, then rename
+        const res = await db.runAsync(
+          'INSERT INTO exercises (name, weight_type, tag, description, image_data, is_preset) VALUES (?, ?, ?, ?, ?, 0)',
+          [name, weightType, tag || null, description || null, null]
+        );
+        const id = res.lastInsertRowId;
+        const finalDest = new File(dir, `${id}.${ext}`);
+        if (tmpDest.exists) tmpDest.move(finalDest);
+        relPath = `exercise_images/${id}.${ext}`;
+        absUri = finalDest.uri;
+        await db.runAsync('UPDATE exercises SET image_data = ? WHERE id = ?', [relPath, id]);
+        const ex: Exercise = { id, name, weightType, tag: tag || null, description: description || null, imageUri: null, imageBase64: absUri, orderNum: 0, mediaType: 'photo', isPreset: false };
+        set((s) => ({ exercises: [...s.exercises, ex] }));
+        return id;
+      } catch (e: any) {
+        Alert.alert('Ошибка картинки', String(e?.message || e));
       }
     }
     const res = await db.runAsync(
       'INSERT INTO exercises (name, weight_type, tag, description, image_data, is_preset) VALUES (?, ?, ?, ?, ?, 0)',
-      [name, weightType, tag || null, description || null, imageBlob]
+      [name, weightType, tag || null, description || null, null]
     );
     const id = res.lastInsertRowId;
-    const ex: Exercise = { id, name, weightType, tag: tag || null, description: description || null, imageUri: null, imageBase64, orderNum: 0, mediaType: 'photo', isPreset: false };
+    const ex: Exercise = { id, name, weightType, tag: tag || null, description: description || null, imageUri: null, imageBase64: null, orderNum: 0, mediaType: 'photo', isPreset: false };
     set((s) => ({ exercises: [...s.exercises, ex] }));
     return id;
   },
 
   updateExercise: async (id, updates) => {
-    // Compute merged exercise BEFORE set(), to avoid async race
     const prev = get().exercises.find((e) => e.id === id);
     if (!prev) return;
     const merged = { ...prev, ...updates };
+    const db = await getDb();
+
+    // Handle image update
+    if (updates.imageUri !== undefined) {
+      if (updates.imageUri) {
+        try {
+          const dir = new Directory(getImageBaseDir(), 'exercise_images');
+          if (!dir.exists) dir.create();
+          const ext = updates.imageUri.split('.').pop()?.split('?')[0] || 'jpg';
+          const relPath = `exercise_images/${id}.${ext}`;
+          const dest = new File(dir, `${id}.${ext}`);
+          const src = new File(updates.imageUri);
+          if (src.exists) src.move(dest);
+          merged.imageBase64 = dest.uri;
+          merged.imageUri = null;
+          await db.runAsync('UPDATE exercises SET image_data = ? WHERE id = ?', [relPath, id]);
+        } catch (e: any) {
+          Alert.alert('Ошибка картинки', String(e?.message || e));
+        }
+      } else {
+        merged.imageBase64 = null;
+        merged.imageUri = null;
+        await db.runAsync('UPDATE exercises SET image_data = NULL WHERE id = ?', [id]);
+      }
+    }
+
     set((s) => ({
       exercises: s.exercises.map((e) => (e.id === id ? merged : e)),
     }));
-    const db = await getDb();
     await db.runAsync(
       'UPDATE exercises SET name=?, weight_type=?, tag=?, description=? WHERE id=?',
       [merged.name, merged.weightType, merged.tag, merged.description, id]

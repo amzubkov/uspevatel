@@ -1,8 +1,18 @@
+import { Alert } from 'react-native';
 import { create } from 'zustand';
 import * as Crypto from 'expo-crypto';
-import * as FileSystem from 'expo-file-system';
+import { File, Paths, Directory } from 'expo-file-system';
 import { Task, Category, WeekStats } from '../types';
-import { getDb } from '../db/database';
+import { getDb, getImageBaseDir } from '../db/database';
+
+function resolveImageUri(val: any): string | undefined {
+  if (!val) return undefined;
+  if (typeof val === 'string') {
+    if (val.startsWith('file://') || val.startsWith('content://') || val.startsWith('data:')) return val;
+    return getImageBaseDir() + '/' + val;
+  }
+  return undefined;
+}
 
 interface TaskState {
   tasks: Task[];
@@ -45,7 +55,7 @@ function rowToTask(r: any): Task {
     completedAt: r.completed_at || undefined,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
-    imageBase64: r.image_data ? blobToBase64(r.image_data) : undefined,
+    imageBase64: r.image_data ? resolveImageUri(r.image_data) : undefined,
   };
 }
 
@@ -188,30 +198,19 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
 
   addImageToTask: async (id, imageUri) => {
     try {
-      const b64 = await FileSystem.readAsStringAsync(imageUri, { encoding: 'base64' });
-      // Decode base64 to bytes for BLOB storage
-      const raw = b64.replace(/[^A-Za-z0-9+/]/g, '');
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-      const lookup = new Uint8Array(128);
-      for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
-      const byteLen = (raw.length * 3) >> 2;
-      const bytes = new Uint8Array(byteLen);
-      let p = 0;
-      for (let i = 0; i < raw.length; i += 4) {
-        const a = lookup[raw.charCodeAt(i)];
-        const b2 = lookup[raw.charCodeAt(i + 1)];
-        const c = i + 2 < raw.length ? lookup[raw.charCodeAt(i + 2)] : 0;
-        const d = i + 3 < raw.length ? lookup[raw.charCodeAt(i + 3)] : 0;
-        bytes[p++] = (a << 2) | (b2 >> 4);
-        if (i + 2 < raw.length) bytes[p++] = ((b2 & 15) << 4) | (c >> 2);
-        if (i + 3 < raw.length) bytes[p++] = ((c & 3) << 6) | d;
-      }
-      const dataUri = `data:image/jpeg;base64,${b64}`;
-      set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, imageBase64: dataUri } : t) }));
+      const dir = new Directory(getImageBaseDir(), 'task_images');
+      if (!dir.exists) dir.create();
+      const ext = imageUri.split('.').pop()?.split('?')[0] || 'jpg';
+      const relPath = `task_images/${id}.${ext}`;
+      const dest = new File(dir, `${id}.${ext}`);
+      const src = new File(imageUri);
+      if (src.exists) src.move(dest);
+      const absUri = dest.uri;
+      set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, imageBase64: absUri } : t) }));
       const db = await getDb();
-      await db.runAsync('UPDATE tasks SET image_data = ? WHERE id = ?', [bytes, id]);
-    } catch (e) {
-      console.error('addImageToTask error:', e);
+      await db.runAsync('UPDATE tasks SET image_data = ? WHERE id = ?', [relPath, id]);
+    } catch (e: any) {
+      Alert.alert('Ошибка картинки', String(e?.message || e));
     }
   },
 

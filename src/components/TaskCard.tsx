@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { Task, Category } from '../types';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
@@ -37,7 +37,7 @@ export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPre
         <View style={styles.content}>
           <View style={styles.topRow}>
             <Text style={[styles.action, { color: c.text, fontSize }, task.completed && styles.completedText]} numberOfLines={2}>
-              {showCategory ? CATEGORY_EMOJI[task.category] : ''}{task.deadline ? <Text style={{ color: c.danger }}>{new Date(task.deadline).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }).replace(/\./g, '')}</Text> : null}{task.project ? <Text style={{ color: c.primary }}>{task.project} </Text> : null}{task.subject ? <Text style={{ color: c.textSecondary }}>{task.subject} </Text> : null}{task.action}
+              {showCategory ? CATEGORY_EMOJI[task.category] : ''}{task.deadline ? <Text style={{ color: c.danger }}>{new Date(task.deadline).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} </Text> : null}{task.project ? <Text style={{ color: c.primary }}>{task.project} </Text> : null}{task.subject ? <Text style={{ color: c.textSecondary }}>{task.subject} </Text> : null}{task.action}
             </Text>
             {task.priority === 'high' && <View style={[styles.priorityDot, { backgroundColor: c.danger }]} />}
           </View>
@@ -57,6 +57,9 @@ export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPre
             )}
           </View>
         </View>
+        {task.imageBase64 ? (
+          <Image source={{ uri: task.imageBase64 }} style={styles.thumb} />
+        ) : null}
       </View>
     </TouchableOpacity>
   );
@@ -84,4 +87,5 @@ const styles = StyleSheet.create({
   tags: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 2, gap: 6, alignItems: 'center' },
   tagInline: { fontWeight: '600' },
   priorityDot: { width: 7, height: 7, borderRadius: 4, marginLeft: 6 },
+  thumb: { width: 40, height: 40, borderRadius: 6, marginLeft: 8 },
 });

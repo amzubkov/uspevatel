@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Modal, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Modal, Alert, Platform } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useTaskStore } from '../store/taskStore';
 import { useProjectStore } from '../store/projectStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -31,8 +32,8 @@ export function AddTaskScreen() {
   const [priority, setPriority] = useState<'high' | 'normal' | 'low'>('normal');
   const [deadline, setDeadline] = useState<string | undefined>();
   const [showDeadlinePicker, setShowDeadlinePicker] = useState(false);
-  const [customDeadlineDate, setCustomDeadlineDate] = useState('');
-  const [customDeadlineTime, setCustomDeadlineTime] = useState('');
+  const [showDeadlineTimePicker, setShowDeadlineTimePicker] = useState(false);
+  const [pickerDate, setPickerDate] = useState(new Date());
 
   const handleSave = () => {
     if (!action.trim()) return;
@@ -202,11 +203,8 @@ export function AddTaskScreen() {
             <Text style={[styles.chipText, { color: c.text }]}>Послезавтра</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.chip, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
-            const now = new Date();
-            const dd = String(now.getDate()).padStart(2, '0');
-            const mm = String(now.getMonth() + 1).padStart(2, '0');
-            setCustomDeadlineDate(`${dd}.${mm}.${now.getFullYear()}`);
-            setCustomDeadlineTime('23:59');
+            const d = new Date(); d.setHours(23, 59, 0, 0);
+            setPickerDate(d);
             setShowDeadlinePicker(true);
           }}>
             <Text style={[styles.chipText, { color: c.text }]}>Кастом</Text>
@@ -233,53 +231,34 @@ export function AddTaskScreen() {
         <Text style={styles.saveBtnText}>Сохранить</Text>
       </TouchableOpacity>
 
-      <Modal visible={showDeadlinePicker} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalBox, { backgroundColor: c.card }]}>
-            <Text style={[styles.modalTitle, { color: c.text }]}>Дедлайн</Text>
-            <Text style={[styles.modalLabel, { color: c.textSecondary }]}>Дата (ДД.ММ.ГГГГ)</Text>
-            <TextInput
-              style={[styles.modalInput, { color: c.text, backgroundColor: c.background, borderColor: c.border }]}
-              value={customDeadlineDate}
-              onChangeText={setCustomDeadlineDate}
-              placeholder="01.03.2026"
-              placeholderTextColor={c.textSecondary}
-              keyboardType="numeric"
-            />
-            <Text style={[styles.modalLabel, { color: c.textSecondary }]}>Время (ЧЧ:ММ)</Text>
-            <TextInput
-              style={[styles.modalInput, { color: c.text, backgroundColor: c.background, borderColor: c.border }]}
-              value={customDeadlineTime}
-              onChangeText={setCustomDeadlineTime}
-              placeholder="23:59"
-              placeholderTextColor={c.textSecondary}
-              keyboardType="numeric"
-            />
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: c.border }]} onPress={() => setShowDeadlinePicker(false)}>
-                <Text style={[styles.modalBtnText, { color: c.text }]}>Отмена</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: c.primary }]} onPress={() => {
-                const dateMatch = customDeadlineDate.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-                const timeMatch = customDeadlineTime.match(/^(\d{1,2}):(\d{2})$/);
-                if (!dateMatch) { Alert.alert('Ошибка', 'Формат даты: ДД.ММ.ГГГГ'); return; }
-                if (!timeMatch) { Alert.alert('Ошибка', 'Формат времени: ЧЧ:ММ'); return; }
-                const target = new Date(
-                  parseInt(dateMatch[3], 10),
-                  parseInt(dateMatch[2], 10) - 1,
-                  parseInt(dateMatch[1], 10),
-                  parseInt(timeMatch[1], 10),
-                  parseInt(timeMatch[2], 10), 0, 0
-                );
-                setDeadline(target.toISOString());
-                setShowDeadlinePicker(false);
-              }}>
-                <Text style={styles.modalBtnText}>OK</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {showDeadlinePicker && (
+        <DateTimePicker
+          value={pickerDate}
+          mode="date"
+          display={Platform.OS === 'ios' ? 'spinner' : 'calendar'}
+          onChange={(e, date) => {
+            if (e.type === 'dismissed') { setShowDeadlinePicker(false); return; }
+            if (date) {
+              setPickerDate(date);
+              setShowDeadlinePicker(false);
+              setShowDeadlineTimePicker(true);
+            }
+          }}
+        />
+      )}
+      {showDeadlineTimePicker && (
+        <DateTimePicker
+          value={pickerDate}
+          mode="time"
+          is24Hour
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          onChange={(e, date) => {
+            setShowDeadlineTimePicker(false);
+            if (e.type === 'dismissed') return;
+            if (date) setDeadline(date.toISOString());
+          }}
+        />
+      )}
     </ScrollView>
   );
 }

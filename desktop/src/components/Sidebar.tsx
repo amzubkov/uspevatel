@@ -14,6 +14,12 @@ const NAV_ITEMS = [
   { path: '/projects', label: 'Проекты', icon: '📂', color: '#2563EB' },
   { path: '/add', label: 'Добавить', icon: '➕', color: '#16A34A' },
   { divider: true } as any,
+  { path: '/sport', label: 'Спорт', icon: '💪', color: '#EF4444' },
+  { path: '/exercises', label: 'Упражнения', icon: '🏋️', color: '#F59E0B' },
+  { path: '/flights', label: 'Перелёты', icon: '✈️', color: '#3B82F6' },
+  { path: '/routine', label: 'Рутина', icon: '📋', color: '#8B5CF6' },
+  { path: '/checklist', label: 'Чеклист', icon: '✅', color: '#16A34A' },
+  { divider: true } as any,
   { path: '/settings', label: 'Настройки', icon: '⚙️', color: '#666' },
 ];
 

@@ -17,6 +17,7 @@ interface SportState {
 
   load: () => Promise<void>;
   addEntry: (type: SportEntry['type'], count: number, label?: string) => void;
+  updateEntry: (id: string, fields: Partial<Pick<SportEntry, 'count' | 'label' | 'date' | 'time'>>) => void;
   removeEntry: (id: string) => void;
 }
 
@@ -52,6 +53,21 @@ export const useSportStore = create<SportState>()((set, get) => ({
     const db = await getDb();
     await db.runAsync('INSERT INTO sport_entries (id, type, label, count, date, time) VALUES (?, ?, ?, ?, ?, ?)',
       [entry.id, type, label || null, count, entry.date, entry.time]);
+  },
+
+  updateEntry: async (id, fields) => {
+    set((s) => ({ entries: s.entries.map((e) => e.id === id ? { ...e, ...fields } : e) }));
+    const db = await getDb();
+    const sets: string[] = [];
+    const vals: any[] = [];
+    if (fields.count !== undefined) { sets.push('count = ?'); vals.push(fields.count); }
+    if (fields.label !== undefined) { sets.push('label = ?'); vals.push(fields.label); }
+    if (fields.date !== undefined) { sets.push('date = ?'); vals.push(fields.date); }
+    if (fields.time !== undefined) { sets.push('time = ?'); vals.push(fields.time); }
+    if (sets.length > 0) {
+      vals.push(id);
+      await db.runAsync(`UPDATE sport_entries SET ${sets.join(', ')} WHERE id = ?`, vals);
+    }
   },
 
   removeEntry: async (id) => {

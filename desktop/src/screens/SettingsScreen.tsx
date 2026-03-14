@@ -2,6 +2,10 @@ import React, { useState, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 import { colors } from '../styles/theme';
 import { syncLog } from '../shared/syncService';
+import { save, open } from '@tauri-apps/plugin-dialog';
+import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
+import { useDatabase } from '../context/DatabaseContext';
+import { openDatabase, setSyncFolderSetting } from '../services/db';
 
 const APPS_SCRIPT_CODE = `var SHEET_NAME = 'Tasks';
 var HEADERS = ['id','subject','action','category','contextCategory','project','notes','startDate','priority','isRecurring','recurDays','completed','completedAt','deadline','createdAt','updatedAt','reminderAt'];
@@ -121,21 +125,83 @@ export function SettingsScreen() {
     setNewContext('');
   };
 
+  const { syncFolder, reload } = useDatabase();
+  const [folderStatus, setFolderStatus] = useState<string | null>(null);
+
+  const handleChooseFolder = useCallback(async () => {
+    try {
+      const path = await open({ directory: true });
+      if (!path) return;
+      setSyncFolderSetting(path as string);
+      await openDatabase(path as string);
+      await reload();
+      setFolderStatus(`Подключено: ${path}`);
+    } catch (e) {
+      setFolderStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, [reload]);
+
+  const [dataStatus, setDataStatus] = useState<string | null>(null);
+
+  const collectAllData = () => {
+    const keys = [
+      'tasks', 'projects', 'sport_entries', 'exercises', 'workout_logs',
+      'flights', 'routine_items', 'routine_completions', 'checklist',
+      'uspevatel-settings',
+    ];
+    const data: Record<string, any> = {};
+    for (const key of keys) {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        try { data[key] = JSON.parse(raw); } catch { data[key] = raw; }
+      }
+    }
+    return data;
+  };
+
+  const handleExportToFile = async () => {
+    try {
+      const path = await save({
+        defaultPath: 'uspevatel-backup.json',
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (!path) return;
+      const data = collectAllData();
+      await writeTextFile(path, JSON.stringify(data, null, 2));
+      setDataStatus(`Сохранено: ${path}`);
+    } catch (e) {
+      setDataStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const handleImportFromFile = async () => {
+    try {
+      const path = await open({
+        multiple: false,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (!path) return;
+      const raw = await readTextFile(path as string);
+      const data = JSON.parse(raw);
+      if (typeof data !== 'object' || !data) { setDataStatus('Неверный формат файла'); return; }
+      if (!window.confirm('Заменить все данные из файла? Текущие данные будут перезаписаны.')) return;
+      for (const [key, value] of Object.entries(data)) {
+        localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+      }
+      setDataStatus('Импорт завершён. Перезагрузка...');
+      setTimeout(() => window.location.reload(), 500);
+    } catch (e) {
+      setDataStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   const handleExport = () => {
-    const data = {
-      tasks,
-      projects,
-      settings: {
-        contextCategories: settings.contextCategories,
-        theme: settings.theme,
-        fontSize: settings.fontSize,
-      },
-    };
+    const data = collectAllData();
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'uspevatel-export.json';
+    a.download = 'uspevatel-backup.json';
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -168,6 +234,26 @@ export function SettingsScreen() {
           Тёмная
         </button>
       </div>
+
+      {/* Sync Folder (SQLite) */}
+      <h3 style={{ color: c.text, fontSize: 18, fontWeight: 700, marginTop: 24, marginBottom: 8 }}>Папка синхронизации (SQLite)</h3>
+      <p style={{ color: c.textSecondary, fontSize: 13, marginBottom: 8 }}>
+        Укажите папку Dropbox с файлом uspevatel.db для синхронизации с телефоном
+      </p>
+      {syncFolder && (
+        <div style={{ padding: '8px 12px', borderRadius: 8, backgroundColor: c.card, border: `1px solid ${c.border}`, marginBottom: 8 }}>
+          <span style={{ color: c.text, fontSize: 13, fontFamily: 'monospace' }}>{syncFolder}</span>
+        </div>
+      )}
+      <button onClick={handleChooseFolder}
+        style={{ width: '100%', padding: 14, borderRadius: 10, backgroundColor: syncFolder ? c.card : c.primary, color: syncFolder ? c.text : '#fff', fontWeight: 600, fontSize: 15, border: syncFolder ? `1px solid ${c.border}` : 'none' }}>
+        {syncFolder ? 'Изменить папку...' : 'Выбрать папку...'}
+      </button>
+      {folderStatus && (
+        <div style={{ backgroundColor: c.card, borderRadius: 8, padding: 10, marginTop: 8, border: `1px solid ${c.border}` }}>
+          <span style={{ color: c.text, fontSize: 13 }}>{folderStatus}</span>
+        </div>
+      )}
 
       {/* Context Categories */}
       <h3 style={{ color: c.text, fontSize: 18, fontWeight: 700, marginTop: 24, marginBottom: 8 }}>Контекстные категории</h3>
@@ -257,10 +343,32 @@ export function SettingsScreen() {
         <span style={{ color: c.text, fontSize: 15, fontWeight: 600 }}>{projects.length}</span>
       </div>
 
+      <h3 style={{ color: c.text, fontSize: 18, fontWeight: 700, marginTop: 24, marginBottom: 8 }}>Сохранение / Загрузка</h3>
+      <p style={{ color: c.textSecondary, fontSize: 13, marginBottom: 8 }}>
+        Экспорт и импорт всех данных (задачи, проекты, спорт, упражнения, перелёты, рутина, чеклист)
+      </p>
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button onClick={handleExportToFile}
+          style={{ flex: 1, padding: 14, borderRadius: 10, backgroundColor: c.primary, color: '#fff', fontWeight: 600, fontSize: 15 }}>
+          Сохранить в файл...
+        </button>
+        <button onClick={handleImportFromFile}
+          style={{ flex: 1, padding: 14, borderRadius: 10, backgroundColor: c.success, color: '#fff', fontWeight: 600, fontSize: 15 }}>
+          Загрузить из файла...
+        </button>
+      </div>
+
       <button onClick={handleExport}
-        style={{ marginTop: 16, width: '100%', padding: 14, borderRadius: 10, backgroundColor: c.primary, color: '#fff', fontWeight: 600, fontSize: 16 }}>
-        Экспортировать данные
+        style={{ marginTop: 8, width: '100%', padding: 10, borderRadius: 8, border: `1px solid ${c.border}`, backgroundColor: c.card, color: c.text, fontWeight: 500, fontSize: 13 }}>
+        Скачать через браузер (fallback)
       </button>
+
+      {dataStatus && (
+        <div style={{ backgroundColor: c.card, borderRadius: 8, padding: 10, marginTop: 8, border: `1px solid ${c.border}` }}>
+          <span style={{ color: c.text, fontSize: 13 }}>{dataStatus}</span>
+        </div>
+      )}
 
       <button
         onClick={() => {

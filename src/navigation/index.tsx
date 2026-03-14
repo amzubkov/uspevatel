@@ -26,6 +26,7 @@ import { AllScreen } from '../screens/AllScreen';
 import { CheckScreen } from '../screens/CheckScreen';
 import { SportScreen } from '../screens/SportScreen';
 import { ExerciseDetailScreen } from '../screens/ExerciseDetailScreen';
+import { PlannerTab } from '../screens/PlannerTab';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -49,6 +50,9 @@ const HeaderButtons = React.memo(function HeaderButtons() {
       </TouchableOpacity>
       <TouchableOpacity style={hStyles.btn} onPress={() => navigation.navigate('Sport')}>
         <Text style={hStyles.emoji}>💪</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={hStyles.btn} onPress={() => navigation.navigate('Planner')}>
+        <Text style={hStyles.emoji}>✈️</Text>
       </TouchableOpacity>
       <TouchableOpacity style={hStyles.btn} onPress={() => navigation.navigate('Projects')}>
         <Text style={hStyles.emoji}>📂</Text>
@@ -196,6 +200,7 @@ export function AppNavigator() {
         <Stack.Screen name="DailyRoutine" component={DailyRoutineScreen} options={{ title: 'Ежедневный регламент' }} />
         <Stack.Screen name="WeeklyRoutine" component={WeeklyRoutineScreen} options={{ title: 'Еженедельный обзор' }} />
         <Stack.Screen name="Sport" component={SportScreen} options={{ title: 'Спорт' }} />
+        <Stack.Screen name="Planner" component={PlannerTab} options={{ title: 'Планнер' }} />
         <Stack.Screen name="ExerciseDetail" component={ExerciseDetailScreen} options={{ title: 'Упражнение' }} />
         <Stack.Screen name="Stats" component={StatsScreen} options={{ title: 'Статистика' }} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Настройки' }} />

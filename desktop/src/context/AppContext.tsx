@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { Task, Project, Category } from '../shared/types';
 import { fetchRemoteTasks, pushChanges } from '../shared/syncService';
 import { useSettings } from '../hooks/useSettings';
+import { getDb, getSyncFolder } from '../services/db';
 
 interface AppState {
   tasks: Task[];
@@ -49,6 +50,59 @@ function loadProjects(): Project[] {
   } catch { return []; }
 }
 
+// SQLite helpers for tasks
+async function dbLoadTasks(): Promise<Task[]> {
+  const db = getDb(); if (!db) return [];
+  const rows = await db.select<any[]>('SELECT * FROM tasks ORDER BY created_at DESC');
+  return rows.map(r => ({
+    id: r.id, subject: r.subject || '', action: r.action, category: r.category as Category,
+    contextCategory: r.context_category || undefined, project: r.project || undefined,
+    notes: r.notes || '', startDate: r.start_date || undefined, deadline: r.deadline || undefined,
+    reminderAt: r.reminder_at || undefined, priority: r.priority || 'normal',
+    isRecurring: !!r.is_recurring, recurDays: r.recur_days ? JSON.parse(r.recur_days) : undefined,
+    completed: !!r.completed, completedAt: r.completed_at || undefined,
+    createdAt: r.created_at, updatedAt: r.updated_at, imageUri: r.image_data || undefined,
+  }));
+}
+
+async function dbUpsertTask(t: Task) {
+  const db = getDb(); if (!db) return;
+  await db.execute(
+    `INSERT OR REPLACE INTO tasks (id,subject,action,category,context_category,project,notes,start_date,deadline,reminder_at,priority,is_recurring,recur_days,completed,completed_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+    [t.id, t.subject, t.action, t.category, t.contextCategory || null, t.project || null,
+     t.notes, t.startDate || null, t.deadline || null, t.reminderAt || null, t.priority,
+     t.isRecurring ? 1 : 0, t.recurDays ? JSON.stringify(t.recurDays) : null,
+     t.completed ? 1 : 0, t.completedAt || null, t.createdAt, t.updatedAt]
+  );
+}
+
+async function dbDeleteTask(id: string) {
+  const db = getDb(); if (!db) return;
+  await db.execute('DELETE FROM tasks WHERE id=$1', [id]);
+}
+
+// SQLite helpers for projects
+async function dbLoadProjects(): Promise<Project[]> {
+  const db = getDb(); if (!db) return [];
+  const rows = await db.select<any[]>('SELECT * FROM projects');
+  return rows.map(r => ({
+    id: r.id, name: r.name, isCurrent: !!r.is_current, notes: r.notes || '',
+  }));
+}
+
+async function dbUpsertProject(p: Project) {
+  const db = getDb(); if (!db) return;
+  await db.execute(
+    'INSERT OR REPLACE INTO projects (id,name,is_current,notes) VALUES ($1,$2,$3,$4)',
+    [p.id, p.name, p.isCurrent ? 1 : 0, p.notes]
+  );
+}
+
+async function dbDeleteProject(id: string) {
+  const db = getDb(); if (!db) return;
+  await db.execute('DELETE FROM projects WHERE id=$1', [id]);
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const settings = useSettings();
   const [tasks, setTasksRaw] = useState<Task[]>(loadTasks);
@@ -56,29 +110,52 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const syncUrl = settings.syncUrl;
+  const useSqlite = !!getSyncFolder();
 
   // Keep a ref to always have current tasks (avoids stale closure issues)
   const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
 
-  // Wrapper that persists to localStorage
+  // Wrapper that persists to localStorage (or SQLite is handled per-operation)
   const setTasks = useCallback((updater: Task[] | ((prev: Task[]) => Task[])) => {
     setTasksRaw((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
-      saveTasks(next);
+      if (!getSyncFolder()) saveTasks(next);
       return next;
     });
   }, []);
 
-  // Persist projects to localStorage
+  // Persist projects to localStorage (skip if SQLite mode)
   useEffect(() => {
-    localStorage.setItem('uspevatel-projects', JSON.stringify(projects));
+    if (!getSyncFolder()) {
+      localStorage.setItem('uspevatel-projects', JSON.stringify(projects));
+    }
   }, [projects]);
+
+  // Load from SQLite on mount if syncFolder is set
+  useEffect(() => {
+    if (getSyncFolder() && getDb()) {
+      dbLoadTasks().then(t => { if (t.length > 0) setTasksRaw(t); });
+      dbLoadProjects().then(p => { if (p.length > 0) setProjects(p); });
+    }
+  }, []);
 
   // Track in-flight pushes to avoid refresh wiping them
   const pushingRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    if (getSyncFolder() && getDb()) {
+      // SQLite mode: reload from DB
+      setLoading(true);
+      try {
+        const [t, p] = await Promise.all([dbLoadTasks(), dbLoadProjects()]);
+        setTasksRaw(t);
+        setProjects(p);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     if (!syncUrl) { setError('Укажите URL в настройках'); return; }
     // Don't refresh while pushes are in-flight
     if (pushingRef.current > 0) {
@@ -89,15 +166,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     try {
       const remote = await fetchRemoteTasks(syncUrl);
-      // Merge: remote is source of truth, but keep local tasks that don't exist remotely yet
-      // (they might have been just created and push hasn't completed)
       const remoteIds = new Set(remote.map((t) => t.id));
       const localOnly = tasksRef.current.filter((t) => !remoteIds.has(t.id));
       const merged = [...remote, ...localOnly];
       setTasks(merged);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-      // On error, keep local tasks (don't wipe)
     } finally {
       setLoading(false);
     }
@@ -143,7 +217,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     // Use functional update to always get latest state
     setTasks((prev) => [...prev, newTask]);
-    await safePush([newTask], []);
+    if (getSyncFolder()) await dbUpsertTask(newTask);
+    else await safePush([newTask], []);
   }, [setTasks, safePush]);
 
   const updateTask = useCallback(async (id: string, updates: Partial<Task>) => {
@@ -161,13 +236,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
     // Wait a tick for state to settle, then push
     if (updated) {
-      await safePush([updated], []);
+      if (getSyncFolder()) await dbUpsertTask(updated);
+      else await safePush([updated], []);
     }
   }, [setTasks, safePush]);
 
   const deleteTask = useCallback(async (id: string) => {
     setTasks((prev) => prev.filter((t) => t.id !== id));
-    await safePush([], [id]);
+    if (getSyncFolder()) await dbDeleteTask(id);
+    else await safePush([], [id]);
   }, [setTasks, safePush]);
 
   const moveTask = useCallback(async (id: string, category: Category) => {
@@ -182,30 +259,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await updateTask(id, { completed: false, completedAt: undefined });
   }, [updateTask]);
 
-  // Project management (local only)
+  // Project management
   const addProject = useCallback((name: string, isCurrent = true) => {
-    setProjects((prev) => [...prev, {
-      id: crypto.randomUUID(),
-      name: name.toUpperCase(),
-      isCurrent,
-      notes: '',
-    }]);
+    const p: Project = { id: crypto.randomUUID(), name: name.toUpperCase(), isCurrent, notes: '' };
+    setProjects((prev) => [...prev, p]);
+    if (getSyncFolder()) dbUpsertProject(p);
   }, []);
 
   const updateProject = useCallback((id: string, updates: Partial<Project>) => {
-    setProjects((prev) => prev.map((p) =>
-      p.id === id ? { ...p, ...updates, name: updates.name ? updates.name.toUpperCase() : p.name } : p
-    ));
+    setProjects((prev) => {
+      const next = prev.map((p) =>
+        p.id === id ? { ...p, ...updates, name: updates.name ? updates.name.toUpperCase() : p.name } : p
+      );
+      const updated = next.find(p => p.id === id);
+      if (updated && getSyncFolder()) dbUpsertProject(updated);
+      return next;
+    });
   }, []);
 
   const deleteProject = useCallback((id: string) => {
     setProjects((prev) => prev.filter((p) => p.id !== id));
+    if (getSyncFolder()) dbDeleteProject(id);
   }, []);
 
   const toggleProjectCurrent = useCallback((id: string) => {
-    setProjects((prev) => prev.map((p) =>
-      p.id === id ? { ...p, isCurrent: !p.isCurrent } : p
-    ));
+    setProjects((prev) => {
+      const next = prev.map((p) =>
+        p.id === id ? { ...p, isCurrent: !p.isCurrent } : p
+      );
+      const updated = next.find(p => p.id === id);
+      if (updated && getSyncFolder()) dbUpsertProject(updated);
+      return next;
+    });
   }, []);
 
   return (

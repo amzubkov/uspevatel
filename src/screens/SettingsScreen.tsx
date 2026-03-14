@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Share, ActivityIndicator, Clipboard } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Share, ActivityIndicator, Clipboard, Platform, Linking, PermissionsAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSettingsStore } from '../store/settingsStore';
 import { useTaskStore } from '../store/taskStore';
@@ -9,6 +9,7 @@ import { fetchRemoteTasks, pushChanges, computeSync, pushRoutineLog } from '../s
 import { SyncConflictModal } from '../components/SyncConflictModal';
 import { useRoutineStore } from '../store/routineStore';
 import { Task, SyncConflict } from '../types';
+import { getSyncFolder, setSyncFolder, closeDb, getDb, copyDataToSyncFolder } from '../db/database';
 
 const APPS_SCRIPT_CODE = `var SHEET_NAME = 'Tasks';
 var HEADERS = ['id','subject','action','category','contextCategory','project','notes','startDate','priority','isRecurring','recurDays','completed','completedAt','deadline','createdAt','updatedAt','reminderAt'];
@@ -121,6 +122,37 @@ export function SettingsScreen() {
   const projects = useProjectStore((s) => s.projects);
   const routineItems = useRoutineStore((s) => s.items);
   const routineCompleted = useRoutineStore((s) => s.completedToday);
+
+  // Sync folder
+  const [syncFolderInput, setSyncFolderInput] = useState(getSyncFolder() || '');
+  const [syncFolderStatus, setSyncFolderStatus] = useState<string | null>(null);
+
+  const handleSetSyncFolder = useCallback(async () => {
+    const path = syncFolderInput.trim();
+    if (!path) {
+      await setSyncFolder(null);
+      setSyncFolderStatus('Папка сброшена. Перезапустите приложение.');
+      return;
+    }
+    // Request storage permissions on Android < 30
+    if (Platform.OS === 'android' && Platform.Version < 30) {
+      const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
+      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+        setSyncFolderStatus('Нет разрешения на запись');
+        return;
+      }
+    }
+    try {
+      await closeDb();
+      const { copied } = await copyDataToSyncFolder(path);
+      await setSyncFolder(path);
+      await getDb();
+      const info = copied.length ? `\nСкопировано: ${copied.join(', ')}` : '';
+      setSyncFolderStatus(`Подключено: ${path}${info}\nПерезапустите приложение для полной синхронизации.`);
+    } catch (e: any) {
+      setSyncFolderStatus(`Ошибка: ${e?.message || String(e)}`);
+    }
+  }, [syncFolderInput]);
 
   // Sync state
   const [syncUrlInput, setSyncUrlInput] = useState(syncUrl);
@@ -275,6 +307,35 @@ export function SettingsScreen() {
           <Text style={[styles.themeBtnText, { color: theme === 'dark' ? '#FFF' : c.text }]}>🌙 Тёмная</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Sync Folder */}
+      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>Папка синхронизации</Text>
+      <Text style={[styles.hint, { color: c.textSecondary }]}>
+        Путь к папке Dropbox для синхронизации с десктопом.{'\n'}
+        Напр. /storage/emulated/0/Documents/uspevatel
+      </Text>
+      <View style={styles.addContextRow}>
+        <TextInput
+          style={[styles.addContextInput, { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13 }]}
+          value={syncFolderInput}
+          onChangeText={setSyncFolderInput}
+          placeholder="/storage/emulated/0/Documents/uspevatel"
+          placeholderTextColor={c.textSecondary}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+      </View>
+      <TouchableOpacity
+        style={[styles.exportBtn, { backgroundColor: syncFolderInput.trim() ? c.primary : c.textSecondary, marginTop: 8 }]}
+        onPress={handleSetSyncFolder}
+      >
+        <Text style={styles.exportBtnText}>{syncFolderInput.trim() ? 'Установить папку' : 'Сбросить папку'}</Text>
+      </TouchableOpacity>
+      {syncFolderStatus && (
+        <View style={[{ backgroundColor: c.card, borderRadius: 8, padding: 10, marginTop: 8, borderWidth: 1, borderColor: c.border }]}>
+          <Text style={{ color: c.text, fontSize: 13 }}>{syncFolderStatus}</Text>
+        </View>
+      )}
 
       {/* Context Categories */}
       <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>Контекстные категории</Text>

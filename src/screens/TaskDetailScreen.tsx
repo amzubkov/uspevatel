@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Modal, FlatList, Image } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Modal, FlatList, Image, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useTaskStore } from '../store/taskStore';
 import { useProjectStore } from '../store/projectStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -39,12 +40,13 @@ export function TaskDetailScreen() {
   const [deadline, setDeadline] = useState<string | undefined>(task?.deadline);
   const [showSubjectList, setShowSubjectList] = useState(false);
   const [showProjectList, setShowProjectList] = useState(false);
-  const [showCustomReminder, setShowCustomReminder] = useState(false);
+  const [showFullImg, setShowFullImg] = useState(false);
   const [showDeadlinePicker, setShowDeadlinePicker] = useState(false);
-  const [customDeadlineDate, setCustomDeadlineDate] = useState('');
-  const [customDeadlineTime, setCustomDeadlineTime] = useState('');
-  const [customDate, setCustomDate] = useState('');
-  const [customTime, setCustomTime] = useState('');
+  const [showDeadlineTimePicker, setShowDeadlineTimePicker] = useState(false);
+  const [pickerDate, setPickerDate] = useState(new Date());
+  const [showReminderDatePicker, setShowReminderDatePicker] = useState(false);
+  const [showReminderTimePicker, setShowReminderTimePicker] = useState(false);
+  const [reminderPickerDate, setReminderPickerDate] = useState(new Date());
   const deletedRef = useRef(false);
 
   // Unique subjects from all tasks
@@ -129,35 +131,10 @@ export function TaskDetailScreen() {
   };
 
   const openCustomReminder = () => {
-    const now = new Date();
-    const dd = String(now.getDate()).padStart(2, '0');
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const yyyy = now.getFullYear();
-    setCustomDate(`${dd}.${mm}.${yyyy}`);
-    setCustomTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
-    setShowCustomReminder(true);
-  };
-
-  const handleCustomReminderSave = () => {
-    const dateMatch = customDate.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-    const timeMatch = customTime.match(/^(\d{1,2}):(\d{2})$/);
-    if (!dateMatch) { Alert.alert('Ошибка', 'Формат даты: ДД.ММ.ГГГГ'); return; }
-    if (!timeMatch) { Alert.alert('Ошибка', 'Формат времени: ЧЧ:ММ'); return; }
-    const day = parseInt(dateMatch[1], 10);
-    const month = parseInt(dateMatch[2], 10) - 1;
-    const year = parseInt(dateMatch[3], 10);
-    const h = parseInt(timeMatch[1], 10);
-    const m = parseInt(timeMatch[2], 10);
-    if (h > 23 || m > 59) { Alert.alert('Ошибка', 'Неверное время'); return; }
-    const target = new Date(year, month, day, h, m, 0, 0);
-    if (target <= new Date()) { Alert.alert('Ошибка', 'Дата должна быть в будущем'); return; }
-    setShowCustomReminder(false);
-    scheduleTaskReminder(taskId, task.action, target).then((id) => {
-      if (id) {
-        updateTask(taskId, { reminderAt: target.toISOString() });
-        Alert.alert('🔔', `${customDate} ${customTime}`);
-      }
-    });
+    const d = new Date();
+    d.setMinutes(d.getMinutes() + 30);
+    setReminderPickerDate(d);
+    setShowReminderDatePicker(true);
   };
 
   const handleCancelReminder = async () => {
@@ -342,9 +319,8 @@ export function TaskDetailScreen() {
             <Text style={[styles.reminderChipText, { color: c.text }]}>Послезавтра</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => {
-            const now = new Date();
-            setCustomDeadlineDate(`${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}.${now.getFullYear()}`);
-            setCustomDeadlineTime('23:59');
+            const d = new Date(); d.setHours(23, 59, 0, 0);
+            setPickerDate(d);
             setShowDeadlinePicker(true);
           }}>
             <Text style={[styles.reminderChipText, { color: c.text }]}>Кастом</Text>
@@ -375,20 +351,31 @@ export function TaskDetailScreen() {
       <Text style={[styles.label, { color: c.textSecondary }]}>Фото</Text>
       {task.imageBase64 ? (
         <View style={{ marginBottom: 12 }}>
-          <Image source={{ uri: task.imageBase64 }} style={{ width: '100%', height: 200, borderRadius: 8 }} resizeMode="cover" />
+          <TouchableOpacity activeOpacity={0.9} onPress={() => setShowFullImg(true)}>
+            <Image source={{ uri: task.imageBase64 }} style={{ width: '100%', height: 200, borderRadius: 8 }} resizeMode="cover" />
+          </TouchableOpacity>
           <TouchableOpacity style={{ position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, width: 24, height: 24, alignItems: 'center', justifyContent: 'center' }} onPress={() => removeImageFromTask(taskId)}>
             <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700' }}>×</Text>
           </TouchableOpacity>
+          <Modal visible={showFullImg} transparent animationType="fade" onRequestClose={() => setShowFullImg(false)}>
+            <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center' }} activeOpacity={1} onPress={() => setShowFullImg(false)}>
+              <Image source={{ uri: task.imageBase64 }} style={{ width: '100%', height: '80%' }} resizeMode="contain" />
+            </TouchableOpacity>
+          </Modal>
         </View>
       ) : (
         <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
           <TouchableOpacity style={[styles.photoBtn, { borderColor: c.border }]} onPress={async () => {
+            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (status !== 'granted') { Alert.alert('Нет доступа', 'Разрешите доступ к галерее в настройках'); return; }
             const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
             if (!r.canceled && r.assets[0]) addImageToTask(taskId, r.assets[0].uri);
           }}>
             <Text style={{ color: c.textSecondary, fontSize: 13 }}>Галерея</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.photoBtn, { borderColor: c.border }]} onPress={async () => {
+            const { status } = await ImagePicker.requestCameraPermissionsAsync();
+            if (status !== 'granted') { Alert.alert('Нет доступа', 'Разрешите доступ к камере в настройках'); return; }
             const r = await ImagePicker.launchCameraAsync({ quality: 0.7 });
             if (!r.canceled && r.assets[0]) addImageToTask(taskId, r.assets[0].uri);
           }}>
@@ -456,87 +443,71 @@ export function TaskDetailScreen() {
         <Text style={[styles.deleteBtnText, { color: c.danger }]}>Удалить задачу</Text>
       </TouchableOpacity>
 
-      <Modal visible={showDeadlinePicker} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalBox, { backgroundColor: c.card }]}>
-            <Text style={[styles.modalTitle, { color: c.text }]}>Дедлайн</Text>
-            <Text style={[styles.modalLabel, { color: c.textSecondary }]}>Дата (ДД.ММ.ГГГГ)</Text>
-            <TextInput
-              style={[styles.modalInput, { color: c.text, backgroundColor: c.background, borderColor: c.border }]}
-              value={customDeadlineDate}
-              onChangeText={setCustomDeadlineDate}
-              placeholder="01.03.2026"
-              placeholderTextColor={c.textSecondary}
-              keyboardType="numeric"
-            />
-            <Text style={[styles.modalLabel, { color: c.textSecondary }]}>Время (ЧЧ:ММ)</Text>
-            <TextInput
-              style={[styles.modalInput, { color: c.text, backgroundColor: c.background, borderColor: c.border }]}
-              value={customDeadlineTime}
-              onChangeText={setCustomDeadlineTime}
-              placeholder="23:59"
-              placeholderTextColor={c.textSecondary}
-              keyboardType="numeric"
-            />
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: c.border }]} onPress={() => setShowDeadlinePicker(false)}>
-                <Text style={[styles.modalBtnText, { color: c.text }]}>Отмена</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: c.primary }]} onPress={() => {
-                const dateMatch = customDeadlineDate.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-                const timeMatch = customDeadlineTime.match(/^(\d{1,2}):(\d{2})$/);
-                if (!dateMatch) { Alert.alert('Ошибка', 'Формат даты: ДД.ММ.ГГГГ'); return; }
-                if (!timeMatch) { Alert.alert('Ошибка', 'Формат времени: ЧЧ:ММ'); return; }
-                const target = new Date(
-                  parseInt(dateMatch[3], 10),
-                  parseInt(dateMatch[2], 10) - 1,
-                  parseInt(dateMatch[1], 10),
-                  parseInt(timeMatch[1], 10),
-                  parseInt(timeMatch[2], 10), 0, 0
-                );
-                setDeadline(target.toISOString());
-                setShowDeadlinePicker(false);
-              }}>
-                <Text style={styles.modalBtnText}>OK</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {showDeadlinePicker && (
+        <DateTimePicker
+          value={pickerDate}
+          mode="date"
+          display={Platform.OS === 'ios' ? 'spinner' : 'calendar'}
+          onChange={(e, date) => {
+            if (e.type === 'dismissed') { setShowDeadlinePicker(false); return; }
+            if (date) {
+              setPickerDate(date);
+              setShowDeadlinePicker(false);
+              setShowDeadlineTimePicker(true);
+            }
+          }}
+        />
+      )}
+      {showDeadlineTimePicker && (
+        <DateTimePicker
+          value={pickerDate}
+          mode="time"
+          is24Hour
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          onChange={(e, date) => {
+            setShowDeadlineTimePicker(false);
+            if (e.type === 'dismissed') return;
+            if (date) setDeadline(date.toISOString());
+          }}
+        />
+      )}
 
-      <Modal visible={showCustomReminder} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalBox, { backgroundColor: c.card }]}>
-            <Text style={[styles.modalTitle, { color: c.text }]}>Напоминание</Text>
-            <Text style={[styles.modalLabel, { color: c.textSecondary }]}>Дата (ДД.ММ.ГГГГ)</Text>
-            <TextInput
-              style={[styles.modalInput, { color: c.text, backgroundColor: c.background, borderColor: c.border }]}
-              value={customDate}
-              onChangeText={setCustomDate}
-              placeholder="01.03.2026"
-              placeholderTextColor={c.textSecondary}
-              keyboardType="numeric"
-            />
-            <Text style={[styles.modalLabel, { color: c.textSecondary }]}>Время (ЧЧ:ММ)</Text>
-            <TextInput
-              style={[styles.modalInput, { color: c.text, backgroundColor: c.background, borderColor: c.border }]}
-              value={customTime}
-              onChangeText={setCustomTime}
-              placeholder="14:30"
-              placeholderTextColor={c.textSecondary}
-              keyboardType="numeric"
-            />
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: c.border }]} onPress={() => setShowCustomReminder(false)}>
-                <Text style={[styles.modalBtnText, { color: c.text }]}>Отмена</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: c.primary }]} onPress={handleCustomReminderSave}>
-                <Text style={styles.modalBtnText}>Установить</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {showReminderDatePicker && (
+        <DateTimePicker
+          value={reminderPickerDate}
+          mode="date"
+          display={Platform.OS === 'ios' ? 'spinner' : 'calendar'}
+          onChange={(e, date) => {
+            if (e.type === 'dismissed') { setShowReminderDatePicker(false); return; }
+            if (date) {
+              setReminderPickerDate(date);
+              setShowReminderDatePicker(false);
+              setShowReminderTimePicker(true);
+            }
+          }}
+        />
+      )}
+      {showReminderTimePicker && (
+        <DateTimePicker
+          value={reminderPickerDate}
+          mode="time"
+          is24Hour
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          onChange={(e, date) => {
+            setShowReminderTimePicker(false);
+            if (e.type === 'dismissed') return;
+            if (date) {
+              if (date <= new Date()) { Alert.alert('Ошибка', 'Дата должна быть в будущем'); return; }
+              scheduleTaskReminder(taskId, task.action, date).then((id) => {
+                if (id) {
+                  updateTask(taskId, { reminderAt: date.toISOString() });
+                  Alert.alert('🔔', date.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }));
+                }
+              });
+            }
+          }}
+        />
+      )}
     </ScrollView>
   );
 }

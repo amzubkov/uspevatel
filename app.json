@@ -23,14 +23,34 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "versionCode": 5,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "MANAGE_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-sqlite",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Приложению нужен доступ к фото для прикрепления изображений",
+          "cameraPermission": "Приложению нужен доступ к камере для съёмки фото"
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Приложению нужен доступ к календарю для отображения расписания"
+        }
+      ]
     ]
   }
 }

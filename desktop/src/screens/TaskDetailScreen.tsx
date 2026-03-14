@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { colors } from '../styles/theme';
 import { Category, CATEGORY_LABELS } from '../shared/types';
+import { resolveImageSrc } from '../services/images';
 
 const CATEGORIES: Category[] = ['IN', 'DAY', 'LATER', 'CONTROL', 'MAYBE'];
 
@@ -202,6 +203,15 @@ export function TaskDetailScreen() {
           <button onClick={() => setShowDeadlinePicker(true)} style={chipStyle(false, '')}>Кастом</button>
         </div>
       )}
+
+      {/* Image */}
+      {(() => { const src = resolveImageSrc(task.imageUri); return src ? (
+        <div style={{ marginTop: 16 }}>
+          <label style={{ fontSize: 13, fontWeight: 600, color: c.textSecondary, display: 'block', marginBottom: 6 }}>Фото</label>
+          <img src={src} alt="" style={{ width: '100%', maxHeight: 300, objectFit: 'cover', borderRadius: 10, cursor: 'pointer' }}
+            onClick={(e) => { const el = e.currentTarget; if (document.fullscreenElement) document.exitFullscreen(); else el.requestFullscreen(); }} />
+        </div>
+      ) : null; })()}
 
       {/* Notes */}
       <label style={{ fontSize: 13, fontWeight: 600, color: c.textSecondary, display: 'block', marginTop: 16, marginBottom: 6 }}>Заметки</label>

@@ -11,6 +11,8 @@ import { useRoutineStore } from './src/store/routineStore';
 import { useChecklistStore } from './src/store/checklistStore';
 import { useSportStore } from './src/store/sportStore';
 import { useExerciseStore } from './src/store/exerciseStore';
+import { useFlightStore } from './src/store/flightStore';
+import { loadSyncFolder } from './src/db/database';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -39,9 +41,12 @@ function AppLoader() {
   const loadChecklist = useChecklistStore((s) => s.load);
   const loadSport = useSportStore((s) => s.load);
   const loadExercises = useExerciseStore((s) => s.load);
+  const loadFlights = useFlightStore((s) => s.load);
 
   useEffect(() => {
     (async () => {
+      // Load sync folder BEFORE anything opens the DB
+      await loadSyncFolder();
       // Settings first (theme needed for UI), then rest in parallel
       await loadSettings();
       await Promise.all([
@@ -51,6 +56,7 @@ function AppLoader() {
         loadChecklist(),
         loadSport(),
         loadExercises(),
+        loadFlights(),
       ]);
       setReady(true);
     })();
