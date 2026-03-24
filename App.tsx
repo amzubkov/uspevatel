@@ -12,6 +12,12 @@ import { useChecklistStore } from './src/store/checklistStore';
 import { useSportStore } from './src/store/sportStore';
 import { useExerciseStore } from './src/store/exerciseStore';
 import { useFlightStore } from './src/store/flightStore';
+import { useHealthStore } from './src/store/healthStore';
+import { useAttachmentStore } from './src/store/attachmentStore';
+import { useDoctorStore } from './src/store/doctorStore';
+import { useTravelerStore } from './src/store/travelerStore';
+import { useDocumentStore } from './src/store/documentStore';
+import { useCarStore } from './src/store/carStore';
 import { loadSyncFolder } from './src/db/database';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -42,6 +48,12 @@ function AppLoader() {
   const loadSport = useSportStore((s) => s.load);
   const loadExercises = useExerciseStore((s) => s.load);
   const loadFlights = useFlightStore((s) => s.load);
+  const loadHealth = useHealthStore((s) => s.load);
+  const loadAttachments = useAttachmentStore((s) => s.load);
+  const loadDoctors = useDoctorStore((s) => s.load);
+  const loadTravelers = useTravelerStore((s) => s.load);
+  const loadDocuments = useDocumentStore((s) => s.load);
+  const loadCars = useCarStore((s) => s.load);
 
   useEffect(() => {
     (async () => {
@@ -57,6 +69,12 @@ function AppLoader() {
         loadSport(),
         loadExercises(),
         loadFlights(),
+        loadHealth(),
+        loadAttachments(),
+        loadDoctors(),
+        loadTravelers(),
+        loadDocuments(),
+        loadCars(),
       ]);
       setReady(true);
     })();

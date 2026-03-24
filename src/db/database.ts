@@ -3,163 +3,36 @@ import { seedExercises } from "./seed";
 import { migrateFromAsyncStorage } from "./migrate";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Paths } from "expo-file-system";
-import * as LegacyFS from "expo-file-system/legacy";
-import { Platform } from "react-native";
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _syncFolder: string | null = null;
 
 const SYNC_FOLDER_KEY = "uspevatel_sync_folder";
-const FOLDER_SYNC_STATE_KEY = "uspevatel_folder_sync_state";
-const SYNC_MANIFEST_NAME = "uspevatel-sync.json";
-const SYNC_DB_NAME = "uspevatel.db";
-const LOCAL_DB_DIR = joinUri(Paths.document.uri, "SQLite");
-const LOCAL_DB_URI = joinUri(LOCAL_DB_DIR, SYNC_DB_NAME);
-const IMAGE_DIRS = ["task_images", "flight_images", "exercise_images"] as const;
 
-type ImageDirName = (typeof IMAGE_DIRS)[number];
-
-interface FolderSyncState {
-  deviceId: string;
-  lastSyncedRevision: number | null;
-  lastSyncedAt: string | null;
-  lastLocalChangeAt: string | null;
-}
-
-interface SyncManifest {
-  version: 1;
-  revision: number;
-  updatedAt: string;
-  deviceId: string;
-}
-
-export interface FolderSyncPlan {
-  action: "export" | "import" | "noop" | "conflict" | "missing-folder";
-  message: string;
-}
-
-export interface FolderSyncResult {
-  action: "export" | "import" | "noop" | "conflict" | "error";
-  message: string;
-}
-
-const DEFAULT_FOLDER_SYNC_STATE: FolderSyncState = {
-  deviceId: "",
-  lastSyncedRevision: null,
-  lastSyncedAt: null,
-  lastLocalChangeAt: null,
-};
-
-function joinUri(base: string, child: string): string {
-  return `${base.replace(/\/+$/, "")}/${child.replace(/^\/+/, "")}`;
-}
-
-function isSafUri(value: string | null | undefined): value is string {
-  return !!value && value.startsWith("content://");
-}
-
-function usesFolderAsLiveStorage(): boolean {
-  return !!_syncFolder && Platform.OS !== "android" && !isSafUri(_syncFolder);
-}
-
-function toFileUri(pathOrUri: string): string {
-  if (pathOrUri.startsWith("file://")) return pathOrUri;
-  return `file://${pathOrUri.replace(/^\/+/, "/")}`;
-}
-
-function splitRelativePath(relativePath: string): string[] {
-  return relativePath
-    .split("/")
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function basenameFromUri(uri: string): string {
-  const lastSegment = uri.substring(uri.lastIndexOf("/") + 1);
-  const decoded = decodeURIComponent(lastSegment);
-  const slashIndex = decoded.lastIndexOf("/");
-  return slashIndex >= 0 ? decoded.slice(slashIndex + 1) : decoded;
-}
-
-function androidUriToDisplayPath(value: string): string | null {
-  try {
-    const match =
-      value.match(/\/tree\/([^/]+)/) || value.match(/\/document\/([^/]+)/);
-    if (!match?.[1]) return null;
-    const decoded = decodeURIComponent(match[1]);
-    const colonIndex = decoded.indexOf(":");
-    if (colonIndex < 0) return null;
-    const volume = decoded.slice(0, colonIndex);
-    const relative = decoded.slice(colonIndex + 1).replace(/^\/+/, "");
-    const prefix =
-      volume === "primary" ? "/storage/emulated/0" : `/storage/${volume}`;
-    return relative ? `${prefix}/${relative}` : prefix;
-  } catch {
-    return null;
-  }
-}
-
-function getMimeType(fileName: string): string {
-  const ext = fileName.toLowerCase().split(".").pop();
-  switch (ext) {
-    case "json":
-      return "application/json";
-    case "db":
-      return "application/octet-stream";
-    case "jpg":
-    case "jpeg":
-      return "image/jpeg";
-    case "png":
-      return "image/png";
-    case "gif":
-      return "image/gif";
-    case "webp":
-      return "image/webp";
-    default:
-      return "application/octet-stream";
-  }
-}
-
-function getCreateFileName(fileName: string): string {
-  const dotIndex = fileName.lastIndexOf(".");
-  return dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName;
-}
-
-/** Get the configured sync folder target (path or SAF URI). */
+/** Get the current sync folder (null = use default app sandbox) */
 export function getSyncFolder(): string | null {
   return _syncFolder;
 }
 
-/** Human-friendly label for the configured sync folder. */
-export function describeSyncFolder(
-  folder: string | null = _syncFolder,
-): string | null {
-  if (!folder) return null;
-  if (isSafUri(folder)) return androidUriToDisplayPath(folder) || folder;
-  return String(folder).replace(/^file:\/\//, "");
-}
-
-/** Get the base directory for images used by the live app DB. */
+/** Get the base directory for images — always app sandbox on Android */
 export function getImageBaseDir(): string {
-  return usesFolderAsLiveStorage()
-    ? (_syncFolder as string)
-    : Paths.document.uri;
+  return Paths.document.uri;
 }
 
-/** Read sync folder from AsyncStorage (call once on startup). */
+/** Read sync folder from AsyncStorage (call once on startup) */
 export async function loadSyncFolder(): Promise<string | null> {
   _syncFolder = await AsyncStorage.getItem(SYNC_FOLDER_KEY);
   return _syncFolder;
 }
 
-/** Save sync folder target. */
+/** Save sync folder to AsyncStorage */
 export async function setSyncFolder(folder: string | null): Promise<void> {
   _syncFolder = folder;
   if (folder) await AsyncStorage.setItem(SYNC_FOLDER_KEY, folder);
   else await AsyncStorage.removeItem(SYNC_FOLDER_KEY);
 }
 
-/** Close current DB connection. */
+/** Close current DB connection (call before switching sync folder) */
 export async function closeDb(): Promise<void> {
   if (_db) {
     try {
@@ -169,525 +42,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-async function loadFolderSyncState(): Promise<FolderSyncState> {
-  const raw = await AsyncStorage.getItem(FOLDER_SYNC_STATE_KEY);
-  let state: FolderSyncState = DEFAULT_FOLDER_SYNC_STATE;
-  if (raw) {
-    try {
-      state = { ...DEFAULT_FOLDER_SYNC_STATE, ...JSON.parse(raw) };
-    } catch {}
-  }
-  if (!state.deviceId) {
-    state.deviceId = `mobile-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    await saveFolderSyncState(state);
-  }
-  return state;
-}
-
-async function saveFolderSyncState(state: FolderSyncState): Promise<void> {
-  await AsyncStorage.setItem(FOLDER_SYNC_STATE_KEY, JSON.stringify(state));
-}
-
-function hasUnsyncedLocalChanges(state: FolderSyncState): boolean {
-  if (!state.lastLocalChangeAt) return false;
-  if (!state.lastSyncedAt) return true;
-  return state.lastLocalChangeAt > state.lastSyncedAt;
-}
-
-async function noteLocalChange(): Promise<void> {
-  if (Platform.OS !== "android") return;
-  const state = await loadFolderSyncState();
-  state.lastLocalChangeAt = new Date().toISOString();
-  await saveFolderSyncState(state);
-}
-
-function shouldTrackSqlChange(sql: string): boolean {
-  const normalized = sql.trim().toUpperCase();
-  return (
-    normalized.startsWith("INSERT") ||
-    normalized.startsWith("UPDATE") ||
-    normalized.startsWith("DELETE") ||
-    normalized.startsWith("REPLACE")
-  );
-}
-
-function patchDbForSyncTracking(
-  db: SQLite.SQLiteDatabase,
-): SQLite.SQLiteDatabase {
-  if ((db as any).__uspevatelSyncPatched) return db;
-
-  const originalRunAsync = db.runAsync.bind(db);
-  (db as any).runAsync = async (...args: any[]) => {
-    const result = await (originalRunAsync as any)(...args);
-    const sql = typeof args[0] === "string" ? args[0] : "";
-    if (shouldTrackSqlChange(sql)) {
-      await noteLocalChange();
-    }
-    return result;
-  };
-
-  (db as any).__uspevatelSyncPatched = true;
-  return db;
-}
-
-async function ensureLocalDir(dirUri: string): Promise<void> {
-  await LegacyFS.makeDirectoryAsync(dirUri, { intermediates: true });
-}
-
-async function deleteLocalDir(dirUri: string): Promise<void> {
-  await LegacyFS.deleteAsync(dirUri, { idempotent: true });
-}
-
-async function readLocalFileAsBase64(fileUri: string): Promise<string | null> {
-  const info = await LegacyFS.getInfoAsync(fileUri);
-  if (!info.exists) return null;
-  return LegacyFS.readAsStringAsync(fileUri, {
-    encoding: LegacyFS.EncodingType.Base64,
-  });
-}
-
-async function writeLocalBase64File(
-  fileUri: string,
-  contents: string,
-): Promise<void> {
-  const lastSlash = fileUri.lastIndexOf("/");
-  if (lastSlash > "file://".length) {
-    await ensureLocalDir(fileUri.slice(0, lastSlash));
-  }
-  await LegacyFS.writeAsStringAsync(fileUri, contents, {
-    encoding: LegacyFS.EncodingType.Base64,
-  });
-}
-
-async function writeLocalTextFile(
-  fileUri: string,
-  contents: string,
-): Promise<void> {
-  const lastSlash = fileUri.lastIndexOf("/");
-  if (lastSlash > "file://".length) {
-    await ensureLocalDir(fileUri.slice(0, lastSlash));
-  }
-  await LegacyFS.writeAsStringAsync(fileUri, contents);
-}
-
-async function findSafChildUri(
-  parentUri: string,
-  name: string,
-): Promise<string | null> {
-  const children =
-    await LegacyFS.StorageAccessFramework.readDirectoryAsync(parentUri);
-  return (
-    children.find((childUri) => basenameFromUri(childUri) === name) || null
-  );
-}
-
-async function getSafDirectoryUri(
-  rootUri: string,
-  relativeDir: string,
-  createIfMissing: boolean,
-): Promise<string | null> {
-  const parts = splitRelativePath(relativeDir);
-  let current = rootUri;
-  for (const part of parts) {
-    const existing = await findSafChildUri(current, part);
-    if (existing) {
-      current = existing;
-      continue;
-    }
-    if (!createIfMissing) return null;
-    current = await LegacyFS.StorageAccessFramework.makeDirectoryAsync(
-      current,
-      part,
-    );
-  }
-  return current;
-}
-
-async function getSafFileUri(
-  rootUri: string,
-  relativePath: string,
-): Promise<string | null> {
-  const parts = splitRelativePath(relativePath);
-  const fileName = parts.pop();
-  if (!fileName) return null;
-  const parentUri =
-    parts.length > 0
-      ? await getSafDirectoryUri(rootUri, parts.join("/"), false)
-      : rootUri;
-  if (!parentUri) return null;
-  return findSafChildUri(parentUri, fileName);
-}
-
-async function createOrReplaceSafFile(
-  rootUri: string,
-  relativePath: string,
-): Promise<string> {
-  const parts = splitRelativePath(relativePath);
-  const fileName = parts.pop();
-  if (!fileName) {
-    throw new Error(`Неверный путь файла: ${relativePath}`);
-  }
-  const parentUri =
-    parts.length > 0
-      ? await getSafDirectoryUri(rootUri, parts.join("/"), true)
-      : rootUri;
-  if (!parentUri) {
-    throw new Error(`Не удалось создать каталог для ${relativePath}`);
-  }
-  const existingFile = await findSafChildUri(parentUri, fileName);
-  if (existingFile) {
-    await LegacyFS.deleteAsync(existingFile, { idempotent: true });
-  }
-  return LegacyFS.StorageAccessFramework.createFileAsync(
-    parentUri,
-    getCreateFileName(fileName),
-    getMimeType(fileName),
-  );
-}
-
-async function deleteExternalPath(
-  rootFolder: string,
-  relativePath: string,
-): Promise<void> {
-  if (isSafUri(rootFolder)) {
-    const safFile = await getSafFileUri(rootFolder, relativePath);
-    if (safFile) {
-      await LegacyFS.deleteAsync(safFile, { idempotent: true });
-      return;
-    }
-    const safDir = await getSafDirectoryUri(rootFolder, relativePath, false);
-    if (safDir) {
-      await LegacyFS.deleteAsync(safDir, { idempotent: true });
-    }
-    return;
-  }
-  const fileUri = joinUri(toFileUri(rootFolder), relativePath);
-  await LegacyFS.deleteAsync(fileUri, { idempotent: true });
-}
-
-async function readExternalText(
-  rootFolder: string,
-  relativePath: string,
-): Promise<string | null> {
-  if (isSafUri(rootFolder)) {
-    const fileUri = await getSafFileUri(rootFolder, relativePath);
-    if (!fileUri) return null;
-    return LegacyFS.readAsStringAsync(fileUri);
-  }
-  const fileUri = joinUri(toFileUri(rootFolder), relativePath);
-  const info = await LegacyFS.getInfoAsync(fileUri);
-  if (!info.exists) return null;
-  return LegacyFS.readAsStringAsync(fileUri);
-}
-
-async function writeExternalText(
-  rootFolder: string,
-  relativePath: string,
-  contents: string,
-): Promise<void> {
-  if (isSafUri(rootFolder)) {
-    const fileUri = await createOrReplaceSafFile(rootFolder, relativePath);
-    await LegacyFS.writeAsStringAsync(fileUri, contents);
-    return;
-  }
-  const fileUri = joinUri(toFileUri(rootFolder), relativePath);
-  const parentPath = fileUri.slice(0, fileUri.lastIndexOf("/"));
-  await ensureLocalDir(parentPath);
-  await writeLocalTextFile(fileUri, contents);
-}
-
-async function readExternalBase64(
-  rootFolder: string,
-  relativePath: string,
-): Promise<string | null> {
-  if (isSafUri(rootFolder)) {
-    const fileUri = await getSafFileUri(rootFolder, relativePath);
-    if (!fileUri) return null;
-    return LegacyFS.readAsStringAsync(fileUri, {
-      encoding: LegacyFS.EncodingType.Base64,
-    });
-  }
-  const fileUri = joinUri(toFileUri(rootFolder), relativePath);
-  const info = await LegacyFS.getInfoAsync(fileUri);
-  if (!info.exists) return null;
-  return LegacyFS.readAsStringAsync(fileUri, {
-    encoding: LegacyFS.EncodingType.Base64,
-  });
-}
-
-async function writeExternalBase64(
-  rootFolder: string,
-  relativePath: string,
-  contents: string,
-): Promise<void> {
-  if (isSafUri(rootFolder)) {
-    const fileUri = await createOrReplaceSafFile(rootFolder, relativePath);
-    await LegacyFS.writeAsStringAsync(fileUri, contents, {
-      encoding: LegacyFS.EncodingType.Base64,
-    });
-    return;
-  }
-  const fileUri = joinUri(toFileUri(rootFolder), relativePath);
-  const parentPath = fileUri.slice(0, fileUri.lastIndexOf("/"));
-  await ensureLocalDir(parentPath);
-  await LegacyFS.writeAsStringAsync(fileUri, contents, {
-    encoding: LegacyFS.EncodingType.Base64,
-  });
-}
-
-async function listExternalFiles(
-  rootFolder: string,
-  relativeDir: string,
-): Promise<string[]> {
-  if (isSafUri(rootFolder)) {
-    const dirUri = await getSafDirectoryUri(rootFolder, relativeDir, false);
-    if (!dirUri) return [];
-    const children =
-      await LegacyFS.StorageAccessFramework.readDirectoryAsync(dirUri);
-    return children.map((childUri) => basenameFromUri(childUri));
-  }
-  const dirUri = joinUri(toFileUri(rootFolder), relativeDir);
-  const info = await LegacyFS.getInfoAsync(dirUri);
-  if (!info.exists) return [];
-  return LegacyFS.readDirectoryAsync(dirUri);
-}
-
-async function exportLocalDir(
-  rootFolder: string,
-  dirName: ImageDirName,
-): Promise<void> {
-  const localDirUri = joinUri(Paths.document.uri, dirName);
-  const info = await LegacyFS.getInfoAsync(localDirUri);
-  await deleteExternalPath(rootFolder, dirName);
-  if (!info.exists) return;
-  const files = await LegacyFS.readDirectoryAsync(localDirUri);
-  for (const fileName of files) {
-    const localFileUri = joinUri(localDirUri, fileName);
-    const base64 = await readLocalFileAsBase64(localFileUri);
-    if (base64) {
-      await writeExternalBase64(rootFolder, `${dirName}/${fileName}`, base64);
-    }
-  }
-}
-
-async function importExternalDir(
-  rootFolder: string,
-  dirName: ImageDirName,
-): Promise<void> {
-  const localDirUri = joinUri(Paths.document.uri, dirName);
-  await deleteLocalDir(localDirUri);
-  const files = await listExternalFiles(rootFolder, dirName);
-  if (files.length === 0) return;
-  await ensureLocalDir(localDirUri);
-  for (const fileName of files) {
-    const base64 = await readExternalBase64(
-      rootFolder,
-      `${dirName}/${fileName}`,
-    );
-    if (base64) {
-      await writeLocalBase64File(joinUri(localDirUri, fileName), base64);
-    }
-  }
-}
-
-async function readSyncManifest(
-  rootFolder: string,
-): Promise<SyncManifest | null> {
-  const raw = await readExternalText(rootFolder, SYNC_MANIFEST_NAME);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as SyncManifest;
-    if (
-      parsed &&
-      typeof parsed.revision === "number" &&
-      typeof parsed.updatedAt === "string"
-    ) {
-      return parsed;
-    }
-  } catch {}
-  return null;
-}
-
-async function writeSyncManifest(
-  rootFolder: string,
-  manifest: SyncManifest,
-): Promise<void> {
-  await writeExternalText(
-    rootFolder,
-    SYNC_MANIFEST_NAME,
-    JSON.stringify(manifest, null, 2),
-  );
-}
-
-async function checkpointLocalDb(): Promise<void> {
-  const db = _db || (await getDb());
-  try {
-    await db.execAsync("PRAGMA wal_checkpoint(TRUNCATE);");
-  } catch {}
-}
-
-async function exportSnapshotToFolder(
-  rootFolder: string,
-): Promise<FolderSyncResult> {
-  const state = await loadFolderSyncState();
-  const remoteManifest = await readSyncManifest(rootFolder);
-  const revision =
-    Math.max(remoteManifest?.revision ?? 0, state.lastSyncedRevision ?? 0) + 1;
-  const now = new Date().toISOString();
-
-  await checkpointLocalDb();
-  await closeDb();
-
-  const dbBase64 = await readLocalFileAsBase64(LOCAL_DB_URI);
-  if (!dbBase64) {
-    await getDb();
-    return {
-      action: "error",
-      message: "Локальная база не найдена для выгрузки",
-    };
-  }
-
-  await writeExternalBase64(rootFolder, SYNC_DB_NAME, dbBase64);
-  for (const dirName of IMAGE_DIRS) {
-    await exportLocalDir(rootFolder, dirName);
-  }
-  await writeSyncManifest(rootFolder, {
-    version: 1,
-    revision,
-    updatedAt: now,
-    deviceId: state.deviceId,
-  });
-
-  state.lastSyncedRevision = revision;
-  state.lastSyncedAt = now;
-  state.lastLocalChangeAt = now;
-  await saveFolderSyncState(state);
-  await getDb();
-
-  return {
-    action: "export",
-    message: `Выгружено в папку: база и ${IMAGE_DIRS.length} каталога изображений`,
-  };
-}
-
-async function importSnapshotFromFolder(
-  rootFolder: string,
-): Promise<FolderSyncResult> {
-  const remoteManifest = await readSyncManifest(rootFolder);
-  if (!remoteManifest) {
-    return {
-      action: "error",
-      message: "В выбранной папке нет manifest-файла синхронизации",
-    };
-  }
-
-  const dbBase64 =
-    (await readExternalBase64(rootFolder, SYNC_DB_NAME)) ||
-    (await readExternalBase64(rootFolder, `SQLite/${SYNC_DB_NAME}`));
-  if (!dbBase64) {
-    return {
-      action: "error",
-      message: "В выбранной папке не найден файл uspevatel.db",
-    };
-  }
-
-  await closeDb();
-  await writeLocalBase64File(LOCAL_DB_URI, dbBase64);
-  for (const dirName of IMAGE_DIRS) {
-    await importExternalDir(rootFolder, dirName);
-  }
-
-  const state = await loadFolderSyncState();
-  state.lastSyncedRevision = remoteManifest.revision;
-  state.lastSyncedAt = remoteManifest.updatedAt;
-  state.lastLocalChangeAt = remoteManifest.updatedAt;
-  await saveFolderSyncState(state);
-  await getDb();
-
-  return {
-    action: "import",
-    message: `Загружено из папки: база и ${IMAGE_DIRS.length} каталога изображений`,
-  };
-}
-
-export async function analyzeFolderSync(
-  folder?: string | null,
-): Promise<FolderSyncPlan> {
-  const targetFolder = folder ?? _syncFolder;
-  if (!targetFolder) {
-    return {
-      action: "missing-folder",
-      message: "Сначала выберите папку синхронизации",
-    };
-  }
-
-  const state = await loadFolderSyncState();
-  const remoteManifest = await readSyncManifest(targetFolder);
-
-  if (!remoteManifest) {
-    return {
-      action: "export",
-      message:
-        "Во внешней папке пока нет данных. Будет выполнена первая выгрузка.",
-    };
-  }
-
-  const localDirty = hasUnsyncedLocalChanges(state);
-  const lastSyncedRevision = state.lastSyncedRevision ?? 0;
-
-  if (remoteManifest.revision > lastSyncedRevision) {
-    if (localDirty) {
-      return {
-        action: "conflict",
-        message:
-          "Изменились и локальные данные, и данные в папке. Нужно выбрать направление вручную.",
-      };
-    }
-    return {
-      action: "import",
-      message: "В папке есть более новая версия. Будет выполнена загрузка.",
-    };
-  }
-
-  if (localDirty || remoteManifest.revision < lastSyncedRevision) {
-    return {
-      action: "export",
-      message: "Локальные данные новее. Будет выполнена выгрузка.",
-    };
-  }
-
-  return { action: "noop", message: "Изменений для синхронизации нет" };
-}
-
-export async function syncWithFolder(
-  folder?: string | null,
-  forcedAction?: "import" | "export",
-): Promise<FolderSyncResult> {
-  const targetFolder = folder ?? _syncFolder;
-  if (!targetFolder) {
-    return { action: "error", message: "Сначала выберите папку синхронизации" };
-  }
-
-  const plan = forcedAction
-    ? { action: forcedAction, message: "" as string }
-    : await analyzeFolderSync(targetFolder);
-  if (plan.action === "noop") {
-    return { action: "noop", message: plan.message };
-  }
-  if (plan.action === "conflict") {
-    return { action: "conflict", message: plan.message };
-  }
-  if (plan.action === "missing-folder") {
-    return { action: "error", message: plan.message };
-  }
-
-  if (plan.action === "import") {
-    return importSnapshotFromFolder(targetFolder);
-  }
-  return exportSnapshotToFolder(targetFolder);
-}
-
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 10;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -761,6 +116,7 @@ CREATE TABLE IF NOT EXISTS flights (
   arrive_time TEXT,
   notes TEXT NOT NULL DEFAULT '',
   image_data TEXT,
+  traveler_id TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -847,21 +203,133 @@ CREATE INDEX IF NOT EXISTS idx_day_exercises_day ON day_exercises(day_id);
 CREATE INDEX IF NOT EXISTS idx_day_exercises_exercise ON day_exercises(exercise_id);
 CREATE INDEX IF NOT EXISTS idx_workout_logs_exercise ON workout_logs(exercise_id);
 CREATE INDEX IF NOT EXISTS idx_workout_logs_date ON workout_logs(date);
+
+CREATE TABLE IF NOT EXISTS health_metrics (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  unit TEXT NOT NULL DEFAULT '',
+  ref_min REAL,
+  ref_max REAL,
+  period_days INTEGER,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS health_entries (
+  id TEXT PRIMARY KEY,
+  metric_id TEXT NOT NULL REFERENCES health_metrics(id) ON DELETE CASCADE,
+  value REAL NOT NULL,
+  date TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_health_entries_metric ON health_entries(metric_id);
+CREATE INDEX IF NOT EXISTS idx_health_entries_date ON health_entries(date);
+
+CREATE TABLE IF NOT EXISTS attachments (
+  id TEXT PRIMARY KEY,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  mime_type TEXT,
+  size INTEGER,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachments_entity ON attachments(entity_type, entity_id);
+
+CREATE TABLE IF NOT EXISTS doctor_visits (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  date TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS doctor_visit_images (
+  id TEXT PRIMARY KEY,
+  visit_id TEXT NOT NULL REFERENCES doctor_visits(id) ON DELETE CASCADE,
+  image_path TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_doctor_visits_date ON doctor_visits(date);
+CREATE INDEX IF NOT EXISTS idx_doctor_visit_images_visit ON doctor_visit_images(visit_id);
+
+CREATE TABLE IF NOT EXISTS travelers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  icon TEXT NOT NULL DEFAULT '👤',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS documents (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_images (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  image_path TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_images_doc ON document_images(document_id);
+
+CREATE TABLE IF NOT EXISTS cars (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS car_documents (
+  id TEXT PRIMARY KEY,
+  car_id TEXT NOT NULL REFERENCES cars(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS car_document_images (
+  id TEXT PRIMARY KEY,
+  car_document_id TEXT NOT NULL REFERENCES car_documents(id) ON DELETE CASCADE,
+  image_path TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS car_services (
+  id TEXT PRIMARY KEY,
+  car_id TEXT NOT NULL REFERENCES cars(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  mileage INTEGER NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_car_documents_car ON car_documents(car_id);
+CREATE INDEX IF NOT EXISTS idx_car_document_images_doc ON car_document_images(car_document_id);
+CREATE INDEX IF NOT EXISTS idx_car_services_car ON car_services(car_id);
 `;
 
 export async function getDb(): Promise<SQLite.SQLiteDatabase> {
   if (_db) return _db;
 
-  const db = await SQLite.openDatabaseAsync(
-    SYNC_DB_NAME,
-    {},
-    usesFolderAsLiveStorage() ? (_syncFolder as string) : undefined,
-  );
-
+  // Always open DB from app sandbox (external paths don't work on Android)
+  const db = await SQLite.openDatabaseAsync("uspevatel.db");
   await db.execAsync("PRAGMA journal_mode = WAL;");
   await db.execAsync("PRAGMA foreign_keys = ON;");
   await db.execAsync(SCHEMA);
 
+  // Check if we need to seed and migrate
   const ver = await db.getFirstAsync<{ value: string }>(
     "SELECT value FROM settings WHERE key = ?",
     ["schema_version"],
@@ -869,22 +337,26 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
   const currentVer = ver ? parseInt(ver.value, 10) : 0;
 
   if (currentVer === 0) {
+    // First run: migrate existing AsyncStorage data, then seed exercises
     await migrateFromAsyncStorage(db);
     await seedExercises(db);
   }
 
   if (currentVer < 2) {
+    // v2: add image_data BLOB columns + backfill preset exercise images
     try {
       await db.execAsync("ALTER TABLE exercises ADD COLUMN image_data BLOB;");
     } catch {}
     try {
       await db.execAsync("ALTER TABLE tasks ADD COLUMN image_data BLOB;");
     } catch {}
+    // Backfill preset exercise images from bundled assets
     const { backfillExerciseImages } = require("./seed");
     await backfillExerciseImages(db);
   }
 
   if (currentVer < 3) {
+    // v3: flights table
     try {
       await db.execAsync(`CREATE TABLE IF NOT EXISTS flights (
         id TEXT PRIMARY KEY,
@@ -905,6 +377,108 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
     } catch {}
   }
 
+  if (currentVer < 4) {
+    // v4: health tables
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS health_metrics (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        unit TEXT NOT NULL DEFAULT '',
+        ref_min REAL,
+        ref_max REAL,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      );`);
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS health_entries (
+        id TEXT PRIMARY KEY,
+        metric_id TEXT NOT NULL REFERENCES health_metrics(id) ON DELETE CASCADE,
+        value REAL NOT NULL,
+        date TEXT NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );`);
+      await db.execAsync(
+        "CREATE INDEX IF NOT EXISTS idx_health_entries_metric ON health_entries(metric_id);",
+      );
+      await db.execAsync(
+        "CREATE INDEX IF NOT EXISTS idx_health_entries_date ON health_entries(date);",
+      );
+    } catch {}
+  }
+
+  if (currentVer < 5) {
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS attachments (
+        id TEXT PRIMARY KEY,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        mime_type TEXT,
+        size INTEGER,
+        created_at TEXT NOT NULL
+      );`);
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_attachments_entity ON attachments(entity_type, entity_id);');
+    } catch {}
+  }
+
+  if (currentVer < 6) {
+    try { await db.execAsync('ALTER TABLE health_metrics ADD COLUMN period_days INTEGER;'); } catch {}
+  }
+
+  if (currentVer < 7) {
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS doctor_visits (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        date TEXT NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );`);
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS doctor_visit_images (
+        id TEXT PRIMARY KEY,
+        visit_id TEXT NOT NULL REFERENCES doctor_visits(id) ON DELETE CASCADE,
+        image_path TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );`);
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_doctor_visits_date ON doctor_visits(date);');
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_doctor_visit_images_visit ON doctor_visit_images(visit_id);');
+    } catch {}
+  }
+
+  if (currentVer < 8) {
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS travelers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        icon TEXT NOT NULL DEFAULT '👤',
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );`);
+    } catch {}
+    try { await db.execAsync('ALTER TABLE flights ADD COLUMN traveler_id TEXT;'); } catch {}
+  }
+
+  if (currentVer < 9) {
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);`);
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS document_images (id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE, image_path TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);`);
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_document_images_doc ON document_images(document_id);');
+    } catch {}
+  }
+
+  if (currentVer < 10) {
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS cars (id TEXT PRIMARY KEY, name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);`);
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS car_documents (id TEXT PRIMARY KEY, car_id TEXT NOT NULL REFERENCES cars(id) ON DELETE CASCADE, name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);`);
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS car_document_images (id TEXT PRIMARY KEY, car_document_id TEXT NOT NULL REFERENCES car_documents(id) ON DELETE CASCADE, image_path TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);`);
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS car_services (id TEXT PRIMARY KEY, car_id TEXT NOT NULL REFERENCES cars(id) ON DELETE CASCADE, date TEXT NOT NULL, mileage INTEGER NOT NULL, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);`);
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_car_documents_car ON car_documents(car_id);');
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_car_document_images_doc ON car_document_images(car_document_id);');
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_car_services_car ON car_services(car_id);');
+    } catch {}
+  }
+
   if (currentVer < SCHEMA_VERSION) {
     await db.runAsync(
       "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
@@ -912,6 +486,21 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
     );
   }
 
-  _db = patchDbForSyncTracking(db);
-  return _db;
+  _db = db;
+  return db;
+}
+
+const FOLDER_SYNC_DISABLED_MESSAGE =
+  "Синхронизация через папку временно отключена в этой сборке.";
+
+/** Export internal DB to sync folder (push) */
+export async function exportDbToFolder(): Promise<string> {
+  if (!_syncFolder) throw new Error("Папка синхронизации не выбрана");
+  throw new Error(FOLDER_SYNC_DISABLED_MESSAGE);
+}
+
+/** Import DB from sync folder to internal (pull) */
+export async function importDbFromFolder(): Promise<string> {
+  if (!_syncFolder) throw new Error("Папка синхронизации не выбрана");
+  throw new Error(FOLDER_SYNC_DISABLED_MESSAGE);
 }

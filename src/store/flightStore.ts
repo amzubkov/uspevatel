@@ -18,6 +18,7 @@ export interface Flight {
   arriveTime?: string;
   notes: string;
   imageData?: string;   // data URI
+  travelerId?: string;  // null = "Я"
   createdAt: string;
 }
 
@@ -54,6 +55,7 @@ function rowToFlight(r: any): Flight {
     arriveTime: r.arrive_time || undefined,
     notes: r.notes,
     imageData: resolveImageUri(r.image_data),
+    travelerId: r.traveler_id || undefined,
     createdAt: r.created_at,
   };
 }
@@ -74,9 +76,9 @@ export const useFlightStore = create<FlightState>()((set, get) => ({
     set((s) => ({ flights: [flight, ...s.flights] }));
     const db = await getDb();
     await db.runAsync(
-      'INSERT INTO flights (id, kind, title, status, depart_date, depart_time, arrive_date, arrive_time, notes, image_data, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO flights (id, kind, title, status, depart_date, depart_time, arrive_date, arrive_time, notes, image_data, traveler_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
       [flight.id, flight.kind, flight.title, flight.status, flight.departDate, flight.departTime || null,
-       flight.arriveDate || null, flight.arriveTime || null, flight.notes, flight.imageData || null, flight.createdAt]
+       flight.arriveDate || null, flight.arriveTime || null, flight.notes, flight.imageData || null, flight.travelerId || null, flight.createdAt]
     );
   },
 
@@ -87,7 +89,7 @@ export const useFlightStore = create<FlightState>()((set, get) => ({
     const vals: any[] = [];
     const map: Record<string, string> = {
       kind: 'kind', title: 'title', status: 'status', departDate: 'depart_date', departTime: 'depart_time',
-      arriveDate: 'arrive_date', arriveTime: 'arrive_time', notes: 'notes',
+      arriveDate: 'arrive_date', arriveTime: 'arrive_time', notes: 'notes', travelerId: 'traveler_id',
     };
     for (const [k, col] of Object.entries(map)) {
       if ((fields as any)[k] !== undefined) { sets.push(`${col} = ?`); vals.push((fields as any)[k]); }

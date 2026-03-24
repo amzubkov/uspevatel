@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useMemo, useCallback } from "react";
 import { TouchableOpacity, Text, View, StyleSheet, Alert } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import {
@@ -9,15 +9,8 @@ import {
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createStackNavigator } from "@react-navigation/stack";
 import { useSettingsStore } from "../store/settingsStore";
-import { useTaskStore } from "../store/taskStore";
-import { useProjectStore } from "../store/projectStore";
-import { useRoutineStore } from "../store/routineStore";
-import { useChecklistStore } from "../store/checklistStore";
-import { useSportStore } from "../store/sportStore";
-import { useExerciseStore } from "../store/exerciseStore";
-import { useFlightStore } from "../store/flightStore";
 import { colors } from "../utils/theme";
-import { analyzeFolderSync, syncWithFolder } from "../db/database";
+// import { getSyncFolder } from "../db/database";
 
 import { InboxScreen } from "../screens/InboxScreen";
 import { DayScreen } from "../screens/DayScreen";
@@ -39,6 +32,8 @@ import { CheckScreen } from "../screens/CheckScreen";
 import { SportScreen } from "../screens/SportScreen";
 import { ExerciseDetailScreen } from "../screens/ExerciseDetailScreen";
 import { PlannerTab } from "../screens/PlannerTab";
+import { HealthScreen } from "../screens/HealthScreen";
+import { DocumentsScreen } from "../screens/DocumentsScreen";
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -48,110 +43,7 @@ function TabEmoji({ emoji, color }: { emoji: string; color: string }) {
 }
 
 const HeaderButtons = React.memo(function HeaderButtons() {
-  const theme = useSettingsStore((s) => s.theme);
-  const c = colors[theme];
   const navigation = useNavigation<any>();
-  const [folderSyncing, setFolderSyncing] = useState(false);
-  const loadSettings = useSettingsStore((s) => s.load);
-  const loadTasks = useTaskStore((s) => s.load);
-  const loadProjects = useProjectStore((s) => s.load);
-  const loadRoutines = useRoutineStore((s) => s.load);
-  const loadChecklist = useChecklistStore((s) => s.load);
-  const loadSport = useSportStore((s) => s.load);
-  const loadExercises = useExerciseStore((s) => s.load);
-  const loadFlights = useFlightStore((s) => s.load);
-
-  const reloadAllStores = useCallback(async () => {
-    useSettingsStore.setState({ loaded: false });
-    useTaskStore.setState({ loaded: false });
-    useProjectStore.setState({ loaded: false });
-    useRoutineStore.setState({ loaded: false });
-    useChecklistStore.setState({ loaded: false });
-    useSportStore.setState({ loaded: false });
-    useExerciseStore.setState({ loaded: false });
-    useFlightStore.setState({ loaded: false });
-
-    await loadSettings();
-    await Promise.all([
-      loadTasks(),
-      loadProjects(),
-      loadRoutines(),
-      loadChecklist(),
-      loadSport(),
-      loadExercises(),
-      loadFlights(),
-    ]);
-  }, [
-    loadChecklist,
-    loadExercises,
-    loadFlights,
-    loadProjects,
-    loadRoutines,
-    loadSettings,
-    loadSport,
-    loadTasks,
-  ]);
-
-  const runFolderSync = useCallback(
-    async (forcedAction?: "import" | "export") => {
-      if (folderSyncing) return;
-      setFolderSyncing(true);
-      try {
-        const result = await syncWithFolder(undefined as any, forcedAction);
-        if (result.action === "conflict") {
-          Alert.alert("Синхронизация папки", result.message, [
-            { text: "Отмена", style: "cancel" },
-            {
-              text: "Загрузить",
-              onPress: () => {
-                void runFolderSync("import");
-              },
-            },
-            {
-              text: "Выгрузить",
-              onPress: () => {
-                void runFolderSync("export");
-              },
-            },
-          ]);
-          return;
-        }
-        if (result.action === "import") {
-          await reloadAllStores();
-        }
-        Alert.alert("Синхронизация папки", result.message);
-      } catch (e: any) {
-        Alert.alert("Синхронизация папки", e?.message || String(e));
-      } finally {
-        setFolderSyncing(false);
-      }
-    },
-    [folderSyncing, reloadAllStores],
-  );
-
-  const handleFolderSyncPress = useCallback(async () => {
-    if (folderSyncing) return;
-    const plan = await analyzeFolderSync();
-    if (plan.action === "conflict") {
-      Alert.alert("Синхронизация папки", plan.message, [
-        { text: "Отмена", style: "cancel" },
-        {
-          text: "Загрузить",
-          onPress: () => {
-            void runFolderSync("import");
-          },
-        },
-        {
-          text: "Выгрузить",
-          onPress: () => {
-            void runFolderSync("export");
-          },
-        },
-      ]);
-      return;
-    }
-    void runFolderSync();
-  }, [folderSyncing, runFolderSync]);
 
   return (
     <View style={hStyles.row}>
@@ -175,12 +67,21 @@ const HeaderButtons = React.memo(function HeaderButtons() {
       </TouchableOpacity>
       <TouchableOpacity
         style={hStyles.btn}
+        onPress={() => navigation.navigate("Health")}
+      >
+        <Text style={hStyles.emoji}>🏥</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={hStyles.btn}
         onPress={() => navigation.navigate("Planner")}
       >
         <Text style={hStyles.emoji}>✈️</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={hStyles.btn} onPress={handleFolderSyncPress}>
-        <Text style={hStyles.emoji}>{folderSyncing ? "⏳" : "🔁"}</Text>
+      <TouchableOpacity
+        style={hStyles.btn}
+        onPress={() => navigation.navigate("Documents")}
+      >
+        <Text style={hStyles.emoji}>📄</Text>
       </TouchableOpacity>
       <TouchableOpacity
         style={hStyles.btn}
@@ -217,6 +118,7 @@ function CategoryTabs() {
       tabBarInactiveTintColor: c.textSecondary,
       headerStyle: { backgroundColor: c.card },
       headerTintColor: c.text,
+      headerTitle: "",
       tabBarLabelStyle: { fontSize: 10, fontWeight: "700" as const },
     }),
     [theme],
@@ -380,6 +282,16 @@ export function AppNavigator() {
           name="Planner"
           component={PlannerTab}
           options={{ title: "Планнер" }}
+        />
+        <Stack.Screen
+          name="Health"
+          component={HealthScreen}
+          options={{ title: "Здоровье" }}
+        />
+        <Stack.Screen
+          name="Documents"
+          component={DocumentsScreen}
+          options={{ title: "Документы" }}
         />
         <Stack.Screen
           name="ExerciseDetail"

@@ -2,7 +2,7 @@
   "expo": {
     "name": "uspevatel-app",
     "slug": "uspevatel-app",
-    "version": "5.0.0",
+    "version": "6.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -22,7 +22,7 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "versionCode": 5,
+      "versionCode": 6,
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "CAMERA",
@@ -50,7 +50,8 @@
         {
           "calendarPermission": "Приложению нужен доступ к календарю для отображения расписания"
         }
-      ]
+      ],
+      "expo-sharing"
     ]
   }
 }

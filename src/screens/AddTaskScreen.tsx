@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Modal, Alert, Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { DatePickerField } from '../components/DatePickerField';
 import { useTaskStore } from '../store/taskStore';
 import { useProjectStore } from '../store/projectStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -74,14 +75,14 @@ export function AddTaskScreen() {
       />
 
       <Text style={[styles.label, { color: c.textSecondary }]}>Категория</Text>
-      <View style={styles.chips}>
+      <View style={styles.chipRow}>
         {CATEGORIES.map((cat) => (
           <TouchableOpacity
             key={cat}
-            style={[styles.chip, { backgroundColor: category === cat ? c.primary : c.card, borderWidth: 1, borderColor: c.border }]}
+            style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: category === cat ? c.primary : c.card, borderWidth: 1, borderColor: c.border }]}
             onPress={() => setCategory(cat)}
           >
-            <Text style={[styles.chipText, { color: category === cat ? '#FFF' : c.text }]}>
+            <Text style={[styles.chipSmText, { color: category === cat ? '#FFF' : c.text }]}>
               {CATEGORY_LABELS[cat]}
             </Text>
           </TouchableOpacity>
@@ -159,55 +160,47 @@ export function AddTaskScreen() {
       )}
 
       {(category === 'CONTROL' || category === 'DAY') && (
-        <>
-          <Text style={[styles.label, { color: c.textSecondary }]}>Дата (ГГГГ-ММ-ДД)</Text>
-          <TextInput
-            style={[styles.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
-            value={startDate}
-            onChangeText={setStartDate}
-            placeholder="2026-03-01"
-            placeholderTextColor={c.textSecondary}
-          />
-        </>
+        <DatePickerField value={startDate} onChange={setStartDate}
+          label="Дата" textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
       )}
 
       {/* Дедлайн */}
       <Text style={[styles.label, { color: c.textSecondary }]}>Дедлайн</Text>
       {deadline ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={{ color: c.text, fontSize: 15 }}>
-            ⏳ {new Date(deadline).toLocaleString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+        <View style={styles.chipRow}>
+          <Text style={{ color: c.text, fontSize: 13 }}>
+            {new Date(deadline).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
           </Text>
           <TouchableOpacity onPress={() => setDeadline(undefined)}>
-            <Text style={{ color: c.danger, fontSize: 14, fontWeight: '600' }}>Убрать</Text>
+            <Text style={{ color: c.danger, fontSize: 12, fontWeight: '600' }}>X</Text>
           </TouchableOpacity>
         </View>
       ) : (
-        <View style={styles.chips}>
-          <TouchableOpacity style={[styles.chip, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
+        <View style={styles.chipRow}>
+          <TouchableOpacity style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
             const d = new Date(); d.setHours(23, 59, 0, 0);
             setDeadline(d.toISOString());
           }}>
-            <Text style={[styles.chipText, { color: c.text }]}>Сегодня</Text>
+            <Text style={[styles.chipSmText, { color: c.text }]}>Сегодня</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.chip, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
+          <TouchableOpacity style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
             const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(23, 59, 0, 0);
             setDeadline(d.toISOString());
           }}>
-            <Text style={[styles.chipText, { color: c.text }]}>Завтра</Text>
+            <Text style={[styles.chipSmText, { color: c.text }]}>Завтра</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.chip, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
+          <TouchableOpacity style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
             const d = new Date(); d.setDate(d.getDate() + 2); d.setHours(23, 59, 0, 0);
             setDeadline(d.toISOString());
           }}>
-            <Text style={[styles.chipText, { color: c.text }]}>Послезавтра</Text>
+            <Text style={[styles.chipSmText, { color: c.text }]}>Послезавтра</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.chip, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
+          <TouchableOpacity style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
             const d = new Date(); d.setHours(23, 59, 0, 0);
             setPickerDate(d);
             setShowDeadlinePicker(true);
           }}>
-            <Text style={[styles.chipText, { color: c.text }]}>Кастом</Text>
+            <Text style={[styles.chipSmText, { color: c.text }]}>...</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -271,6 +264,9 @@ const styles = StyleSheet.create({
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
   chipText: { fontSize: 13, fontWeight: '600' },
+  chipRow: { flexDirection: 'row', gap: 4, alignItems: 'center' },
+  chipSm: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6 },
+  chipSmText: { fontSize: 12, fontWeight: '600' },
   saveBtn: { marginTop: 24, marginBottom: 40, paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
   saveBtnText: { color: '#FFF', fontSize: 17, fontWeight: '700' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
