@@ -1237,7 +1237,7 @@ export function PlannerTab() {
             style={[s.modeBtn, { backgroundColor: mode === m.key ? c.primary : c.card, borderColor: c.border, borderWidth: 1 }]}
             onPress={() => setMode(m.key)}
           >
-            <Text style={{ fontSize: 18 }}>{m.icon}</Text>
+            <Text style={{ fontSize: 15 }}>{m.icon}</Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -1251,8 +1251,8 @@ export function PlannerTab() {
 
 const s = StyleSheet.create({
   container: { flex: 1 },
-  modeRow: { flexDirection: 'row', gap: 6, marginHorizontal: 12, marginTop: 8, marginBottom: 4 },
-  modeBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 8, borderRadius: 10 },
+  modeRow: { flexDirection: 'row', gap: 4, marginHorizontal: 12, marginTop: 6, marginBottom: 2 },
+  modeBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 5, borderRadius: 8 },
   card: { borderWidth: 1, borderRadius: 10, marginBottom: 10, overflow: 'hidden' },
   cardHeader: { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 10 },
   statusDot: { width: 10, height: 10, borderRadius: 5 },

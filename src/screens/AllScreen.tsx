@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, FlatList, Text, StyleSheet } from 'react-native';
+import { View, FlatList, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useTaskStore } from '../store/taskStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { useProjectStore } from '../store/projectStore';
@@ -19,9 +19,10 @@ export function AllScreen() {
   const [deadlineFilter, setDeadlineFilter] = useState<'all' | 'today'>('all');
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
 
   const tasks = useMemo(() => {
-    let filtered = applyFilters(hideOldCompleted(allTasks), deadlineFilter, projectFilter, subjectFilter);
+    let filtered = applyFilters(showHistory ? allTasks : hideOldCompleted(allTasks), deadlineFilter, projectFilter, subjectFilter);
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter(
@@ -34,7 +35,7 @@ export function AllScreen() {
       );
     }
     return sortByPriorityDeadline(filtered);
-  }, [allTasks, searchQuery, deadlineFilter, projectFilter, subjectFilter]);
+  }, [allTasks, searchQuery, deadlineFilter, projectFilter, subjectFilter, showHistory]);
 
   const navigateSubject = (subject: string) => navigation.navigate('SubjectTasks', { subject });
   const navigateProject = (projectName: string) => {
@@ -67,7 +68,18 @@ export function AllScreen() {
           )}
         />
       )}
-      <FilterBar deadlineFilter={deadlineFilter} projectFilter={projectFilter} subjectFilter={subjectFilter} onDeadlineChange={setDeadlineFilter} onProjectChange={setProjectFilter} onSubjectChange={setSubjectFilter} tasks={allTasks} />
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <View style={{ flex: 1 }}>
+          <FilterBar deadlineFilter={deadlineFilter} projectFilter={projectFilter} subjectFilter={subjectFilter} onDeadlineChange={setDeadlineFilter} onProjectChange={setProjectFilter} onSubjectChange={setSubjectFilter} tasks={allTasks} />
+        </View>
+        <TouchableOpacity
+          style={{ paddingHorizontal: 12, paddingVertical: 8 }}
+          onPress={() => setShowHistory(!showHistory)}>
+          <Text style={{ color: showHistory ? c.primary : c.textSecondary, fontSize: 12, fontWeight: '600' }}>
+            {showHistory ? 'Скрыть' : 'История'}
+          </Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }

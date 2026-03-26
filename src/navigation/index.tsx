@@ -133,6 +133,7 @@ function PlannerDateTime() {
 
 function CategoryTabs() {
   const theme = useSettingsStore((s) => s.theme);
+  const navBarPadding = useSettingsStore((s) => s.navBarPadding);
   const c = colors[theme];
 
   const screenOptions = useMemo(
@@ -145,7 +146,7 @@ function CategoryTabs() {
       headerTitle: "",
       tabBarLabelStyle: { fontSize: 10, fontWeight: "700" as const },
     }),
-    [theme],
+    [theme, navBarPadding],
   );
 
   return (
@@ -228,6 +229,7 @@ function CategoryTabs() {
 
 export function AppNavigator() {
   const theme = useSettingsStore((s) => s.theme);
+  const navBarPad = useSettingsStore((s) => s.navBarPadding);
   const c = colors[theme];
 
   const navTheme = useMemo(() => {
@@ -255,6 +257,7 @@ export function AppNavigator() {
   );
 
   return (
+    <View style={{ flex: 1, marginBottom: navBarPad ? 28 : 0, backgroundColor: c.background }}>
     <NavigationContainer theme={navTheme}>
       <Stack.Navigator screenOptions={stackScreenOptions}>
         <Stack.Screen
@@ -339,5 +342,6 @@ export function AppNavigator() {
         />
       </Stack.Navigator>
     </NavigationContainer>
+    </View>
   );
 }

@@ -235,12 +235,17 @@ function MetricsContent() {
                 <Text style={{ color: periodInfo === 'Пора сдавать!' ? c.danger : c.warning, fontSize: 11, fontWeight: '600', marginTop: 2 }}>{periodInfo}</Text>
               ) : null}
             </View>
-            {latest && (
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={{ fontSize: 18, fontWeight: '700', color: statusColor(latest.value, m, c) }}>{latest.value}</Text>
-                <Text style={{ color: c.textSecondary, fontSize: 11 }}>{latest.date}</Text>
-              </View>
-            )}
+            {latest && (() => {
+              const age = daysDiff(latest.date, todayStr());
+              const ageColor = m.periodDays && age > m.periodDays ? c.danger : age > 90 ? c.warning : c.textSecondary;
+              return (
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={{ fontSize: 18, fontWeight: '700', color: statusColor(latest.value, m, c) }}>{latest.value}</Text>
+                  <Text style={{ color: c.textSecondary, fontSize: 11 }}>{latest.date}</Text>
+                  <Text style={{ color: ageColor, fontSize: 10, fontWeight: '600' }}>{age} дн. назад</Text>
+                </View>
+              );
+            })()}
           </View>
         </TouchableOpacity>
 
@@ -251,17 +256,21 @@ function MetricsContent() {
               <Text style={s.btnText}>Ред.</Text>
             </TouchableOpacity>
             {metricEntries.length === 0 && <Text style={{ color: c.textSecondary, fontSize: 12 }}>Нет записей</Text>}
-            {metricEntries.map((e) => (
-              <TouchableOpacity key={e.id}
-                onPress={() => { setEditingEntry(e); setShowEntryForm(true); }}
-                onLongPress={() =>
-                  Alert.alert('Удалить?', '', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: () => removeEntry(e.id) }])
-                } style={s.entryRow}>
-                <Text style={{ color: statusColor(e.value, m, c), fontWeight: '600', width: 60 }}>{e.value}</Text>
-                <Text style={{ color: c.textSecondary, fontSize: 12, width: 90 }}>{e.date}</Text>
-                {e.notes ? <Text style={{ color: c.textSecondary, fontSize: 12, flex: 1 }} numberOfLines={1}>{e.notes}</Text> : null}
-              </TouchableOpacity>
-            ))}
+            {metricEntries.map((e) => {
+              const eAge = daysDiff(e.date, todayStr());
+              return (
+                <TouchableOpacity key={e.id}
+                  onPress={() => { setEditingEntry(e); setShowEntryForm(true); }}
+                  onLongPress={() =>
+                    Alert.alert('Удалить?', '', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: () => removeEntry(e.id) }])
+                  } style={s.entryRow}>
+                  <Text style={{ color: statusColor(e.value, m, c), fontWeight: '600', width: 60 }}>{e.value}</Text>
+                  <Text style={{ color: c.textSecondary, fontSize: 12, width: 80 }}>{e.date}</Text>
+                  <Text style={{ color: eAge > 90 ? c.warning : c.textSecondary, fontSize: 11, width: 40 }}>{eAge}д</Text>
+                  {e.notes ? <Text style={{ color: c.textSecondary, fontSize: 12, flex: 1 }} numberOfLines={1}>{e.notes}</Text> : null}
+                </TouchableOpacity>
+              );
+            })}
           </View>
         )}
       </View>

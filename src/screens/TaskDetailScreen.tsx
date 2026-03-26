@@ -175,6 +175,41 @@ export function TaskDetailScreen() {
         multiline
       />
 
+      {/* Проект с автодополнением */}
+      <Text style={[styles.label, { color: c.textSecondary }]}>📂 Проект</Text>
+      <TextInput
+        style={[styles.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
+        value={project || ''}
+        onChangeText={(t) => { setProject(t || undefined); setShowProjectList(true); }}
+        onFocus={() => setShowProjectList(true)}
+        onBlur={() => setTimeout(() => setShowProjectList(false), 200)}
+        placeholder="Выберите или введите проект"
+        placeholderTextColor={c.textSecondary}
+      />
+      {showProjectList && filteredProjects.length > 0 && (
+        <View style={[styles.dropdown, { backgroundColor: c.card, borderColor: c.border }]}>
+          {project?.trim() && (
+            <TouchableOpacity
+              style={[styles.dropdownItem, { borderColor: c.border }]}
+              onPress={() => { setProject(undefined); setShowProjectList(false); }}
+            >
+              <Text style={[styles.dropdownText, { color: c.danger }]}>✕ Убрать проект</Text>
+            </TouchableOpacity>
+          )}
+          {filteredProjects.slice(0, 6).map((p) => (
+            <TouchableOpacity
+              key={p.id}
+              style={[styles.dropdownItem, { borderColor: c.border }]}
+              onPress={() => { setProject(p.name); setShowProjectList(false); }}
+            >
+              <Text style={[styles.dropdownText, { color: c.text }]}>
+                📂 {p.name} {p.isCurrent ? '(текущий)' : ''}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
       {/* Контекст */}
       {contextCategories.length > 0 && (
         <>
@@ -303,7 +338,7 @@ export function TaskDetailScreen() {
           }
         }}
         multiline
-        numberOfLines={4}
+        numberOfLines={1}
       />
 
       {/* Фото и файлы */}
@@ -414,41 +449,6 @@ export function TaskDetailScreen() {
         </View>
       )}
 
-      {/* Проект с автодополнением */}
-      <Text style={[styles.label, { color: c.textSecondary }]}>📂 Проект</Text>
-      <TextInput
-        style={[styles.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
-        value={project || ''}
-        onChangeText={(t) => { setProject(t || undefined); setShowProjectList(true); }}
-        onFocus={() => setShowProjectList(true)}
-        onBlur={() => setTimeout(() => setShowProjectList(false), 200)}
-        placeholder="Выберите или введите проект"
-        placeholderTextColor={c.textSecondary}
-      />
-      {showProjectList && filteredProjects.length > 0 && (
-        <View style={[styles.dropdown, { backgroundColor: c.card, borderColor: c.border }]}>
-          {project?.trim() && (
-            <TouchableOpacity
-              style={[styles.dropdownItem, { borderColor: c.border }]}
-              onPress={() => { setProject(undefined); setShowProjectList(false); }}
-            >
-              <Text style={[styles.dropdownText, { color: c.danger }]}>✕ Убрать проект</Text>
-            </TouchableOpacity>
-          )}
-          {filteredProjects.slice(0, 6).map((p) => (
-            <TouchableOpacity
-              key={p.id}
-              style={[styles.dropdownItem, { borderColor: c.border }]}
-              onPress={() => { setProject(p.name); setShowProjectList(false); }}
-            >
-              <Text style={[styles.dropdownText, { color: c.text }]}>
-                📂 {p.name} {p.isCurrent ? '(текущий)' : ''}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
-
       {/* Действия */}
       <View style={styles.actions}>
         <TouchableOpacity
@@ -544,7 +544,7 @@ const styles = StyleSheet.create({
   createdDate: { fontSize: 11, textAlign: 'right', marginBottom: -8 },
   label: { fontSize: 13, fontWeight: '600', marginTop: 16, marginBottom: 6 },
   input: { borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 15 },
-  textArea: { minHeight: 80, textAlignVertical: 'top' },
+  textArea: { minHeight: 36, textAlignVertical: 'top' },
   dropdown: {
     borderWidth: 1,
     borderTopWidth: 0,

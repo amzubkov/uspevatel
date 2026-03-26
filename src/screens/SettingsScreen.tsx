@@ -20,6 +20,29 @@ import { useRoutineStore } from "../store/routineStore";
 import { getSyncFolder, setSyncFolder, getDb } from "../db/database";
 import { validateToken } from "../services/telegramService";
 
+function NavBarToggle({ c }: { c: any }) {
+  const navBarPadding = useSettingsStore((s) => s.navBarPadding);
+  const setNavBarPadding = useSettingsStore((s) => s.setNavBarPadding);
+  return (
+    <>
+      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>
+        Навигационная панель
+      </Text>
+      <Text style={[styles.hint, { color: c.textSecondary }]}>
+        Включите, если кнопки внизу перекрываются навигационной панелью Android.
+      </Text>
+      <TouchableOpacity
+        style={[styles.themeBtn, { backgroundColor: navBarPadding ? c.primary : c.card, borderWidth: 1, borderColor: c.border }]}
+        onPress={() => setNavBarPadding(!navBarPadding)}
+      >
+        <Text style={{ fontSize: 15, fontWeight: '600', color: navBarPadding ? '#FFF' : c.text }}>
+          {navBarPadding ? 'Включено' : 'Выключено'}
+        </Text>
+      </TouchableOpacity>
+    </>
+  );
+}
+
 export function SettingsScreen() {
   const contextCategories = useSettingsStore((s) => s.contextCategories);
   const addContextCategory = useSettingsStore((s) => s.addContextCategory);
@@ -227,6 +250,9 @@ export function SettingsScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* Nav Bar Padding */}
+      <NavBarToggle c={c} />
 
       {/* Sync Folder */}
       <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>

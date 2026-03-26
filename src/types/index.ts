@@ -56,6 +56,7 @@ export interface Settings {
   weeklyReminderDay: number; // 0=Sun
   theme: 'light' | 'dark';
   fontSize: number; // 12-20, default 15
+  navBarPadding: boolean; // extra bottom padding for devices with on-screen nav buttons
   syncUrl: string;
   lastSyncAt: string | null;
   knownSyncIds: string[];

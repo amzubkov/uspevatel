@@ -23,8 +23,14 @@ export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPre
   const c = colors[theme];
   const smallFont = Math.max(9, fontSize - 4);
 
+  const dayAge = task.category === 'DAY' && !task.completed && task.updatedAt
+    ? Math.floor((Date.now() - new Date(task.updatedAt).getTime()) / 86400000)
+    : 0;
+
+  const vPad = Math.max(2, fontSize - 11);
+
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
+    <TouchableOpacity style={[styles.card, { paddingVertical: vPad }]} onPress={onPress} activeOpacity={0.7}>
       <View style={styles.row}>
         {onComplete && (
           <TouchableOpacity
@@ -37,7 +43,7 @@ export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPre
         <View style={styles.content}>
           <View style={styles.topRow}>
             <Text style={[styles.action, { color: c.text, fontSize }, task.completed && styles.completedText]} numberOfLines={2}>
-              {showCategory ? CATEGORY_EMOJI[task.category] : ''}{task.deadline ? <Text style={{ color: c.danger }}>{new Date(task.deadline).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} </Text> : null}{task.project ? <Text style={{ color: c.primary }}>{task.project} </Text> : null}{task.subject ? <Text style={{ color: c.textSecondary }}>{task.subject} </Text> : null}{task.action}
+              {showCategory ? CATEGORY_EMOJI[task.category] : ''}{dayAge > 2 ? <Text style={{ color: c.danger, fontSize: smallFont }}>{dayAge}д </Text> : ''}{task.deadline ? <Text style={{ color: c.danger }}>{new Date(task.deadline).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} </Text> : null}{task.project ? <Text style={{ color: c.primary }}>{task.project} </Text> : null}{task.subject ? <Text style={{ color: c.textSecondary }}>{task.subject} </Text> : null}{task.action}
             </Text>
             {task.priority === 'high' && <View style={[styles.priorityDot, { backgroundColor: c.danger }]} />}
           </View>

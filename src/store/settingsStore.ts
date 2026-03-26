@@ -12,6 +12,7 @@ interface SettingsState extends Settings {
   setWeeklyReminderDay: (day: number) => void;
   setTheme: (theme: 'light' | 'dark') => void;
   setFontSize: (size: number) => void;
+  setNavBarPadding: (on: boolean) => void;
   setSyncUrl: (url: string) => void;
   setLastSyncAt: (date: string | null) => void;
   addKnownSyncIds: (ids: string[]) => void;
@@ -35,6 +36,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   weeklyReminderDay: 0,
   theme: 'dark',
   fontSize: 15,
+  navBarPadding: false,
   syncUrl: '',
   lastSyncAt: null,
   knownSyncIds: [],
@@ -48,12 +50,13 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const weeklyReminderDay = parseInt(await getSetting('weeklyReminderDay', '0'));
     const theme = (await getSetting('theme', 'dark')) as 'light' | 'dark';
     const fontSize = parseInt(await getSetting('fontSize', '15'));
+    const navBarPadding = (await getSetting('navBarPadding', 'false')) === 'true';
     const syncUrl = await getSetting('syncUrl', '');
     const lastSyncAt = await getSetting('lastSyncAt', '');
     const knownSyncIds = JSON.parse(await getSetting('knownSyncIds', '[]'));
     set({
       contextCategories, dailyReminderTime, weeklyReminderTime, weeklyReminderDay,
-      theme, fontSize, syncUrl, lastSyncAt: lastSyncAt || null, knownSyncIds, loaded: true,
+      theme, fontSize, navBarPadding, syncUrl, lastSyncAt: lastSyncAt || null, knownSyncIds, loaded: true,
     });
   },
 
@@ -77,6 +80,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setWeeklyReminderDay: (day) => { set({ weeklyReminderDay: day }); setSetting('weeklyReminderDay', String(day)); },
   setTheme: (theme) => { set({ theme }); setSetting('theme', theme); },
   setFontSize: (size) => { const s = Math.max(12, Math.min(20, size)); set({ fontSize: s }); setSetting('fontSize', String(s)); },
+  setNavBarPadding: (on) => { set({ navBarPadding: on }); setSetting('navBarPadding', String(on)); },
   setSyncUrl: (url) => { set({ syncUrl: url }); setSetting('syncUrl', url); },
   setLastSyncAt: (date) => { set({ lastSyncAt: date }); setSetting('lastSyncAt', date || ''); },
   addKnownSyncIds: (ids) => {
