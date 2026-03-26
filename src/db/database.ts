@@ -42,7 +42,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 18;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -109,7 +109,8 @@ CREATE TABLE IF NOT EXISTS flights (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL DEFAULT 'flight' CHECK(kind IN ('flight','hotel')),
   title TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned','booked','completed','cancelled')),
+  status TEXT NOT NULL DEFAULT 'planned',
+  city TEXT,
   depart_date TEXT NOT NULL,
   depart_time TEXT,
   arrive_date TEXT,
@@ -121,6 +122,27 @@ CREATE TABLE IF NOT EXISTS flights (
 );
 
 CREATE INDEX IF NOT EXISTS idx_flights_depart ON flights(depart_date);
+
+CREATE TABLE IF NOT EXISTS flight_travelers (
+  flight_id TEXT NOT NULL REFERENCES flights(id) ON DELETE CASCADE,
+  traveler_id TEXT NOT NULL,
+  PRIMARY KEY (flight_id, traveler_id)
+);
+
+CREATE TABLE IF NOT EXISTS notes (
+  id TEXT PRIMARY KEY,
+  text TEXT NOT NULL DEFAULT '',
+  image_path TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS note_tags (
+  note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  tag TEXT NOT NULL,
+  PRIMARY KEY (note_id, tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_tags_tag ON note_tags(tag);
 
 CREATE TABLE IF NOT EXISTS sport_entries (
   id TEXT PRIMARY KEY,
@@ -362,7 +384,7 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
         id TEXT PRIMARY KEY,
         kind TEXT NOT NULL DEFAULT 'flight' CHECK(kind IN ('flight','hotel')),
         title TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned','booked','completed','cancelled')),
+        status TEXT NOT NULL DEFAULT 'planned',
         depart_date TEXT NOT NULL,
         depart_time TEXT,
         arrive_date TEXT,
@@ -476,6 +498,114 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
       await db.execAsync('CREATE INDEX IF NOT EXISTS idx_car_documents_car ON car_documents(car_id);');
       await db.execAsync('CREATE INDEX IF NOT EXISTS idx_car_document_images_doc ON car_document_images(car_document_id);');
       await db.execAsync('CREATE INDEX IF NOT EXISTS idx_car_services_car ON car_services(car_id);');
+    } catch {}
+  }
+
+  if (currentVer < 11) {
+    try { await db.execAsync('ALTER TABLE flights ADD COLUMN city TEXT;'); } catch {}
+  }
+
+  if (currentVer < 12) {
+    // Ensure kind column exists — was missing if flights table was created before v3 migration
+    try { await db.execAsync("ALTER TABLE flights ADD COLUMN kind TEXT NOT NULL DEFAULT 'flight';"); } catch {}
+  }
+
+  if (currentVer < 13) {
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS notes (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL DEFAULT '',
+        image_path TEXT,
+        created_at TEXT NOT NULL
+      );`);
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS note_tags (
+        note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        tag TEXT NOT NULL,
+        PRIMARY KEY (note_id, tag)
+      );`);
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_note_tags_tag ON note_tags(tag);');
+    } catch {}
+  }
+
+  if (currentVer < 14) {
+    // calories per rep for exercises
+    try { await db.execAsync('ALTER TABLE exercises ADD COLUMN calories_per_rep REAL NOT NULL DEFAULT 0;'); } catch {}
+  }
+
+  if (currentVer < 15) {
+    // many-to-many travelers for flights
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS flight_travelers (
+        flight_id TEXT NOT NULL REFERENCES flights(id) ON DELETE CASCADE,
+        traveler_id TEXT NOT NULL,
+        PRIMARY KEY (flight_id, traveler_id)
+      );`);
+      // Migrate existing traveler_id data
+      await db.execAsync(`INSERT OR IGNORE INTO flight_travelers (flight_id, traveler_id)
+        SELECT id, traveler_id FROM flights WHERE traveler_id IS NOT NULL AND traveler_id != '';`);
+    } catch {}
+  }
+
+  if (currentVer < 16) {
+    // no-op (was destructive migration, removed)
+  }
+
+  if (currentVer < 17) {
+    try { await db.execAsync('ALTER TABLE flights ADD COLUMN price REAL;'); } catch {}
+    try { await db.execAsync("ALTER TABLE flights ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR';"); } catch {}
+  }
+
+  if (currentVer < 18) {
+    // Fix data corrupted by v16 migration (DROP+SELECT* with wrong column order)
+    // Detect corruption: if title contains status values, data is shifted
+    try {
+      const probe = await db.getFirstAsync<{ cnt: number }>(
+        "SELECT COUNT(*) as cnt FROM flights WHERE title IN ('planned','booked','completed','cancelled')"
+      );
+      if (probe && probe.cnt > 0) {
+        // Data is corrupted. Current (wrong) layout after v16:
+        //   id, kind=old.title, title=old.status, status=old.depart_date, city=old.depart_time,
+        //   depart_date=old.arrive_date, depart_time=old.arrive_time, arrive_date=old.notes,
+        //   arrive_time=old.image_data, notes=old.created_at, image_data=old.traveler_id(?),
+        //   traveler_id=old.city, created_at=old.kind
+        // Restore by creating correct table and mapping back
+        await db.execAsync(`CREATE TABLE IF NOT EXISTS flights_fix (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL DEFAULT 'flight',
+          title TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'planned',
+          city TEXT,
+          depart_date TEXT NOT NULL,
+          depart_time TEXT,
+          arrive_date TEXT,
+          arrive_time TEXT,
+          notes TEXT NOT NULL DEFAULT '',
+          image_data TEXT,
+          traveler_id TEXT,
+          created_at TEXT NOT NULL,
+          price REAL,
+          currency TEXT NOT NULL DEFAULT 'EUR'
+        );`);
+        await db.execAsync(`INSERT OR IGNORE INTO flights_fix
+          (id, kind, title, status, city, depart_date, depart_time, arrive_date, arrive_time, notes, image_data, traveler_id, created_at)
+          SELECT id,
+            COALESCE(created_at, 'flight'),
+            kind,
+            title,
+            traveler_id,
+            status,
+            city,
+            depart_date,
+            depart_time,
+            arrive_date,
+            arrive_time,
+            image_data,
+            notes
+          FROM flights;`);
+        await db.execAsync('DROP TABLE flights;');
+        await db.execAsync('ALTER TABLE flights_fix RENAME TO flights;');
+        await db.execAsync('CREATE INDEX IF NOT EXISTS idx_flights_depart ON flights(depart_date);');
+      }
     } catch {}
   }
 

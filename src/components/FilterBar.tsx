@@ -36,6 +36,14 @@ export function FilterBar({ deadlineFilter, projectFilter, subjectFilter, onDead
   return (
     <View style={[styles.container, { backgroundColor: c.card, borderColor: c.border }]}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+        {(deadlineFilter !== 'all' || projectFilter || subjectFilter) && (
+          <TouchableOpacity
+            style={[styles.chip, { backgroundColor: c.textSecondary, borderColor: c.border }]}
+            onPress={() => { onDeadlineChange('all'); onProjectChange(null); onSubjectChange?.(null); }}
+          >
+            <Text style={[styles.chipText, { color: '#FFF' }]}>✕</Text>
+          </TouchableOpacity>
+        )}
         {todayCount > 0 && (
           <TouchableOpacity
             style={[styles.chip, { backgroundColor: deadlineFilter === 'today' ? c.danger : 'transparent', borderColor: c.border }]}

@@ -32,7 +32,7 @@ interface HealthState {
   addEntry: (e: Omit<HealthEntry, 'id' | 'createdAt'>) => Promise<void>;
   updateEntry: (id: string, fields: Partial<Omit<HealthEntry, 'id' | 'createdAt'>>) => Promise<void>;
   removeEntry: (id: string) => Promise<void>;
-  bulkImport: (lines: { name: string; value: number }[], date: string) => Promise<number>;
+  bulkImport: (lines: { name: string; value: number; unit?: string; refMin?: number; refMax?: number }[], date: string) => Promise<number>;
 }
 
 function rowToMetric(r: any): HealthMetric {
@@ -149,18 +149,23 @@ export const useHealthStore = create<HealthState>()((set, get) => ({
     const newMetrics: HealthMetric[] = [];
     let maxOrder = Math.max(0, ...currentMetrics.map((x) => x.sortOrder));
 
-    for (const { name, value } of lines) {
+    for (const { name, value, unit, refMin, refMax } of lines) {
       const nameLower = name.toLowerCase();
       let metric = currentMetrics.find((m) => m.name.toLowerCase() === nameLower);
       if (!metric) {
         maxOrder++;
-        metric = { id: Crypto.randomUUID(), name, unit: '', sortOrder: maxOrder };
+        metric = { id: Crypto.randomUUID(), name, unit: unit || '', refMin, refMax, sortOrder: maxOrder };
         newMetrics.push(metric);
         currentMetrics.push(metric);
         await db.runAsync(
           'INSERT INTO health_metrics (id, name, unit, ref_min, ref_max, period_days, sort_order) VALUES (?,?,?,?,?,?,?)',
-          [metric.id, metric.name, '', null, null, null, metric.sortOrder],
+          [metric.id, metric.name, metric.unit, refMin ?? null, refMax ?? null, null, metric.sortOrder],
         );
+      } else if (unit || refMin != null || refMax != null) {
+        // Update existing metric with new ref data if provided
+        if (unit && !metric.unit) { metric.unit = unit; await db.runAsync('UPDATE health_metrics SET unit = ? WHERE id = ?', [unit, metric.id]); }
+        if (refMin != null && metric.refMin == null) { metric.refMin = refMin; await db.runAsync('UPDATE health_metrics SET ref_min = ? WHERE id = ?', [refMin, metric.id]); }
+        if (refMax != null && metric.refMax == null) { metric.refMax = refMax; await db.runAsync('UPDATE health_metrics SET ref_max = ? WHERE id = ?', [refMax, metric.id]); }
       }
       const entry: HealthEntry = {
         id: Crypto.randomUUID(), metricId: metric.id, value, date, notes: '', createdAt: now,

@@ -38,6 +38,7 @@ export function ExerciseDetailScreen() {
   const [editTag, setEditTag] = useState('');
   const [editWeightType, setEditWeightType] = useState(0);
   const [editDescription, setEditDescription] = useState('');
+  const [editCalPerRep, setEditCalPerRep] = useState('');
   const [editImageUri, setEditImageUri] = useState<string | null>(null);
   const [imageChanged, setImageChanged] = useState(false);
 
@@ -58,6 +59,10 @@ export function ExerciseDetailScreen() {
   }, [exLogs]);
 
   const maxWeight = useMemo(() => exLogs.reduce((max, l) => Math.max(max, l.weight), 0), [exLogs]);
+  const todayCalories = useMemo(() => {
+    if (!exercise?.caloriesPerRep) return 0;
+    return todayLogs.reduce((sum, l) => sum + l.reps * l.setNum * exercise.caloriesPerRep, 0);
+  }, [todayLogs, exercise]);
 
   if (!exercise) return <View style={[styles.container, { backgroundColor: c.background }]}><Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Упражнение не найдено</Text></View>;
 
@@ -68,6 +73,7 @@ export function ExerciseDetailScreen() {
     setEditTag(exercise.tag || '');
     setEditWeightType(exercise.weightType);
     setEditDescription(exercise.description || '');
+    setEditCalPerRep(exercise.caloriesPerRep ? String(exercise.caloriesPerRep) : '');
     setEditImageUri(currentImage);
     setImageChanged(false);
     setEditing(true);
@@ -100,6 +106,7 @@ export function ExerciseDetailScreen() {
       tag: editTag.trim() || null,
       weightType: editWeightType,
       description: editDescription.trim() || null,
+      caloriesPerRep: parseFloat(editCalPerRep.replace(',', '.')) || 0,
     };
     if (imageChanged) {
       updates.imageUri = editImageUri; // null = remove, uri = new image
@@ -147,12 +154,11 @@ export function ExerciseDetailScreen() {
           <Text style={[styles.exName, { color: c.text }]}>{exercise.name}</Text>
           {exercise.tag && <Text style={[styles.exTag, { color: c.primary }]}>{exercise.tag}</Text>}
           {maxWeight > 0 && <Text style={[styles.maxWeight, { color: c.primary }]}>Макс: {maxWeight} кг</Text>}
+          {exercise.caloriesPerRep > 0 && <Text style={[styles.exTag, { color: c.textSecondary }]}>{exercise.caloriesPerRep} ккал/повт</Text>}
         </View>
-        {!exercise.isPreset && (
-          <TouchableOpacity onPress={startEdit} style={styles.editBtn}>
-            <Text style={{ fontSize: 18 }}>✏️</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity onPress={startEdit} style={styles.editBtn}>
+          <Text style={{ fontSize: 18 }}>✏️</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Edit modal */}
@@ -181,6 +187,14 @@ export function ExerciseDetailScreen() {
               placeholder="Описание"
               placeholderTextColor={c.textSecondary}
               multiline
+            />
+            <TextInput
+              style={[styles.editInput, { color: c.text, borderColor: c.border }]}
+              value={editCalPerRep}
+              onChangeText={setEditCalPerRep}
+              placeholder="Ккал за повтор"
+              placeholderTextColor={c.textSecondary}
+              keyboardType="decimal-pad"
             />
             <View style={styles.typeRow}>
               {WEIGHT_OPTIONS.map((wt) => (
@@ -263,7 +277,10 @@ export function ExerciseDetailScreen() {
 
       {/* Today */}
       {todayLogs.length > 0 && (
-        <Text style={[styles.section, { color: c.textSecondary }]}>Сегодня</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4 }}>
+          <Text style={[styles.section, { color: c.textSecondary, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0 }]}>Сегодня</Text>
+          {todayCalories > 0 && <Text style={{ color: c.primary, fontSize: 12, fontWeight: '600' }}>{Math.round(todayCalories)} ккал</Text>}
+        </View>
       )}
 
       <FlatList

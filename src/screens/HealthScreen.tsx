@@ -62,17 +62,17 @@ function MetricForm({ initial, onSave, onCancel, c }: {
 }
 
 /* ── Entry Form ── */
-function EntryForm({ metrics, onSave, onCancel, c }: {
-  metrics: HealthMetric[]; onSave: (e: Omit<HealthEntry, 'id' | 'createdAt'>) => void; onCancel: () => void; c: any;
+function EntryForm({ metrics, initial, onSave, onCancel, c }: {
+  metrics: HealthMetric[]; initial?: HealthEntry; onSave: (e: Omit<HealthEntry, 'id' | 'createdAt'>) => void; onCancel: () => void; c: any;
 }) {
-  const [metricId, setMetricId] = useState(metrics[0]?.id || '');
-  const [value, setValue] = useState('');
-  const [date, setDate] = useState(todayStr());
-  const [notes, setNotes] = useState('');
+  const [metricId, setMetricId] = useState(initial?.metricId || metrics[0]?.id || '');
+  const [value, setValue] = useState(initial ? String(initial.value) : '');
+  const [date, setDate] = useState(initial?.date || todayStr());
+  const [notes, setNotes] = useState(initial?.notes || '');
 
   return (
     <View style={[s.formCard, { backgroundColor: c.card, borderColor: c.border }]}>
-      <Text style={[s.formTitle, { color: c.text }]}>Новый результат</Text>
+      <Text style={[s.formTitle, { color: c.text }]}>{initial ? 'Редактировать результат' : 'Новый результат'}</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
         {metrics.map((m) => (
           <TouchableOpacity key={m.id} onPress={() => setMetricId(m.id)}
@@ -102,12 +102,22 @@ function ImportForm({ onDone, onCancel, c }: { onDone: (n: number) => void; onCa
   const [date, setDate] = useState(todayStr());
   const parsed = useMemo(() => {
     return text.split('\n').map((line) => {
-      const t = line.trim(); if (!t) return null;
-      const m = t.match(/^(.+?)[,;\t]\s*(-?\d+[.,]?\d*)$/) || t.match(/^(.+?)\s+(-?\d+[.,]?\d*)$/);
-      if (!m) return { raw: t, error: true as const };
-      const name = m[1].trim(); const value = parseFloat(m[2].replace(',', '.'));
-      if (!name || isNaN(value)) return { raw: t, error: true as const };
-      return { name, value, error: false as const };
+      const t = line.trim(); if (!t || t === '---') return null;
+      const parts = t.split(/[;\t]/).map((p) => p.trim());
+      if (parts.length < 2) return { raw: t, error: true as const };
+      const name = parts[0];
+      const maybeValue = parseFloat(parts[1].replace(',', '.'));
+
+      if (!isNaN(maybeValue)) {
+        // Result line: name, value
+        return { kind: 'result' as const, name, value: maybeValue, error: false as const };
+      } else {
+        // Metric definition: name, unit, refMin, refMax
+        const unit = parts[1];
+        const refMin = parts[2] ? parseFloat(parts[2].replace(',', '.')) : undefined;
+        const refMax = parts[3] ? parseFloat(parts[3].replace(',', '.')) : undefined;
+        return { kind: 'metric' as const, name, unit, refMin: isNaN(refMin as any) ? undefined : refMin, refMax: isNaN(refMax as any) ? undefined : refMax, error: false as const };
+      }
     }).filter(Boolean) as any[];
   }, [text]);
   const valid = parsed.filter((p: any) => !p.error);
@@ -116,15 +126,50 @@ function ImportForm({ onDone, onCancel, c }: { onDone: (n: number) => void; onCa
   return (
     <View style={[s.formCard, { backgroundColor: c.card, borderColor: c.border }]}>
       <Text style={[s.formTitle, { color: c.text }]}>Импорт анализов</Text>
-      <Text style={{ color: c.textSecondary, fontSize: 12, marginBottom: 6 }}>По строке: Название, значение</Text>
+      <Text style={{ color: c.textSecondary, fontSize: 12, marginBottom: 6 }}>
+        Результаты: Название, значение{'\n'}
+        Показатели: Название, ед.изм, реф.мин, реф.макс
+      </Text>
       <TextInput style={[s.input, { color: c.text, borderColor: c.border, height: 140, textAlignVertical: 'top' }]}
-        placeholder={'Гемоглобин, 140\nХолестерин, 5.2'} placeholderTextColor={c.textSecondary} value={text} onChangeText={setText} multiline />
+        placeholder={'Гемоглобин, 140\nХолестерин, 5.2\n---\nГемоглобин, г/л, 120, 170'} placeholderTextColor={c.textSecondary} value={text} onChangeText={setText} multiline />
       <DatePickerField value={date} onChange={setDate} label="Дата" textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} />
-      {parsed.length > 0 && <Text style={{ color: c.success, fontSize: 12, marginBottom: 4 }}>Распознано: {valid.length}{errors.length > 0 ? `, ошибок: ${errors.length}` : ''}</Text>}
+      {parsed.length > 0 && (
+        <View style={{ marginBottom: 4 }}>
+          <Text style={{ color: c.success, fontSize: 12 }}>
+            Распознано: {valid.filter((p: any) => p.kind === 'result').length} результатов, {valid.filter((p: any) => p.kind === 'metric').length} показателей
+            {errors.length > 0 ? `, ошибок: ${errors.length}` : ''}
+          </Text>
+        </View>
+      )}
       <View style={s.row}>
         <TouchableOpacity style={[s.btn, { backgroundColor: c.primary }]} onPress={async () => {
           if (!valid.length) { Alert.alert('Ошибка', 'Нет строк'); return; }
-          const n = await bulkImport(valid, date); onDone(n);
+          const results = valid.filter((p: any) => p.kind === 'result');
+          const metricDefs = valid.filter((p: any) => p.kind === 'metric');
+          let count = 0;
+          // Import metric definitions first
+          if (metricDefs.length) {
+            count += await bulkImport(metricDefs.map((m: any) => ({ name: m.name, value: 0, unit: m.unit, refMin: m.refMin, refMax: m.refMax })), date);
+            // Remove the dummy 0-value entries just created
+            // Actually, better: add metrics without entries
+          }
+          if (results.length) {
+            count = await bulkImport(results, date);
+          }
+          // For metric-only imports, just add metrics via addMetric
+          if (metricDefs.length && !results.length) {
+            const { addMetric, metrics } = useHealthStore.getState();
+            for (const m of metricDefs) {
+              const exists = metrics.find((x) => x.name.toLowerCase() === m.name.toLowerCase());
+              if (!exists) await addMetric({ name: m.name, unit: m.unit || '', refMin: m.refMin, refMax: m.refMax, periodDays: undefined });
+              else {
+                const { updateMetric } = useHealthStore.getState();
+                await updateMetric(exists.id, { unit: m.unit || exists.unit, refMin: m.refMin ?? exists.refMin, refMax: m.refMax ?? exists.refMax });
+              }
+            }
+            count = metricDefs.length;
+          }
+          onDone(count);
         }}><Text style={s.btnText}>Импорт ({valid.length})</Text></TouchableOpacity>
         <TouchableOpacity style={[s.btn, { backgroundColor: c.textSecondary }]} onPress={onCancel}><Text style={s.btnText}>Отмена</Text></TouchableOpacity>
       </View>
@@ -142,16 +187,18 @@ function MetricsContent() {
   const updateMetric = useHealthStore((s) => s.updateMetric);
   const removeMetric = useHealthStore((s) => s.removeMetric);
   const addEntry = useHealthStore((s) => s.addEntry);
+  const updateEntry = useHealthStore((s) => s.updateEntry);
   const removeEntry = useHealthStore((s) => s.removeEntry);
 
   const [showMetricForm, setShowMetricForm] = useState(false);
   const [editingMetric, setEditingMetric] = useState<HealthMetric | null>(null);
   const [showEntryForm, setShowEntryForm] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<HealthEntry | null>(null);
   const [showImportForm, setShowImportForm] = useState(false);
   const [expandedMetric, setExpandedMetric] = useState<string | null>(null);
 
   const entriesForMetric = useCallback(
-    (metricId: string) => entries.filter((e) => e.metricId === metricId),
+    (metricId: string) => entries.filter((e) => e.metricId === metricId).sort((a, b) => b.date.localeCompare(a.date)),
     [entries],
   );
 
@@ -205,9 +252,11 @@ function MetricsContent() {
             </TouchableOpacity>
             {metricEntries.length === 0 && <Text style={{ color: c.textSecondary, fontSize: 12 }}>Нет записей</Text>}
             {metricEntries.map((e) => (
-              <TouchableOpacity key={e.id} onLongPress={() =>
-                Alert.alert('Удалить?', '', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: () => removeEntry(e.id) }])
-              } style={s.entryRow}>
+              <TouchableOpacity key={e.id}
+                onPress={() => { setEditingEntry(e); setShowEntryForm(true); }}
+                onLongPress={() =>
+                  Alert.alert('Удалить?', '', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: () => removeEntry(e.id) }])
+                } style={s.entryRow}>
                 <Text style={{ color: statusColor(e.value, m, c), fontWeight: '600', width: 60 }}>{e.value}</Text>
                 <Text style={{ color: c.textSecondary, fontSize: 12, width: 90 }}>{e.date}</Text>
                 {e.notes ? <Text style={{ color: c.textSecondary, fontSize: 12, flex: 1 }} numberOfLines={1}>{e.notes}</Text> : null}
@@ -227,9 +276,13 @@ function MetricsContent() {
           onCancel={() => { setShowMetricForm(false); setEditingMetric(null); }} />
       )}
       {showEntryForm && (
-        <EntryForm metrics={metrics} c={c}
-          onSave={(e) => { addEntry(e); setShowEntryForm(false); }}
-          onCancel={() => setShowEntryForm(false)} />
+        <EntryForm metrics={metrics} initial={editingEntry ?? undefined} c={c}
+          onSave={(e) => {
+            if (editingEntry) { updateEntry(editingEntry.id, e); }
+            else { addEntry(e); }
+            setShowEntryForm(false); setEditingEntry(null);
+          }}
+          onCancel={() => { setShowEntryForm(false); setEditingEntry(null); }} />
       )}
       {showImportForm && (
         <ImportForm c={c}
@@ -248,7 +301,7 @@ function MetricsContent() {
               <Text style={s.fabText}>+ Показатель</Text>
             </TouchableOpacity>
             {metrics.length > 0 && (
-              <TouchableOpacity style={[s.fab, { backgroundColor: c.success }]} onPress={() => setShowEntryForm(true)}>
+              <TouchableOpacity style={[s.fab, { backgroundColor: c.success }]} onPress={() => { setEditingEntry(null); setShowEntryForm(true); }}>
                 <Text style={s.fabText}>+ Результат</Text>
               </TouchableOpacity>
             )}

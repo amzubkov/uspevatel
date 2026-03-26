@@ -8,6 +8,9 @@ import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
 import { Category, CATEGORY_LABELS } from '../types';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { AttachmentList } from '../components/AttachmentList';
+import * as DocumentPicker from 'expo-document-picker';
+import { useAttachmentStore } from '../store/attachmentStore';
 import { scheduleTaskReminder, cancelTaskReminder } from '../utils/notifications';
 
 const CATEGORIES: Category[] = ['IN', 'DAY', 'LATER', 'CONTROL', 'MAYBE'];
@@ -21,6 +24,7 @@ export function TaskDetailScreen() {
   const updateTask = useTaskStore((s) => s.updateTask);
   const addImageToTask = useTaskStore((s) => s.addImageToTask);
   const removeImageFromTask = useTaskStore((s) => s.removeImageFromTask);
+  const addAttachment = useAttachmentStore((s) => s.addAttachment);
   const deleteTask = useTaskStore((s) => s.deleteTask);
   const completeTask = useTaskStore((s) => s.completeTask);
   const uncompleteTask = useTaskStore((s) => s.uncompleteTask);
@@ -145,33 +149,22 @@ export function TaskDetailScreen() {
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: c.background }]} keyboardShouldPersistTaps="handled">
+      {/* Кнопки наверху */}
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+        <TouchableOpacity
+          style={[styles.topBtn, { backgroundColor: task.completed ? c.warning : c.success, flex: 1 }]}
+          onPress={() => { task.completed ? uncompleteTask(taskId) : completeTask(taskId); navigation.goBack(); }}
+        >
+          <Text style={styles.topBtnText}>{task.completed ? 'Вернуть' : 'Выполнено'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.topBtn, { backgroundColor: c.primary, flex: 1 }]} onPress={handleSave}>
+          <Text style={styles.topBtnText}>Сохранить</Text>
+        </TouchableOpacity>
+      </View>
+
       <Text style={[styles.createdDate, { color: c.textSecondary }]}>
         {new Date(task.createdAt).toLocaleDateString('ru-RU')}
       </Text>
-      {/* Человек с автодополнением */}
-      <Text style={[styles.label, { color: c.textSecondary }]}>👤 Человек</Text>
-      <TextInput
-        style={[styles.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
-        value={subject}
-        onChangeText={(t) => { setSubject(t); setShowSubjectList(true); }}
-        onFocus={() => setShowSubjectList(true)}
-        onBlur={() => setTimeout(() => setShowSubjectList(false), 200)}
-        placeholder="Кто делает / для кого"
-        placeholderTextColor={c.textSecondary}
-      />
-      {showSubjectList && knownSubjects.length > 0 && (
-        <View style={[styles.dropdown, { backgroundColor: c.card, borderColor: c.border }]}>
-          {knownSubjects.slice(0, 6).map((s) => (
-            <TouchableOpacity
-              key={s}
-              style={[styles.dropdownItem, { borderColor: c.border }]}
-              onPress={() => { setSubject(s); setShowSubjectList(false); }}
-            >
-              <Text style={[styles.dropdownText, { color: c.text }]}>👤 {s}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
 
       {/* Действие */}
       <Text style={[styles.label, { color: c.textSecondary }]}>Действие</Text>
@@ -181,41 +174,6 @@ export function TaskDetailScreen() {
         onChangeText={setAction}
         multiline
       />
-
-      {/* Проект с автодополнением */}
-      <Text style={[styles.label, { color: c.textSecondary }]}>📂 Проект</Text>
-      <TextInput
-        style={[styles.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
-        value={project || ''}
-        onChangeText={(t) => { setProject(t || undefined); setShowProjectList(true); }}
-        onFocus={() => setShowProjectList(true)}
-        onBlur={() => setTimeout(() => setShowProjectList(false), 200)}
-        placeholder="Выберите или введите проект"
-        placeholderTextColor={c.textSecondary}
-      />
-      {showProjectList && filteredProjects.length > 0 && (
-        <View style={[styles.dropdown, { backgroundColor: c.card, borderColor: c.border }]}>
-          {project?.trim() && (
-            <TouchableOpacity
-              style={[styles.dropdownItem, { borderColor: c.border }]}
-              onPress={() => { setProject(undefined); setShowProjectList(false); }}
-            >
-              <Text style={[styles.dropdownText, { color: c.danger }]}>✕ Убрать проект</Text>
-            </TouchableOpacity>
-          )}
-          {filteredProjects.slice(0, 6).map((p) => (
-            <TouchableOpacity
-              key={p.id}
-              style={[styles.dropdownItem, { borderColor: c.border }]}
-              onPress={() => { setProject(p.name); setShowProjectList(false); }}
-            >
-              <Text style={[styles.dropdownText, { color: c.text }]}>
-                📂 {p.name} {p.isCurrent ? '(текущий)' : ''}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
 
       {/* Контекст */}
       {contextCategories.length > 0 && (
@@ -243,14 +201,14 @@ export function TaskDetailScreen() {
 
       {/* Категория */}
       <Text style={[styles.label, { color: c.textSecondary }]}>Категория</Text>
-      <View style={styles.chips}>
+      <View style={styles.chipRow}>
         {CATEGORIES.map((cat) => (
           <TouchableOpacity
             key={cat}
-            style={[styles.chip, { backgroundColor: category === cat ? c.primary : c.card, borderWidth: 1, borderColor: c.border }]}
+            style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: category === cat ? c.primary : c.card, borderWidth: 1, borderColor: c.border }]}
             onPress={() => setCategory(cat)}
           >
-            <Text style={[styles.chipText, { color: category === cat ? '#FFF' : c.text }]}>
+            <Text style={[styles.chipSmText, { color: category === cat ? '#FFF' : c.text }]}>
               {CATEGORY_LABELS[cat]}
             </Text>
           </TouchableOpacity>
@@ -288,42 +246,43 @@ export function TaskDetailScreen() {
       )}
 
       {/* Дедлайн */}
+      {/* Дедлайн */}
       <Text style={[styles.label, { color: c.textSecondary }]}>Дедлайн</Text>
       {deadline ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={{ color: c.text, fontSize: 15 }}>
-            ⏳ {new Date(deadline).toLocaleString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+        <View style={styles.chipRow}>
+          <Text style={{ color: c.text, fontSize: 13 }}>
+            {new Date(deadline).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
           </Text>
           <TouchableOpacity onPress={() => setDeadline(undefined)}>
-            <Text style={{ color: c.danger, fontSize: 14, fontWeight: '600' }}>Убрать</Text>
+            <Text style={{ color: c.danger, fontSize: 12, fontWeight: '600' }}>X</Text>
           </TouchableOpacity>
         </View>
       ) : (
-        <View style={styles.reminderOptions}>
-          <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => {
+        <View style={styles.chipRow}>
+          <TouchableOpacity style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
             const d = new Date(); d.setHours(23, 59, 0, 0);
             setDeadline(d.toISOString());
           }}>
-            <Text style={[styles.reminderChipText, { color: c.text }]}>Сегодня</Text>
+            <Text style={[styles.chipSmText, { color: c.text }]}>Сегодня</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => {
+          <TouchableOpacity style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
             const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(23, 59, 0, 0);
             setDeadline(d.toISOString());
           }}>
-            <Text style={[styles.reminderChipText, { color: c.text }]}>Завтра</Text>
+            <Text style={[styles.chipSmText, { color: c.text }]}>Завтра</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => {
+          <TouchableOpacity style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
             const d = new Date(); d.setDate(d.getDate() + 2); d.setHours(23, 59, 0, 0);
             setDeadline(d.toISOString());
           }}>
-            <Text style={[styles.reminderChipText, { color: c.text }]}>Послезавтра</Text>
+            <Text style={[styles.chipSmText, { color: c.text }]}>Послезавтра</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => {
+          <TouchableOpacity style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
             const d = new Date(); d.setHours(23, 59, 0, 0);
             setPickerDate(d);
             setShowDeadlinePicker(true);
           }}>
-            <Text style={[styles.reminderChipText, { color: c.text }]}>Кастом</Text>
+            <Text style={[styles.chipSmText, { color: c.text }]}>...</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -347,10 +306,10 @@ export function TaskDetailScreen() {
         numberOfLines={4}
       />
 
-      {/* Фото */}
-      <Text style={[styles.label, { color: c.textSecondary }]}>Фото</Text>
-      {task.imageBase64 ? (
-        <View style={{ marginBottom: 12 }}>
+      {/* Фото и файлы */}
+      <Text style={[styles.label, { color: c.textSecondary }]}>Фото и файлы</Text>
+      {task.imageBase64 && (
+        <View style={{ marginBottom: 8 }}>
           <TouchableOpacity activeOpacity={0.9} onPress={() => setShowFullImg(true)}>
             <Image source={{ uri: task.imageBase64 }} style={{ width: '100%', height: 200, borderRadius: 8 }} resizeMode="cover" />
           </TouchableOpacity>
@@ -363,26 +322,34 @@ export function TaskDetailScreen() {
             </TouchableOpacity>
           </Modal>
         </View>
-      ) : (
-        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
-          <TouchableOpacity style={[styles.photoBtn, { borderColor: c.border }]} onPress={async () => {
-            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (status !== 'granted') { Alert.alert('Нет доступа', 'Разрешите доступ к галерее в настройках'); return; }
-            const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
-            if (!r.canceled && r.assets[0]) addImageToTask(taskId, r.assets[0].uri);
-          }}>
-            <Text style={{ color: c.textSecondary, fontSize: 13 }}>Галерея</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.photoBtn, { borderColor: c.border }]} onPress={async () => {
-            const { status } = await ImagePicker.requestCameraPermissionsAsync();
-            if (status !== 'granted') { Alert.alert('Нет доступа', 'Разрешите доступ к камере в настройках'); return; }
-            const r = await ImagePicker.launchCameraAsync({ quality: 0.7 });
-            if (!r.canceled && r.assets[0]) addImageToTask(taskId, r.assets[0].uri);
-          }}>
-            <Text style={{ color: c.textSecondary, fontSize: 13 }}>Камера</Text>
-          </TouchableOpacity>
-        </View>
       )}
+      <AttachmentList entityType="task" entityId={taskId} hideAddButton />
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 6, marginBottom: 12 }}>
+        <TouchableOpacity style={[styles.photoBtn, { borderColor: c.border, flex: 1 }]} onPress={async () => {
+          const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (status !== 'granted') { Alert.alert('Нет доступа'); return; }
+          const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
+          if (!r.canceled && r.assets[0]) addImageToTask(taskId, r.assets[0].uri);
+        }}>
+          <Text style={{ color: c.textSecondary, fontSize: 13 }}>Галерея</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.photoBtn, { borderColor: c.border, flex: 1 }]} onPress={async () => {
+          const { status } = await ImagePicker.requestCameraPermissionsAsync();
+          if (status !== 'granted') { Alert.alert('Нет доступа'); return; }
+          const r = await ImagePicker.launchCameraAsync({ quality: 0.7 });
+          if (!r.canceled && r.assets[0]) addImageToTask(taskId, r.assets[0].uri);
+        }}>
+          <Text style={{ color: c.textSecondary, fontSize: 13 }}>Камера</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.photoBtn, { borderColor: c.border, flex: 1 }]} onPress={async () => {
+          const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+          if (result.canceled || !result.assets?.[0]) return;
+          const a = result.assets[0];
+          await addAttachment('task', taskId, a.uri, a.name, a.mimeType, a.size);
+        }}>
+          <Text style={{ color: c.textSecondary, fontSize: 13 }}>Файл</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Напоминание */}
       <Text style={[styles.label, { color: c.textSecondary }]}>🔔 Напоминание</Text>
@@ -396,14 +363,14 @@ export function TaskDetailScreen() {
           </TouchableOpacity>
         </View>
       ) : (
-        <View style={styles.reminderOptions}>
-          <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => handleSetReminder(60, 'через 1 час')}>
-            <Text style={[styles.reminderChipText, { color: c.text }]}>⏰ 1ч</Text>
+        <View style={styles.chipRow}>
+          <TouchableOpacity style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => handleSetReminder(60, 'через 1 час')}>
+            <Text style={[styles.chipSmText, { color: c.text }]}>1ч</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => handleSetReminder(180, 'через 3 часа')}>
-            <Text style={[styles.reminderChipText, { color: c.text }]}>⏰ 3ч</Text>
+          <TouchableOpacity style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => handleSetReminder(180, 'через 3 часа')}>
+            <Text style={[styles.chipSmText, { color: c.text }]}>3ч</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={() => {
+          <TouchableOpacity style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => {
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
             tomorrow.setHours(10, 0, 0, 0);
@@ -414,11 +381,71 @@ export function TaskDetailScreen() {
               }
             });
           }}>
-            <Text style={[styles.reminderChipText, { color: c.text }]}>📅 Завтра</Text>
+            <Text style={[styles.chipSmText, { color: c.text }]}>Завтра</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.reminderChip, { backgroundColor: c.card, borderColor: c.border }]} onPress={openCustomReminder}>
-            <Text style={[styles.reminderChipText, { color: c.text }]}>🕐 Кастом</Text>
+          <TouchableOpacity style={[styles.chipSm, { flex: 1, alignItems: 'center', backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={openCustomReminder}>
+            <Text style={[styles.chipSmText, { color: c.text }]}>...</Text>
           </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Человек с автодополнением */}
+      <Text style={[styles.label, { color: c.textSecondary }]}>👤 Человек</Text>
+      <TextInput
+        style={[styles.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
+        value={subject}
+        onChangeText={(t) => { setSubject(t); setShowSubjectList(true); }}
+        onFocus={() => setShowSubjectList(true)}
+        onBlur={() => setTimeout(() => setShowSubjectList(false), 200)}
+        placeholder="Кто делает / для кого"
+        placeholderTextColor={c.textSecondary}
+      />
+      {showSubjectList && knownSubjects.length > 0 && (
+        <View style={[styles.dropdown, { backgroundColor: c.card, borderColor: c.border }]}>
+          {knownSubjects.slice(0, 6).map((s) => (
+            <TouchableOpacity
+              key={s}
+              style={[styles.dropdownItem, { borderColor: c.border }]}
+              onPress={() => { setSubject(s); setShowSubjectList(false); }}
+            >
+              <Text style={[styles.dropdownText, { color: c.text }]}>👤 {s}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {/* Проект с автодополнением */}
+      <Text style={[styles.label, { color: c.textSecondary }]}>📂 Проект</Text>
+      <TextInput
+        style={[styles.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
+        value={project || ''}
+        onChangeText={(t) => { setProject(t || undefined); setShowProjectList(true); }}
+        onFocus={() => setShowProjectList(true)}
+        onBlur={() => setTimeout(() => setShowProjectList(false), 200)}
+        placeholder="Выберите или введите проект"
+        placeholderTextColor={c.textSecondary}
+      />
+      {showProjectList && filteredProjects.length > 0 && (
+        <View style={[styles.dropdown, { backgroundColor: c.card, borderColor: c.border }]}>
+          {project?.trim() && (
+            <TouchableOpacity
+              style={[styles.dropdownItem, { borderColor: c.border }]}
+              onPress={() => { setProject(undefined); setShowProjectList(false); }}
+            >
+              <Text style={[styles.dropdownText, { color: c.danger }]}>✕ Убрать проект</Text>
+            </TouchableOpacity>
+          )}
+          {filteredProjects.slice(0, 6).map((p) => (
+            <TouchableOpacity
+              key={p.id}
+              style={[styles.dropdownItem, { borderColor: c.border }]}
+              onPress={() => { setProject(p.name); setShowProjectList(false); }}
+            >
+              <Text style={[styles.dropdownText, { color: c.text }]}>
+                📂 {p.name} {p.isCurrent ? '(текущий)' : ''}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
       )}
 
@@ -535,6 +562,9 @@ const styles = StyleSheet.create({
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
   chipText: { fontSize: 13, fontWeight: '600' },
+  chipRow: { flexDirection: 'row', gap: 4, alignItems: 'center' },
+  chipSm: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6 },
+  chipSmText: { fontSize: 12, fontWeight: '600' },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, marginTop: 8 },
   infoLabel: { fontSize: 14 },
   infoValue: { fontSize: 14, fontWeight: '500' },
@@ -547,6 +577,8 @@ const styles = StyleSheet.create({
   reminderChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1 },
   reminderChipText: { fontSize: 13, fontWeight: '600' },
   actions: { flexDirection: 'row', gap: 12, marginTop: 24 },
+  topBtn: { paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
+  topBtnText: { color: '#FFF', fontWeight: '700', fontSize: 14 },
   actionBtn: { flex: 1, paddingVertical: 14, borderRadius: 10, alignItems: 'center' },
   actionBtnText: { color: '#FFF', fontSize: 16, fontWeight: '600' },
   deleteBtn: { marginTop: 16, marginBottom: 40, paddingVertical: 14, alignItems: 'center' },

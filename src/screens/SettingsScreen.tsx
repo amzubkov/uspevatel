@@ -8,118 +8,17 @@ import {
   StyleSheet,
   Alert,
   Share,
-  ActivityIndicator,
-  Clipboard,
   Platform,
-  Linking,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as LegacyFS from "expo-file-system/legacy";
+import { StorageAccessFramework } from "expo-file-system/legacy";
 import { useSettingsStore } from "../store/settingsStore";
 import { useTaskStore } from "../store/taskStore";
 import { useProjectStore } from "../store/projectStore";
 import { colors } from "../utils/theme";
-import {
-  fetchRemoteTasks,
-  pushChanges,
-  computeSync,
-  pushRoutineLog,
-} from "../services/syncService";
-import { SyncConflictModal } from "../components/SyncConflictModal";
 import { useRoutineStore } from "../store/routineStore";
-import { Task, SyncConflict } from "../types";
-import {
-  describeSyncFolder,
-  getSyncFolder,
-  setSyncFolder,
-} from "../db/database";
-
-const APPS_SCRIPT_CODE = `var SHEET_NAME = 'Tasks';
-var HEADERS = ['id','subject','action','category','contextCategory','project','notes','startDate','priority','isRecurring','recurDays','completed','completedAt','deadline','createdAt','updatedAt','reminderAt'];
-var ROUTINE_SHEET = 'Routine';
-var ROUTINE_HEADERS = ['date','itemId','title','completed'];
-
-function getOrCreateSheet() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(SHEET_NAME);
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAME);
-    sheet.appendRow(HEADERS);
-    sheet.getRange(1,1,1,HEADERS.length).setFontWeight('bold');
-  }
-  return sheet;
-}
-
-function getOrCreateRoutineSheet() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(ROUTINE_SHEET);
-  if (!sheet) {
-    sheet = ss.insertSheet(ROUTINE_SHEET);
-    sheet.appendRow(ROUTINE_HEADERS);
-    sheet.getRange(1,1,1,ROUTINE_HEADERS.length).setFontWeight('bold');
-  }
-  return sheet;
-}
-
-function doGet() {
-  var sheet = getOrCreateSheet();
-  var data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return ContentService.createTextOutput('[]').setMimeType(ContentService.MimeType.JSON);
-  var headers = data[0], tasks = [];
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    if (!row[0]) continue;
-    var obj = {};
-    for (var j = 0; j < headers.length; j++) {
-      var val = row[j], key = headers[j];
-      if (key === 'isRecurring' || key === 'completed') obj[key] = val === true || val === 'true' || val === 'TRUE';
-      else obj[key] = val === '' ? '' : String(val);
-    }
-    tasks.push(obj);
-  }
-  return ContentService.createTextOutput(JSON.stringify(tasks)).setMimeType(ContentService.MimeType.JSON);
-}
-
-function doPost(e) {
-  var payload = JSON.parse(e.postData.contents);
-  if (payload.routineLog) {
-    var rs = getOrCreateRoutineSheet();
-    var entries = payload.routineLog;
-    if (entries.length > 0) {
-      var date = entries[0].date;
-      var data = rs.getDataRange().getValues();
-      var rowsToDel = [];
-      for (var i = data.length - 1; i >= 1; i--) { if (String(data[i][0]) === date) rowsToDel.push(i + 1); }
-      for (var d = 0; d < rowsToDel.length; d++) rs.deleteRow(rowsToDel[d]);
-      for (var e2 = 0; e2 < entries.length; e2++) {
-        var en = entries[e2];
-        rs.appendRow([en.date, en.itemId, en.title, String(en.completed)]);
-      }
-    }
-    return ContentService.createTextOutput(JSON.stringify({status:'ok'})).setMimeType(ContentService.MimeType.JSON);
-  }
-  var sheet = getOrCreateSheet();
-  var upsert = payload.upsert || [], deleteIds = payload.deleteIds || [];
-  var data = sheet.getDataRange().getValues(), headers = data[0];
-  var idCol = headers.indexOf('id'), idRowMap = {};
-  for (var i = 1; i < data.length; i++) if (data[i][idCol]) idRowMap[String(data[i][idCol])] = i + 1;
-  var rowsToDelete = [];
-  for (var d = 0; d < deleteIds.length; d++) { var dr = idRowMap[String(deleteIds[d])]; if (dr) rowsToDelete.push(dr); }
-  rowsToDelete.sort(function(a,b){return b-a});
-  for (var r = 0; r < rowsToDelete.length; r++) sheet.deleteRow(rowsToDelete[r]);
-  if (rowsToDelete.length > 0) {
-    data = sheet.getDataRange().getValues(); idRowMap = {};
-    for (var i2 = 1; i2 < data.length; i2++) if (data[i2][idCol]) idRowMap[String(data[i2][idCol])] = i2 + 1;
-  }
-  for (var u = 0; u < upsert.length; u++) {
-    var task = upsert[u], rowValues = [];
-    for (var h = 0; h < HEADERS.length; h++) { var val = task[HEADERS[h]]; if (val === null || val === undefined) val = ''; if (typeof val === 'boolean') val = String(val); if (Array.isArray(val)) val = JSON.stringify(val); rowValues.push(val); }
-    var existing = idRowMap[String(task.id)];
-    if (existing) sheet.getRange(existing,1,1,HEADERS.length).setValues([rowValues]);
-    else sheet.appendRow(rowValues);
-  }
-  return ContentService.createTextOutput(JSON.stringify({status:'ok'})).setMimeType(ContentService.MimeType.JSON);
-}`;
+import { getSyncFolder, setSyncFolder, getDb } from "../db/database";
+import { validateToken } from "../services/telegramService";
 
 export function SettingsScreen() {
   const contextCategories = useSettingsStore((s) => s.contextCategories);
@@ -131,199 +30,104 @@ export function SettingsScreen() {
   const theme = useSettingsStore((s) => s.theme);
   const fontSize = useSettingsStore((s) => s.fontSize) ?? 15;
   const setFontSize = useSettingsStore((s) => s.setFontSize);
-  const dailyReminderTime = useSettingsStore((s) => s.dailyReminderTime);
-  const weeklyReminderTime = useSettingsStore((s) => s.weeklyReminderTime);
-  const weeklyReminderDay = useSettingsStore((s) => s.weeklyReminderDay);
-  const syncUrl = useSettingsStore((s) => s.syncUrl);
-  const setSyncUrl = useSettingsStore((s) => s.setSyncUrl);
-  const lastSyncAt = useSettingsStore((s) => s.lastSyncAt);
-  const setLastSyncAt = useSettingsStore((s) => s.setLastSyncAt);
-  const knownSyncIds = useSettingsStore((s) => s.knownSyncIds);
-  const addKnownSyncIds = useSettingsStore((s) => s.addKnownSyncIds);
-  const importTask = useTaskStore((s) => s.importTask);
   const c = colors[theme];
   const [newContext, setNewContext] = useState("");
   const tasks = useTaskStore((s) => s.tasks);
   const projects = useProjectStore((s) => s.projects);
-  const routineItems = useRoutineStore((s) => s.items);
-  const routineCompleted = useRoutineStore((s) => s.completedToday);
+
+  // Telegram bot
+  const [tgToken, setTgToken] = useState("");
+  const [tgStatus, setTgStatus] = useState<string | null>(null);
+  const [tgSaving, setTgSaving] = useState(false);
+
+  // Load saved token on mount
+  React.useEffect(() => {
+    (async () => {
+      const db = await getDb();
+      const row = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['tgBotToken']);
+      if (row?.value) setTgToken(row.value);
+    })();
+  }, []);
+
+  const handleSaveTgToken = useCallback(async () => {
+    const token = tgToken.trim();
+    setTgSaving(true);
+    try {
+      const db = await getDb();
+      if (!token) {
+        await db.runAsync('DELETE FROM settings WHERE key IN (?, ?)', ['tgBotToken', 'tgUpdateOffset']);
+        setTgStatus('Токен удалён');
+        setTgSaving(false);
+        return;
+      }
+      const botName = await validateToken(token);
+      await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['tgBotToken', token]);
+      setTgStatus(`Подключён: ${botName}`);
+    } catch (e: any) {
+      setTgStatus(String(e?.message || e));
+    }
+    setTgSaving(false);
+  }, [tgToken]);
 
   // Sync folder
-  const initialSyncFolder = getSyncFolder();
-  const [selectedSyncFolder, setSelectedSyncFolder] = useState(
-    initialSyncFolder || "",
-  );
-  const [syncFolderInput, setSyncFolderInput] = useState(
-    describeSyncFolder(initialSyncFolder) || "",
-  );
+  const [syncFolderInput, setSyncFolderInput] = useState(getSyncFolder() || "");
   const [syncFolderStatus, setSyncFolderStatus] = useState<string | null>(null);
-
-  const handleSetSyncFolder = useCallback(async () => {
-    const nextFolder = selectedSyncFolder || syncFolderInput.trim();
-    if (!nextFolder) {
-      await setSyncFolder(null);
-      setSelectedSyncFolder("");
-      setSyncFolderInput("");
-      setSyncFolderStatus("Папка сброшена. Синк по кнопке отключён.");
-      return;
-    }
-    await setSyncFolder(nextFolder);
-    setSelectedSyncFolder(nextFolder);
-    setSyncFolderInput(describeSyncFolder(nextFolder) || nextFolder);
-    setSyncFolderStatus(
-      "Папка сохранена. Теперь синк запускается кнопкой в верхней панели.",
-    );
-  }, [selectedSyncFolder, syncFolderInput]);
 
   const handlePickAndroidSyncFolder = useCallback(async () => {
     if (Platform.OS !== "android") return;
     try {
       const permission =
-        await LegacyFS.StorageAccessFramework.requestDirectoryPermissionsAsync();
+        await StorageAccessFramework.requestDirectoryPermissionsAsync();
       if (!permission.granted || !permission.directoryUri) {
         setSyncFolderStatus("Выбор папки отменён");
         return;
       }
-      await setSyncFolder(permission.directoryUri);
-      setSelectedSyncFolder(permission.directoryUri);
-      setSyncFolderInput(
-        describeSyncFolder(permission.directoryUri) || permission.directoryUri,
-      );
+      // Convert SAF content:// URI to real path
+      const uri = permission.directoryUri;
+      const match =
+        uri.match(/\/tree\/([^/]+)/) || uri.match(/\/document\/([^/]+)/);
+      let realPath: string | null = null;
+      if (match?.[1]) {
+        const decoded = decodeURIComponent(match[1]);
+        const colonIndex = decoded.indexOf(":");
+        if (colonIndex >= 0) {
+          const volume = decoded.slice(0, colonIndex);
+          const relative = decoded.slice(colonIndex + 1).replace(/^\/+/, "");
+          const prefix =
+            volume === "primary" ? "/storage/emulated/0" : `/storage/${volume}`;
+          realPath = relative ? `${prefix}/${relative}` : prefix;
+        }
+      }
+      if (!realPath) {
+        setSyncFolderStatus(`Не удалось определить путь из URI:\n${uri}`);
+        return;
+      }
+      await setSyncFolder(realPath);
+      setSyncFolderInput(realPath);
       setSyncFolderStatus(
-        "Папка выбрана. Теперь синк запускается кнопкой в верхней панели.",
+        `Папка сохранена: ${realPath}\nСинхронизация через папку временно отключена в этой сборке.`,
       );
     } catch (e: any) {
       setSyncFolderStatus(`Ошибка: ${e?.message || String(e)}`);
     }
   }, []);
 
-  // Sync state
-  const [syncUrlInput, setSyncUrlInput] = useState(syncUrl);
-  const [showScript, setShowScript] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<string | null>(null);
-  const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
-  const [conflictIndex, setConflictIndex] = useState(0);
-  const [pendingExport, setPendingExport] = useState<Task[]>([]);
-  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
-
-  const finishSync = useCallback(
-    async (
-      url: string,
-      toExport: Task[],
-      deleteIds: string[],
-      toImport: Task[],
-    ) => {
-      try {
-        if (toExport.length > 0 || deleteIds.length > 0) {
-          setSyncStatus("Отправка задач в таблицу...");
-          await pushChanges(url, toExport, deleteIds);
-        }
-        if (routineItems.length > 0) {
-          setSyncStatus("Отправка рутины в таблицу...");
-          await pushRoutineLog(url, routineItems, routineCompleted);
-        }
-        for (const t of toImport) importTask(t);
-        const allIds = [
-          ...tasks.map((t) => t.id),
-          ...toImport.map((t) => t.id),
-        ];
-        addKnownSyncIds(allIds);
-        setLastSyncAt(new Date().toISOString());
-        const parts: string[] = [];
-        if (toExport.length) parts.push(`${toExport.length} экспорт`);
-        if (toImport.length) parts.push(`${toImport.length} импорт`);
-        if (deleteIds.length) parts.push(`${deleteIds.length} удалено`);
-        if (routineItems.length) parts.push(`${routineItems.length} рутина`);
-        setSyncStatus(parts.length ? parts.join(", ") : "Всё актуально");
-      } catch (err) {
-        setSyncStatus(
-          `Ошибка: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      } finally {
-        setSyncing(false);
-      }
-    },
-    [
-      tasks,
-      importTask,
-      addKnownSyncIds,
-      setLastSyncAt,
-      routineItems,
-      routineCompleted,
-    ],
-  );
-
-  const handleSync = useCallback(async () => {
-    const url = syncUrl.trim();
-    if (!url) {
-      setSyncStatus("Укажите URL");
+  const handleSetSyncFolder = useCallback(async () => {
+    const path = syncFolderInput.trim();
+    if (!path) {
+      await setSyncFolder(null);
+      setSyncFolderStatus("Папка сброшена.");
       return;
     }
-    setSyncing(true);
-    setSyncStatus("Загрузка из таблицы...");
     try {
-      const remote = await fetchRemoteTasks(url);
-      setSyncStatus(`Получено ${remote.length}. Сравнение...`);
-      const result = computeSync(tasks, remote, knownSyncIds);
-      if (result.conflicts.length > 0) {
-        setPendingExport([...result.toExport]);
-        setPendingDeleteIds([...result.toDeleteFromSheet]);
-        setConflicts(result.conflicts);
-        setConflictIndex(0);
-        setSyncing(false);
-        setSyncStatus(
-          `${result.toExport.length} экспорт, ${result.toImport.length} импорт, ${result.conflicts.length} конфликтов`,
-        );
-        for (const t of result.toImport) importTask(t);
-        addKnownSyncIds([
-          ...result.toImport.map((t) => t.id),
-          ...result.toExport.map((t) => t.id),
-        ]);
-        return;
-      }
-      await finishSync(
-        url,
-        result.toExport,
-        result.toDeleteFromSheet,
-        result.toImport,
+      await setSyncFolder(path);
+      setSyncFolderStatus(
+        `Папка сохранена: ${path}\nСинхронизация через папку временно отключена в этой сборке.`,
       );
-    } catch (err) {
-      setSyncStatus(
-        `Ошибка: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      setSyncing(false);
+    } catch (e: any) {
+      setSyncFolderStatus(`Ошибка: ${e?.message || String(e)}`);
     }
-  }, [syncUrl, tasks, knownSyncIds, addKnownSyncIds, importTask, finishSync]);
-
-  const advanceConflict = useCallback(() => {
-    setConflictIndex((prev) => {
-      const next = prev + 1;
-      if (next >= conflicts.length) {
-        setSyncing(true);
-        finishSync(syncUrl.trim(), pendingExport, pendingDeleteIds, []);
-        setConflicts([]);
-        return 0;
-      }
-      return next;
-    });
-  }, [conflicts.length, syncUrl, pendingExport, pendingDeleteIds, finishSync]);
-
-  const handleKeepLocal = useCallback(
-    (conflict: SyncConflict) => {
-      setPendingExport((prev) => [...prev, conflict.localTask]);
-      advanceConflict();
-    },
-    [advanceConflict],
-  );
-
-  const handleTakeRemote = useCallback(
-    (conflict: SyncConflict) => {
-      importTask(conflict.remoteTask);
-      advanceConflict();
-    },
-    [importTask, advanceConflict],
-  );
+  }, [syncFolderInput]);
 
   const handleAddContext = () => {
     const trimmed = newContext.trim();
@@ -346,9 +150,6 @@ export function SettingsScreen() {
       projects,
       settings: {
         contextCategories,
-        dailyReminderTime,
-        weeklyReminderTime,
-        weeklyReminderDay,
         theme,
         fontSize,
       },
@@ -406,7 +207,7 @@ export function SettingsScreen() {
               { color: theme === "light" ? "#FFF" : c.text },
             ]}
           >
-            ☀️ Светлая
+            Светлая
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -422,7 +223,7 @@ export function SettingsScreen() {
               { color: theme === "dark" ? "#FFF" : c.text },
             ]}
           >
-            🌙 Тёмная
+            Тёмная
           </Text>
         </TouchableOpacity>
       </View>
@@ -432,11 +233,8 @@ export function SettingsScreen() {
         Папка синхронизации
       </Text>
       <Text style={[styles.hint, { color: c.textSecondary }]}>
-        {Platform.OS === "android"
-          ? "На Android эта папка используется как внешняя sync-папка. Рабочая база остаётся внутри приложения."
-          : "Путь к папке Dropbox для синхронизации с десктопом."}
-        {"\n"}
-        После выбора синк запускается кнопкой в верхней панели.
+        Путь к папке можно сохранить, но синхронизация через папку сейчас
+        временно отключена.
       </Text>
       {Platform.OS === "android" && (
         <TouchableOpacity
@@ -446,7 +244,7 @@ export function SettingsScreen() {
           ]}
           onPress={handlePickAndroidSyncFolder}
         >
-          <Text style={styles.exportBtnText}>Выбрать папку на Android</Text>
+          <Text style={styles.exportBtnText}>Выбрать папку</Text>
         </TouchableOpacity>
       )}
       <View style={styles.addContextRow}>
@@ -461,10 +259,7 @@ export function SettingsScreen() {
             },
           ]}
           value={syncFolderInput}
-          onChangeText={(text) => {
-            setSyncFolderInput(text);
-            setSelectedSyncFolder(text.trim());
-          }}
+          onChangeText={setSyncFolderInput}
           placeholder="/storage/emulated/0/Documents/uspevatel"
           placeholderTextColor={c.textSecondary}
           autoCapitalize="none"
@@ -475,19 +270,16 @@ export function SettingsScreen() {
         style={[
           styles.exportBtn,
           {
-            backgroundColor:
-              selectedSyncFolder || syncFolderInput.trim()
-                ? c.primary
-                : c.textSecondary,
+            backgroundColor: syncFolderInput.trim()
+              ? c.primary
+              : c.textSecondary,
             marginTop: 8,
           },
         ]}
         onPress={handleSetSyncFolder}
       >
         <Text style={styles.exportBtnText}>
-          {selectedSyncFolder || syncFolderInput.trim()
-            ? "Сохранить папку"
-            : "Сбросить папку"}
+          {syncFolderInput.trim() ? "Подключить этот путь" : "Сбросить папку"}
         </Text>
       </TouchableOpacity>
       {syncFolderStatus && (
@@ -518,7 +310,7 @@ export function SettingsScreen() {
       </Text>
       {contextCategories.map((ctx) => (
         <View key={ctx} style={[styles.contextRow, { borderColor: c.border }]}>
-          <Text style={[styles.contextName, { color: c.text }]}>\{ctx}</Text>
+          <Text style={[styles.contextName, { color: c.text }]}>{ctx}</Text>
           <TouchableOpacity onPress={() => removeContextCategory(ctx)}>
             <Text style={[styles.removeBtn, { color: c.danger }]}>Удалить</Text>
           </TouchableOpacity>
@@ -544,141 +336,39 @@ export function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Google Sheets Sync */}
+      {/* Telegram Bot */}
       <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>
-        Google Sheets
+        Telegram бот
       </Text>
       <Text style={[styles.hint, { color: c.textSecondary }]}>
-        Двусторонняя синхронизация задач с Google Таблицей
+        Токен от @BotFather. Добавьте бота в канал, пишите /task или /flight.
       </Text>
       <View style={styles.addContextRow}>
         <TextInput
           style={[
             styles.addContextInput,
-            {
-              color: c.text,
-              backgroundColor: c.card,
-              borderColor: c.border,
-              fontSize: 13,
-            },
+            { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13 },
           ]}
-          value={syncUrlInput}
-          onChangeText={setSyncUrlInput}
-          placeholder="https://script.google.com/macros/s/.../exec"
+          value={tgToken}
+          onChangeText={setTgToken}
+          placeholder="123456:ABC-DEF..."
           placeholderTextColor={c.textSecondary}
           autoCapitalize="none"
           autoCorrect={false}
+          secureTextEntry
         />
-        <TouchableOpacity
-          style={[
-            styles.addContextBtn,
-            { backgroundColor: c.primary, width: 80, borderRadius: 8 },
-          ]}
-          onPress={() => {
-            setSyncUrl(syncUrlInput.trim());
-            setSyncStatus("URL сохранён");
-          }}
-        >
-          <Text style={[styles.addContextBtnText, { fontSize: 13 }]}>
-            Сохранить
-          </Text>
-        </TouchableOpacity>
       </View>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          marginTop: 12,
-          gap: 12,
-        }}
-      >
-        <TouchableOpacity
-          style={[
-            styles.exportBtn,
-            { opacity: syncing || !syncUrl ? 0.5 : 1, marginTop: 0, flex: 1 },
-          ]}
-          onPress={handleSync}
-          disabled={syncing || !syncUrl}
-        >
-          {syncing ? (
-            <ActivityIndicator color="#FFF" size="small" />
-          ) : (
-            <Text style={styles.exportBtnText}>Синхронизация</Text>
-          )}
-        </TouchableOpacity>
-      </View>
-      {lastSyncAt && (
-        <Text style={[styles.hint, { color: c.textSecondary, marginTop: 6 }]}>
-          Последняя: {new Date(lastSyncAt).toLocaleString()}
-        </Text>
-      )}
-      {syncStatus && (
-        <View
-          style={[
-            {
-              backgroundColor: c.card,
-              borderRadius: 8,
-              padding: 10,
-              marginTop: 8,
-              borderWidth: 1,
-              borderColor: c.border,
-            },
-          ]}
-        >
-          <Text style={{ color: c.text, fontSize: 13 }}>{syncStatus}</Text>
-        </View>
-      )}
-
-      {/* Setup instructions */}
       <TouchableOpacity
-        style={{ marginTop: 12 }}
-        onPress={() => setShowScript(!showScript)}
+        style={[styles.exportBtn, { backgroundColor: c.primary, marginTop: 8 }]}
+        onPress={handleSaveTgToken}
+        disabled={tgSaving}
       >
-        <Text style={{ color: c.primary, fontSize: 14, fontWeight: "600" }}>
-          {showScript ? "▼ Скрыть инструкцию" : "▶ Как настроить синхронизацию"}
+        <Text style={styles.exportBtnText}>
+          {tgSaving ? '...' : tgToken.trim() ? 'Проверить и сохранить' : 'Удалить токен'}
         </Text>
       </TouchableOpacity>
-      {showScript && (
-        <View
-          style={[
-            {
-              backgroundColor: c.card,
-              borderRadius: 8,
-              padding: 12,
-              marginTop: 8,
-              borderWidth: 1,
-              borderColor: c.border,
-            },
-          ]}
-        >
-          <Text
-            style={{
-              color: c.text,
-              fontSize: 13,
-              lineHeight: 20,
-              marginBottom: 8,
-            }}
-          >
-            {
-              "1. Создайте Google Таблицу\n2. Откройте: Расширения → Apps Script\n3. Удалите всё в Code.gs\n4. Вставьте код (кнопка ниже)\n5. Нажмите Развернуть → Новое развёртывание\n6. Тип: Веб-приложение\n   • Выполнять как: Я\n   • Доступ: Все\n7. Нажмите Развернуть, подтвердите\n8. Скопируйте URL и вставьте выше"
-            }
-          </Text>
-          <TouchableOpacity
-            style={[
-              styles.exportBtn,
-              { backgroundColor: "#2E7D32", marginTop: 4 },
-            ]}
-            onPress={() => {
-              Clipboard.setString(APPS_SCRIPT_CODE);
-              Alert.alert(
-                "Скопировано",
-                "Код скрипта скопирован в буфер обмена. Вставьте его в Apps Script.",
-              );
-            }}
-          >
-            <Text style={styles.exportBtnText}>Скопировать код скрипта</Text>
-          </TouchableOpacity>
-        </View>
+      {tgStatus && (
+        <Text style={{ color: c.textSecondary, fontSize: 13, marginTop: 6 }}>{tgStatus}</Text>
       )}
 
       {/* Data */}
@@ -729,19 +419,6 @@ export function SettingsScreen() {
           Удалить все данные
         </Text>
       </TouchableOpacity>
-
-      {conflicts.length > 0 && (
-        <SyncConflictModal
-          conflicts={conflicts}
-          currentIndex={conflictIndex}
-          onKeepLocal={handleKeepLocal}
-          onTakeRemote={handleTakeRemote}
-          onClose={() => {
-            setConflicts([]);
-            setSyncStatus("Синхронизация отменена");
-          }}
-        />
-      )}
     </ScrollView>
   );
 }

@@ -26,6 +26,7 @@ export function ExercisesScreen() {
   const [imageUri, setImageUri] = useState<string | undefined>();
   const [weightType, setWeightType] = useState(0);
   const [tag, setTag] = useState('');
+  const [calPerRep, setCalPerRep] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
 
   const allTags = useMemo(() => {
@@ -57,11 +58,12 @@ export function ExercisesScreen() {
 
   const handleAdd = async () => {
     if (!name.trim()) return;
-    await addExercise(name.trim(), weightType, tag.trim() || undefined, undefined, imageUri);
+    await addExercise(name.trim(), weightType, tag.trim() || undefined, undefined, imageUri, parseFloat(calPerRep.replace(',', '.')) || 0);
     setName('');
     setImageUri(undefined);
     setWeightType(0);
     setTag('');
+    setCalPerRep('');
     setShowAdd(false);
   };
 
@@ -93,6 +95,14 @@ export function ExercisesScreen() {
             onChangeText={setTag}
             placeholder="Тег (напр. Грудь, Ноги)"
             placeholderTextColor={c.textSecondary}
+          />
+          <TextInput
+            style={[styles.input, { color: c.text, borderColor: c.border }]}
+            value={calPerRep}
+            onChangeText={setCalPerRep}
+            placeholder="Ккал за повтор (необяз.)"
+            placeholderTextColor={c.textSecondary}
+            keyboardType="decimal-pad"
           />
           <View style={styles.typeRow}>
             {WEIGHT_OPTIONS.map((wt) => (

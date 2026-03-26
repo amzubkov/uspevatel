@@ -28,7 +28,7 @@ function formatSize(bytes?: number): string {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-export function AttachmentList({ entityType, entityId }: { entityType: string; entityId: string }) {
+export function AttachmentList({ entityType, entityId, hideAddButton }: { entityType: string; entityId: string; hideAddButton?: boolean }) {
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
   const allAttachments = useAttachmentStore((s) => s.attachments);
@@ -74,9 +74,11 @@ export function AttachmentList({ entityType, entityId }: { entityType: string; e
           {a.size ? <Text style={{ color: c.textSecondary, fontSize: 11 }}>{formatSize(a.size)}</Text> : null}
         </TouchableOpacity>
       ))}
-      <TouchableOpacity style={[st.addBtn, { borderColor: c.border }]} onPress={handlePick}>
-        <Text style={{ color: c.textSecondary, fontSize: 13 }}>+ Файл</Text>
-      </TouchableOpacity>
+      {!hideAddButton && (
+        <TouchableOpacity style={[st.addBtn, { borderColor: c.border }]} onPress={handlePick}>
+          <Text style={{ color: c.textSecondary, fontSize: 13 }}>+ Файл</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }

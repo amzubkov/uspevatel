@@ -12,6 +12,7 @@ export interface Exercise {
   orderNum: number;
   tag: string | null;
   weightType: number; // 0=none, 10=dumbbells, 100=barbell
+  caloriesPerRep: number; // kcal per rep (0 = not set)
   mediaType: string;
   isPreset: boolean;
 }
@@ -47,8 +48,8 @@ interface ExerciseState {
   loaded: boolean;
 
   load: () => Promise<void>;
-  addExercise: (name: string, weightType: number, tag?: string, description?: string, imageUri?: string) => Promise<number>;
-  updateExercise: (id: number, updates: Partial<Pick<Exercise, 'name' | 'imageUri' | 'weightType' | 'tag' | 'description'>>) => void;
+  addExercise: (name: string, weightType: number, tag?: string, description?: string, imageUri?: string, caloriesPerRep?: number) => Promise<number>;
+  updateExercise: (id: number, updates: Partial<Pick<Exercise, 'name' | 'imageUri' | 'weightType' | 'tag' | 'description' | 'caloriesPerRep'>>) => void;
   removeExercise: (id: number) => void;
   addLog: (exerciseId: number, weight: number, reps: number, setNum: number) => void;
   removeLog: (id: number) => void;
@@ -81,6 +82,7 @@ function rowToExercise(r: any): Exercise {
     orderNum: r.order_num || 0,
     tag: r.tag || null,
     weightType: r.weight_type ?? 10,
+    caloriesPerRep: r.calories_per_rep || 0,
     mediaType: r.media_type || 'photo',
     isPreset: !!r.is_preset,
   };
@@ -162,7 +164,7 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
     });
   },
 
-  addExercise: async (name, weightType, tag, description, imageUri) => {
+  addExercise: async (name, weightType, tag, description, imageUri, caloriesPerRep) => {
     const db = await getDb();
     let relPath: string | null = null;
     let absUri: string | null = null;
@@ -177,9 +179,10 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
         const src = new File(imageUri);
         if (src.exists) src.move(tmpDest);
         // Insert first to get ID, then rename
+        const cpr = caloriesPerRep || 0;
         const res = await db.runAsync(
-          'INSERT INTO exercises (name, weight_type, tag, description, image_data, is_preset) VALUES (?, ?, ?, ?, ?, 0)',
-          [name, weightType, tag || null, description || null, null]
+          'INSERT INTO exercises (name, weight_type, tag, description, image_data, calories_per_rep, is_preset) VALUES (?, ?, ?, ?, ?, ?, 0)',
+          [name, weightType, tag || null, description || null, null, cpr]
         );
         const id = res.lastInsertRowId;
         const finalDest = new File(dir, `${id}.${ext}`);
@@ -187,19 +190,20 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
         relPath = `exercise_images/${id}.${ext}`;
         absUri = finalDest.uri;
         await db.runAsync('UPDATE exercises SET image_data = ? WHERE id = ?', [relPath, id]);
-        const ex: Exercise = { id, name, weightType, tag: tag || null, description: description || null, imageUri: null, imageBase64: absUri, orderNum: 0, mediaType: 'photo', isPreset: false };
+        const ex: Exercise = { id, name, weightType, caloriesPerRep: cpr, tag: tag || null, description: description || null, imageUri: null, imageBase64: absUri, orderNum: 0, mediaType: 'photo', isPreset: false };
         set((s) => ({ exercises: [...s.exercises, ex] }));
         return id;
       } catch (e: any) {
         Alert.alert('Ошибка картинки', String(e?.message || e));
       }
     }
+    const cpr = caloriesPerRep || 0;
     const res = await db.runAsync(
-      'INSERT INTO exercises (name, weight_type, tag, description, image_data, is_preset) VALUES (?, ?, ?, ?, ?, 0)',
-      [name, weightType, tag || null, description || null, null]
+      'INSERT INTO exercises (name, weight_type, tag, description, image_data, calories_per_rep, is_preset) VALUES (?, ?, ?, ?, ?, ?, 0)',
+      [name, weightType, tag || null, description || null, null, cpr]
     );
     const id = res.lastInsertRowId;
-    const ex: Exercise = { id, name, weightType, tag: tag || null, description: description || null, imageUri: null, imageBase64: null, orderNum: 0, mediaType: 'photo', isPreset: false };
+    const ex: Exercise = { id, name, weightType, caloriesPerRep: cpr, tag: tag || null, description: description || null, imageUri: null, imageBase64: null, orderNum: 0, mediaType: 'photo', isPreset: false };
     set((s) => ({ exercises: [...s.exercises, ex] }));
     return id;
   },
@@ -238,8 +242,8 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
       exercises: s.exercises.map((e) => (e.id === id ? merged : e)),
     }));
     await db.runAsync(
-      'UPDATE exercises SET name=?, weight_type=?, tag=?, description=? WHERE id=?',
-      [merged.name, merged.weightType, merged.tag, merged.description, id]
+      'UPDATE exercises SET name=?, weight_type=?, tag=?, description=?, calories_per_rep=? WHERE id=?',
+      [merged.name, merged.weightType, merged.tag, merged.description, merged.caloriesPerRep, id]
     );
   },
 

@@ -6,8 +6,14 @@ import { useFlightStore, Flight, FlightStatus, FlightKind } from '../store/fligh
 import { useTravelerStore, Traveler, ME_TRAVELER } from '../store/travelerStore';
 import { AttachmentList } from '../components/AttachmentList';
 import { DatePickerField } from '../components/DatePickerField';
+import { TimePickerField } from '../components/TimePickerField';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
+import * as Crypto from 'expo-crypto';
+import { getDb } from '../db/database';
+import { useNoteStore, Note } from '../store/noteStore';
+import * as DocumentPicker from 'expo-document-picker';
+import { useAttachmentStore } from '../store/attachmentStore';
 
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 
@@ -21,40 +27,78 @@ function fmtDate(date: string, time?: string): string {
   return s;
 }
 
+function fmtFlightDate(f: Flight): string {
+  let s = fmtDate(f.departDate);
+  if (f.departTime) {
+    s += ` ${f.departTime}`;
+    if (f.arriveTime) {
+      s += ` – ${f.arriveTime}`;
+      // calc duration if both dates+times available
+      if (f.arriveDate) {
+        const d1 = new Date(`${f.departDate}T${f.departTime}`);
+        const d2 = new Date(`${f.arriveDate}T${f.arriveTime}`);
+        const diffMin = Math.round((d2.getTime() - d1.getTime()) / 60000);
+        if (diffMin > 0) {
+          const h = Math.floor(diffMin / 60);
+          const m = diffMin % 60;
+          s += ` (${h}ч${m > 0 ? ` ${m}м` : ''})`;
+        }
+      }
+    }
+  }
+  return s;
+}
+
+function fmtHotelDate(f: Flight): string {
+  let s = fmtDate(f.departDate, f.departTime);
+  if (f.arriveDate) {
+    s += `  →  ${fmtDate(f.arriveDate, f.arriveTime)}`;
+    // calc nights
+    const d1 = new Date(f.departDate);
+    const d2 = new Date(f.arriveDate);
+    const nights = Math.round((d2.getTime() - d1.getTime()) / 86400000);
+    if (nights > 0) s += ` (${nights} ноч.)`;
+  }
+  return s;
+}
+
 const STATUS_LABELS: Record<FlightStatus, string> = {
-  planned: 'Планируется',
-  booked: 'Забронирован',
-  completed: 'Выполнен',
-  cancelled: 'Отменён',
+  not_planned: 'нужно',
+  planned: 'plan',
+  reserved: 'reserved',
+  booked: 'booked',
+  completed: 'done',
+  cancelled: 'cancel',
 };
 const STATUS_COLORS: Record<FlightStatus, string> = {
+  not_planned: '#DC2626',
   planned: '#3B82F6',
+  reserved: '#F59E0B',
   booked: '#22C55E',
   completed: '#9CA3AF',
   cancelled: '#EF4444',
 };
-const STATUSES: FlightStatus[] = ['planned', 'booked', 'completed', 'cancelled'];
+const STATUSES: FlightStatus[] = ['not_planned', 'planned', 'reserved', 'booked', 'completed', 'cancelled'];
 const KIND_EMOJI: Record<FlightKind, string> = { flight: '✈️', hotel: '🏨' };
 const KIND_LABEL: Record<FlightKind, string> = { flight: 'Перелёт', hotel: 'Отель' };
 const KINDS: FlightKind[] = ['flight', 'hotel'];
 
 // ─── Import flights form ───
 function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travelerId: string; onDone: (n: number) => void; onCancel: () => void; c: any }) {
-  const addFlight = useFlightStore((s) => s.addFlight);
   const [text, setText] = useState('');
   const [kind, setKind] = useState<FlightKind>('flight');
 
   const parsed = useMemo(() => {
-    return text.split(/\r?\n/).map((line) => {
+    // Split on newlines, semicolons, or boundary between end-of-date/time and start-of-title
+    // This handles Android pasting where newlines become spaces
+    const raw = text
+      // insert split marker between "HH:MM" or "YYYY-MM-DD" followed by space+letter (new record)
+      .replace(/(\d{2}:\d{2})\s+(?=[A-Za-z\u0400-\u04FF])/g, '$1\n')
+      .replace(/(\d{4}-\d{2}-\d{2})\s+(?=[A-Za-z\u0400-\u04FF])/g, '$1\n');
+    const lines = raw.split(/\r?\n|;/);
+    return lines.map((line) => {
       const t = line.trim();
       if (!t) return null;
-      // Format: title, depart_date [depart_time][, arrive_date [arrive_time]]
-      // Split only on ", " (comma+space) to avoid splitting inside titles with commas
-      const firstComma = t.indexOf(',');
-      if (firstComma === -1) return { raw: t, error: true as const };
-      const title = t.slice(0, firstComma).trim();
-      const rest = t.slice(firstComma + 1).trim();
-      if (!title) return { raw: t, error: true as const };
 
       const parseDT = (s: string): { date: string; time?: string } | null => {
         const m = s.trim().match(/^(\d{4}-\d{2}-\d{2})(?:\s+(\d{1,2}:\d{2}))?$/);
@@ -62,44 +106,76 @@ function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travelerId: st
         return { date: m[1], time: m[2] };
       };
 
-      // rest may be "2026-04-04 14:30, 2026-04-04 19:10" or just "2026-04-04 14:30"
-      const commaIdx = rest.indexOf(',');
-      let departStr: string;
-      let arriveStr: string | undefined;
-      if (commaIdx !== -1) {
-        departStr = rest.slice(0, commaIdx).trim();
-        arriveStr = rest.slice(commaIdx + 1).trim();
-      } else {
-        departStr = rest;
+      // Split by commas
+      const parts = t.split(',').map((p) => p.trim());
+      if (parts.length < 2) return { raw: t, error: true as const };
+
+      // Find first date-like part to determine where title ends
+      let dateStartIdx = -1;
+      for (let i = 1; i < parts.length; i++) {
+        if (parseDT(parts[i])) { dateStartIdx = i; break; }
       }
+      if (dateStartIdx === -1) return { raw: t, error: true as const };
 
-      const depart = parseDT(departStr);
+      // For hotels: "city, hotel name, date, date" or "hotel name, date, date"
+      // For flights: "route, date [time], date [time]"
+      let title: string;
+      let city: string | undefined;
+      if (kind === 'hotel' && dateStartIdx >= 2) {
+        city = parts.slice(0, dateStartIdx - 1).join(', ').trim();
+        title = parts[dateStartIdx - 1].trim();
+      } else {
+        title = parts.slice(0, dateStartIdx).join(', ').trim();
+      }
+      if (!title) return { raw: t, error: true as const };
+
+      const depart = parseDT(parts[dateStartIdx]);
       if (!depart) return { raw: t, error: true as const };
-      const arrive = arriveStr ? parseDT(arriveStr) : undefined;
+      const arrive = parts[dateStartIdx + 1] ? parseDT(parts[dateStartIdx + 1]) : undefined;
 
-      return { title, depart, arrive: arrive || undefined, error: false as const };
+      return { title, city, depart, arrive: arrive || undefined, error: false as const };
     }).filter(Boolean) as any[];
-  }, [text]);
+  }, [text, kind]);
 
   const valid = parsed.filter((p: any) => !p.error);
   const errors = parsed.filter((p: any) => p.error);
 
   const handleImport = async () => {
     if (!valid.length) { Alert.alert('Ошибка', 'Нет строк для импорта'); return; }
-    for (const item of valid) {
-      await addFlight({
+    try {
+      const db = await getDb();
+      const tids = (travelerId === ME_TRAVELER.id || travelerId === '__all__') ? [] : [travelerId];
+      const flights: Flight[] = valid.map((item: any) => ({
+        id: Crypto.randomUUID(),
         kind,
         title: item.title,
-        status: 'planned',
+        city: item.city || undefined,
+        status: 'planned' as FlightStatus,
         departDate: item.depart.date,
         departTime: item.depart.time,
         arriveDate: item.arrive?.date,
         arriveTime: item.arrive?.time,
         notes: '',
-        travelerId: (travelerId === ME_TRAVELER.id || travelerId === '__all__') ? undefined : travelerId,
+        travelerIds: tids,
+        createdAt: new Date().toISOString(),
+      }));
+      await db.withExclusiveTransactionAsync(async (tx) => {
+        for (const f of flights) {
+          await tx.runAsync(
+            'INSERT INTO flights (id, kind, title, city, status, depart_date, depart_time, arrive_date, arrive_time, notes, image_data, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            [f.id, f.kind, f.title, f.city || null, f.status, f.departDate, f.departTime || null,
+             f.arriveDate || null, f.arriveTime || null, f.notes, null, f.createdAt]
+          );
+          for (const tid of f.travelerIds) {
+            await tx.runAsync('INSERT OR IGNORE INTO flight_travelers (flight_id, traveler_id) VALUES (?,?)', [f.id, tid]);
+          }
+        }
       });
+      useFlightStore.setState((s) => ({ flights: [...flights, ...s.flights] }));
+      onDone(flights.length);
+    } catch (e: any) {
+      Alert.alert('Ошибка импорта', String(e?.message || e));
     }
-    onDone(valid.length);
   };
 
   return (
@@ -121,18 +197,33 @@ function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travelerId: st
         ))}
       </View>
 
-      <Text style={[s.formLabel, { color: c.textSecondary }]}>По строке: название, дата [время][, дата прибытия [время]]</Text>
+      <Text style={[s.formLabel, { color: c.textSecondary }]}>
+        {kind === 'hotel' ? 'По строке: город, отель, заезд, выезд' : 'По строке: маршрут, дата [время][, прилёт]'}
+        {'\n'}Разделитель строк: перенос или ;
+      </Text>
       <TextInput
         style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border, height: 140, textAlignVertical: 'top' }]}
-        placeholder={'SVO → IST, 2026-04-01 14:30, 2026-04-01 18:45\nIST → TBS, 2026-04-05 10:00'}
+        placeholder={kind === 'hotel'
+          ? 'Стамбул, Hilton, 2026-04-01, 2026-04-05\nТбилиси, Marriott, 2026-04-05, 2026-04-08'
+          : 'SVO → IST, 2026-04-01 14:30, 2026-04-01 18:45\nIST → TBS, 2026-04-05 10:00'}
         placeholderTextColor={c.textSecondary}
         value={text} onChangeText={setText} multiline
       />
 
       {parsed.length > 0 && (
-        <Text style={{ color: c.primary, fontSize: 12, marginBottom: 8 }}>
-          Распознано: {valid.length}{errors.length > 0 ? `, ошибок: ${errors.length}` : ''}
-        </Text>
+        <View style={{ marginBottom: 8 }}>
+          <Text style={{ color: c.primary, fontSize: 12 }}>
+            Распознано: {valid.length}{errors.length > 0 ? `, ошибок: ${errors.length}` : ''}
+          </Text>
+          {errors.map((e: any, i: number) => (
+            <Text key={i} style={{ color: '#EF4444', fontSize: 11 }}>? {e.raw}</Text>
+          ))}
+          {valid.map((v: any, i: number) => (
+            <Text key={i} style={{ color: '#22C55E', fontSize: 11 }}>
+              {v.city ? `${v.city} — ` : ''}{v.title}, {v.depart.date}{v.depart.time ? ` ${v.depart.time}` : ''}{v.arrive ? ` → ${v.arrive.date}` : ''}
+            </Text>
+          ))}
+        </View>
       )}
 
       <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -158,6 +249,7 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
   const removeFlight = useFlightStore((s) => s.removeFlight);
   const addImage = useFlightStore((s) => s.addImage);
   const removeImage = useFlightStore((s) => s.removeImage);
+  const addAttachment = useAttachmentStore((s) => s.addAttachment);
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -166,32 +258,41 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
   // Form state
   const [kind, setKind] = useState<FlightKind>('flight');
   const [title, setTitle] = useState('');
+  const [city, setCity] = useState('');
   const [status, setStatus] = useState<FlightStatus>('planned');
   const [departDate, setDepartDate] = useState('');
   const [departTime, setDepartTime] = useState('');
   const [arriveDate, setArriveDate] = useState('');
   const [arriveTime, setArriveTime] = useState('');
   const [notes, setNotes] = useState('');
+  const [price, setPrice] = useState('');
+  const [currency, setCurrency] = useState('EUR');
+  const [formTravelerIds, setFormTravelerIds] = useState<string[]>([]);
+  const allTravelers = useTravelerStore((s) => s.travelers);
 
   const sorted = useMemo(() => {
     const isAll = travelerId === '__all__';
     const isMe = travelerId === ME_TRAVELER.id;
     return flights
       .filter((f) => f.status !== 'completed' && f.status !== 'cancelled')
-      .filter((f) => isAll ? true : isMe ? !f.travelerId : f.travelerId === travelerId)
-      .sort((a, b) => a.departDate.localeCompare(b.departDate));
+      .filter((f) => isAll ? true : isMe ? f.travelerIds.length === 0 || f.travelerIds.includes(ME_TRAVELER.id) : f.travelerIds.includes(travelerId))
+      .sort((a, b) => {
+        const cmp = a.departDate.localeCompare(b.departDate);
+        if (cmp !== 0) return cmp;
+        return (a.departTime || '99:99').localeCompare(b.departTime || '99:99');
+      });
   }, [flights, travelerId]);
 
   const resetForm = () => {
-    setKind('flight'); setTitle(''); setStatus('planned'); setDepartDate(''); setDepartTime('');
-    setArriveDate(''); setArriveTime(''); setNotes(''); setShowForm(false); setEditingId(null);
+    setKind('flight'); setTitle(''); setCity(''); setStatus('planned'); setDepartDate(''); setDepartTime('');
+    setArriveDate(''); setArriveTime(''); setNotes(''); setPrice(''); setCurrency('EUR'); setFormTravelerIds([]); setShowForm(false); setEditingId(null);
   };
 
   const startEdit = (f: Flight) => {
-    setEditingId(f.id); setKind(f.kind); setTitle(f.title); setStatus(f.status);
+    setEditingId(f.id); setKind(f.kind); setTitle(f.title); setCity(f.city || ''); setStatus(f.status);
     setDepartDate(f.departDate); setDepartTime(f.departTime || '');
     setArriveDate(f.arriveDate || ''); setArriveTime(f.arriveTime || '');
-    setNotes(f.notes); setShowForm(true);
+    setNotes(f.notes); setPrice(f.price ? String(f.price) : ''); setCurrency(f.currency || 'EUR'); setFormTravelerIds([...f.travelerIds]); setShowForm(true);
   };
 
   const handleSave = async () => {
@@ -199,34 +300,34 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
       Alert.alert('Ошибка', 'Введите название и дату вылета');
       return;
     }
+    const effectiveTravelerIds = editingId ? formTravelerIds : (travelerId === ME_TRAVELER.id || travelerId === '__all__') ? [] : [travelerId];
+    const priceNum = parseFloat(price.replace(',', '.')) || undefined;
     if (editingId) {
       await updateFlight(editingId, {
-        kind, title: title.trim(), status, departDate: departDate.trim(),
+        kind, title: title.trim(), city: city.trim() || undefined, status, departDate: departDate.trim(),
         departTime: departTime.trim() || undefined,
         arriveDate: arriveDate.trim() || undefined,
         arriveTime: arriveTime.trim() || undefined,
-        notes: notes.trim(),
+        notes: notes.trim(), price: priceNum, currency,
+        travelerIds: formTravelerIds,
       });
     } else {
       await addFlight({
-        kind, title: title.trim(), status, departDate: departDate.trim(),
+        kind, title: title.trim(), city: city.trim() || undefined, status, departDate: departDate.trim(),
         departTime: departTime.trim() || undefined,
         arriveDate: arriveDate.trim() || undefined,
         arriveTime: arriveTime.trim() || undefined,
-        notes: notes.trim(),
-        travelerId: (travelerId === ME_TRAVELER.id || travelerId === '__all__') ? undefined : travelerId,
+        notes: notes.trim(), price: priceNum, currency,
+        travelerIds: effectiveTravelerIds,
       });
     }
     resetForm();
   };
 
+  const [statusMenuId, setStatusMenuId] = useState<string | null>(null);
+
   const handleStatusChange = (flight: Flight) => {
-    const buttons = STATUSES.map((s) => ({
-      text: STATUS_LABELS[s],
-      onPress: () => updateFlight(flight.id, { status: s }),
-    }));
-    buttons.push({ text: 'Отмена', onPress: async () => {} });
-    Alert.alert('Статус', flight.title, buttons);
+    setStatusMenuId(statusMenuId === flight.id ? null : flight.id);
   };
 
   const handlePickImage = async (id: string) => {
@@ -253,24 +354,39 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
   const renderFlight = ({ item }: { item: Flight }) => {
     const isExpanded = expanded === item.id;
     const sc = STATUS_COLORS[item.status];
-    const traveler = item.travelerId ? travelers.find((t) => t.id === item.travelerId) : undefined;
+    const itemTravelers = item.travelerIds.map((tid) => travelers.find((t) => t.id === tid)).filter(Boolean) as Traveler[];
     return (
       <View style={[s.card, { backgroundColor: c.card, borderColor: c.border }]}>
         <TouchableOpacity style={s.cardHeader} onPress={() => setExpanded(isExpanded ? null : item.id)}>
           <Text style={{ fontSize: 20 }}>{KIND_EMOJI[item.kind]}</Text>
           <View style={{ flex: 1 }}>
-            <Text style={[s.cardTitle, { color: c.text }]}>
-              {item.title}{traveler && travelerId === '__all__' ? ` (${traveler.icon} ${traveler.name})` : ''}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={[s.cardTitle, { color: c.text, flex: 1 }]}>
+                {item.title}{itemTravelers.length > 0 ? ` (${itemTravelers.map((t) => t.icon).join('')})` : ''}
+              </Text>
+              <TouchableOpacity onPress={() => handleStatusChange(item)}>
+                <Text style={[s.statusBadge, { color: sc, borderColor: sc }]}>{STATUS_LABELS[item.status]}</Text>
+              </TouchableOpacity>
+            </View>
+            {item.city ? <Text style={{ color: c.textSecondary, fontSize: 12 }}>{item.city}</Text> : null}
             <Text style={[s.cardDate, { color: c.textSecondary }]}>
-              {fmtDate(item.departDate, item.departTime)}
-              {item.arriveDate ? `  →  ${fmtDate(item.arriveDate, item.arriveTime)}` : ''}
+              {item.kind === 'flight' ? fmtFlightDate(item) : fmtHotelDate(item)}
+              {item.price ? `  ${item.price} ${item.currency === 'EUR' ? '€' : '₽'}` : ''}
             </Text>
           </View>
-          <TouchableOpacity onPress={() => handleStatusChange(item)}>
-            <Text style={[s.statusBadge, { color: sc, borderColor: sc }]}>{STATUS_LABELS[item.status]}</Text>
-          </TouchableOpacity>
         </TouchableOpacity>
+
+        {statusMenuId === item.id && (
+          <View style={{ flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingBottom: 8 }}>
+            {(['reserved', 'booked'] as FlightStatus[]).map((st) => (
+              <TouchableOpacity key={st}
+                style={[s.statusChip, { backgroundColor: item.status === st ? STATUS_COLORS[st] : c.card, borderColor: STATUS_COLORS[st] }]}
+                onPress={() => { updateFlight(item.id, { status: st }); setStatusMenuId(null); }}>
+                <Text style={{ color: item.status === st ? '#FFF' : STATUS_COLORS[st], fontSize: 12, fontWeight: '600' }}>{STATUS_LABELS[st]}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         {isExpanded && (
           <View style={s.cardBody}>
@@ -283,22 +399,29 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
                   <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700' }}>×</Text>
                 </TouchableOpacity>
               </View>
-            ) : (
-              <View style={s.imgButtons}>
-                <TouchableOpacity style={[s.imgBtn, { borderColor: c.border }]} onPress={() => handlePickImage(item.id)}>
-                  <Text style={{ color: c.textSecondary, fontSize: 13 }}>Галерея</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[s.imgBtn, { borderColor: c.border }]} onPress={() => handleCamera(item.id)}>
-                  <Text style={{ color: c.textSecondary, fontSize: 13 }}>Камера</Text>
-                </TouchableOpacity>
-              </View>
-            )}
+            ) : null}
 
-            <AttachmentList entityType="flight" entityId={item.id} />
+            <AttachmentList entityType="flight" entityId={item.id} hideAddButton />
+            <View style={s.imgButtons}>
+              <TouchableOpacity style={[s.imgBtn, { borderColor: c.border, flex: 1 }]} onPress={() => handlePickImage(item.id)}>
+                <Text style={{ color: c.textSecondary, fontSize: 13 }}>Галерея</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.imgBtn, { borderColor: c.border, flex: 1 }]} onPress={() => handleCamera(item.id)}>
+                <Text style={{ color: c.textSecondary, fontSize: 13 }}>Камера</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.imgBtn, { borderColor: c.border, flex: 1 }]} onPress={async () => {
+                const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+                if (result.canceled || !result.assets?.[0]) return;
+                const a = result.assets[0];
+                await addAttachment('flight', item.id, a.uri, a.name, a.mimeType, a.size);
+              }}>
+                <Text style={{ color: c.textSecondary, fontSize: 13 }}>Файл</Text>
+              </TouchableOpacity>
+            </View>
 
             <View style={{ flexDirection: 'row', gap: 16, marginTop: 10 }}>
               <TouchableOpacity onPress={() => startEdit(item)}>
-                <Text style={{ color: c.primary, fontSize: 13, fontWeight: '600' }}>Ред.</Text>
+                <Text style={{ color: c.primary, fontSize: 13, fontWeight: '600' }}>Редактировать</Text>
               </TouchableOpacity>
               {item.status !== 'completed' && item.status !== 'cancelled' && (
                 <TouchableOpacity onPress={() => updateFlight(item.id, { status: 'completed' })}>
@@ -319,7 +442,7 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
     <View style={{ flex: 1 }}>
       {showImport ? (
         <ImportFlightsForm travelerId={travelerId} c={c}
-          onDone={(n) => { setShowImport(false); Alert.alert('Импорт', `Добавлено: ${n}`); }}
+          onDone={(n) => { setShowImport(false); setTimeout(() => Alert.alert('Импорт', `Добавлено: ${n}`), 100); }}
           onCancel={() => setShowImport(false)} />
       ) : showForm ? (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }}>
@@ -342,6 +465,16 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
             placeholder={kind === 'flight' ? 'SVO → IST' : 'Hilton Istanbul'}
             placeholderTextColor={c.textSecondary} />
 
+          {kind === 'hotel' && (
+            <>
+              <Text style={[s.formLabel, { color: c.textSecondary }]}>Город</Text>
+              <TextInput style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
+                value={city} onChangeText={setCity}
+                placeholder="Стамбул"
+                placeholderTextColor={c.textSecondary} />
+            </>
+          )}
+
           <Text style={[s.formLabel, { color: c.textSecondary }]}>Статус</Text>
           <View style={s.statusRow}>
             {STATUSES.map((st) => (
@@ -355,26 +488,58 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
             ))}
           </View>
 
+          {allTravelers.length > 0 && (
+            <>
+              <Text style={[s.formLabel, { color: c.textSecondary }]}>Для кого (можно несколько)</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+                {[ME_TRAVELER, ...allTravelers].map((t) => {
+                  const sel = formTravelerIds.includes(t.id);
+                  return (
+                    <TouchableOpacity key={t.id}
+                      style={[s.statusChip, { backgroundColor: sel ? c.primary : c.card, borderColor: c.border, marginRight: 6 }]}
+                      onPress={() => setFormTravelerIds(sel ? formTravelerIds.filter((x) => x !== t.id) : [...formTravelerIds, t.id])}>
+                      <Text style={{ color: sel ? '#FFF' : c.text, fontSize: 13 }}>{t.icon} {t.name}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </>
+          )}
+
           <DatePickerField value={departDate} onChange={setDepartDate}
             label={kind === 'flight' ? 'Дата вылета *' : 'Дата заезда *'}
             textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
 
-          <Text style={[s.formLabel, { color: c.textSecondary }]}>{kind === 'flight' ? 'Время вылета' : 'Время заезда'}</Text>
-          <TextInput style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
-            value={departTime} onChangeText={setDepartTime} placeholder="14:30" placeholderTextColor={c.textSecondary} />
+          <TimePickerField value={departTime} onChange={setDepartTime}
+            label={kind === 'flight' ? 'Время вылета' : 'Время заезда'}
+            textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
 
           <DatePickerField value={arriveDate} onChange={setArriveDate}
             label={kind === 'flight' ? 'Дата прилёта' : 'Дата выезда'}
             textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
 
-          <Text style={[s.formLabel, { color: c.textSecondary }]}>{kind === 'flight' ? 'Время прилёта' : 'Время выезда'}</Text>
-          <TextInput style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
-            value={arriveTime} onChangeText={setArriveTime} placeholder="18:45" placeholderTextColor={c.textSecondary} />
+          <TimePickerField value={arriveTime} onChange={setArriveTime}
+            label={kind === 'flight' ? 'Время прилёта' : 'Время выезда'}
+            textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
 
           <Text style={[s.formLabel, { color: c.textSecondary }]}>Заметки</Text>
           <TextInput style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border, height: 60 }]}
             value={notes} onChangeText={setNotes} placeholder="Бронь, терминал..." placeholderTextColor={c.textSecondary}
             multiline numberOfLines={3} />
+
+          <Text style={[s.formLabel, { color: c.textSecondary }]}>Цена</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TextInput style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border, flex: 1 }]}
+              value={price} onChangeText={setPrice} placeholder="0" placeholderTextColor={c.textSecondary}
+              keyboardType="decimal-pad" />
+            {['EUR', 'RUB'].map((cur) => (
+              <TouchableOpacity key={cur}
+                style={[s.statusChip, { backgroundColor: currency === cur ? c.primary : c.card, borderColor: c.border }]}
+                onPress={() => setCurrency(cur)}>
+                <Text style={{ color: currency === cur ? '#FFF' : c.text, fontSize: 13, fontWeight: '600' }}>{cur === 'EUR' ? '€' : '₽'}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
 
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
             <TouchableOpacity style={[s.formBtn, { backgroundColor: c.primary, flex: 1 }]} onPress={handleSave}>
@@ -417,6 +582,7 @@ function HistoryContent({ travelerId }: { travelerId: string }) {
   const removeFlight = useFlightStore((s) => s.removeFlight);
   const removeImage = useFlightStore((s) => s.removeImage);
   const addImage = useFlightStore((s) => s.addImage);
+  const addAttachment = useAttachmentStore((s) => s.addAttachment);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const history = useMemo(() => {
@@ -424,8 +590,12 @@ function HistoryContent({ travelerId }: { travelerId: string }) {
     const isMe = travelerId === ME_TRAVELER.id;
     return flights
       .filter((f) => f.status === 'completed' || f.status === 'cancelled')
-      .filter((f) => isAll ? true : isMe ? !f.travelerId : f.travelerId === travelerId)
-      .sort((a, b) => b.departDate.localeCompare(a.departDate));
+      .filter((f) => isAll ? true : isMe ? f.travelerIds.length === 0 || f.travelerIds.includes(ME_TRAVELER.id) : f.travelerIds.includes(travelerId))
+      .sort((a, b) => {
+        const cmp = b.departDate.localeCompare(a.departDate);
+        if (cmp !== 0) return cmp;
+        return (b.departTime || '00:00').localeCompare(a.departTime || '00:00');
+      });
   }, [flights, travelerId]);
 
   const handleDelete = (flight: Flight) => {
@@ -455,9 +625,10 @@ function HistoryContent({ travelerId }: { travelerId: string }) {
           <Text style={{ fontSize: 20 }}>{KIND_EMOJI[item.kind]}</Text>
           <View style={{ flex: 1 }}>
             <Text style={[s.cardTitle, { color: c.text }]}>{item.title}</Text>
+            {item.city ? <Text style={{ color: c.textSecondary, fontSize: 12 }}>{item.city}</Text> : null}
             <Text style={[s.cardDate, { color: c.textSecondary }]}>
-              {fmtDate(item.departDate, item.departTime)}
-              {item.arriveDate ? `  →  ${fmtDate(item.arriveDate, item.arriveTime)}` : ''}
+              {item.kind === 'flight' ? fmtFlightDate(item) : fmtHotelDate(item)}
+              {item.price ? `  ${item.price} ${item.currency === 'EUR' ? '€' : '₽'}` : ''}
             </Text>
           </View>
           <Text style={[s.statusBadge, { color: sc, borderColor: sc }]}>{STATUS_LABELS[item.status]}</Text>
@@ -467,20 +638,29 @@ function HistoryContent({ travelerId }: { travelerId: string }) {
           <View style={s.cardBody}>
             {item.notes ? <Text style={[s.notes, { color: c.textSecondary }]}>{item.notes}</Text> : null}
 
-            {item.imageData ? (
+            {item.imageData && (
               <View style={{ marginTop: 8 }}>
                 <Image source={{ uri: item.imageData }} style={s.flightImg} resizeMode="cover" />
                 <TouchableOpacity style={s.imgDelete} onPress={() => removeImage(item.id)}>
                   <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700' }}>×</Text>
                 </TouchableOpacity>
               </View>
-            ) : (
-              <TouchableOpacity style={[s.imgBtn, { borderColor: c.border, marginTop: 8 }]} onPress={() => handlePickImage(item.id)}>
-                <Text style={{ color: c.textSecondary, fontSize: 13 }}>Галерея</Text>
-              </TouchableOpacity>
             )}
 
-            <AttachmentList entityType="flight" entityId={item.id} />
+            <AttachmentList entityType="flight" entityId={item.id} hideAddButton />
+            <View style={s.imgButtons}>
+              <TouchableOpacity style={[s.imgBtn, { borderColor: c.border, flex: 1 }]} onPress={() => handlePickImage(item.id)}>
+                <Text style={{ color: c.textSecondary, fontSize: 13 }}>Галерея</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.imgBtn, { borderColor: c.border, flex: 1 }]} onPress={async () => {
+                const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+                if (result.canceled || !result.assets?.[0]) return;
+                const a = result.assets[0];
+                await addAttachment('flight', item.id, a.uri, a.name, a.mimeType, a.size);
+              }}>
+                <Text style={{ color: c.textSecondary, fontSize: 13 }}>Файл</Text>
+              </TouchableOpacity>
+            </View>
 
             <View style={{ flexDirection: 'row', gap: 16, marginTop: 10 }}>
               <TouchableOpacity onPress={() => handleRestore(item)}>
@@ -780,14 +960,224 @@ function AddTravelerForm({ onDone, onCancel, c }: { onDone: () => void; onCancel
   );
 }
 
+// ─── Notes sub-tab ───
+function NotesContent() {
+  const theme = useSettingsStore((s) => s.theme);
+  const c = colors[theme];
+  const notes = useNoteStore((s) => s.notes);
+  const allTags = useNoteStore((s) => s.allTags);
+  const addNote = useNoteStore((s) => s.addNote);
+  const updateNote = useNoteStore((s) => s.updateNote);
+  const removeNote = useNoteStore((s) => s.removeNote);
+  const addImage = useNoteStore((s) => s.addImage);
+  const removeImage = useNoteStore((s) => s.removeImage);
+
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [text, setText] = useState('');
+  const [tagInput, setTagInput] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
+  const [filterTag, setFilterTag] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const filtered = useMemo(() => {
+    if (!filterTag) return notes;
+    return notes.filter((n) => n.tags.includes(filterTag));
+  }, [notes, filterTag]);
+
+  const resetForm = () => {
+    setText(''); setTagInput(''); setTags([]); setShowForm(false); setEditingId(null);
+  };
+
+  const startEdit = (n: Note) => {
+    setEditingId(n.id); setText(n.text); setTags([...n.tags]); setTagInput(''); setShowForm(true);
+  };
+
+  const handleAddTag = () => {
+    const t = tagInput.trim().toLowerCase();
+    if (t && !tags.includes(t)) setTags([...tags, t]);
+    setTagInput('');
+  };
+
+  const handleSave = async () => {
+    if (!text.trim()) { Alert.alert('Введите текст'); return; }
+    if (editingId) {
+      await updateNote(editingId, text.trim(), tags);
+    } else {
+      await addNote(text.trim(), tags);
+    }
+    resetForm();
+  };
+
+  const handlePickImage = async (noteId: string) => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') { Alert.alert('Нет доступа к галерее'); return; }
+    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
+    if (!r.canceled && r.assets[0]) await addImage(noteId, r.assets[0].uri);
+  };
+
+  const handleCamera = async (noteId: string) => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') { Alert.alert('Нет доступа к камере'); return; }
+    const r = await ImagePicker.launchCameraAsync({ quality: 0.7 });
+    if (!r.canceled && r.assets[0]) await addImage(noteId, r.assets[0].uri);
+  };
+
+  const handleDelete = (n: Note) => {
+    Alert.alert('Удалить заметку?', n.text.substring(0, 50), [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: () => removeNote(n.id) },
+    ]);
+  };
+
+  if (showForm) {
+    return (
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }}>
+        <Text style={[s.formLabel, { color: c.text, fontSize: 15, fontWeight: '700', textTransform: 'none' }]}>
+          {editingId ? 'Редактировать' : 'Новая заметка'}
+        </Text>
+        <TextInput
+          style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border, height: 100, textAlignVertical: 'top', marginTop: 8 }]}
+          placeholder="Текст заметки..."
+          placeholderTextColor={c.textSecondary}
+          value={text} onChangeText={setText} multiline
+        />
+        <Text style={[s.formLabel, { color: c.textSecondary }]}>Теги</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+          {tags.map((t) => (
+            <TouchableOpacity key={t} onPress={() => setTags(tags.filter((x) => x !== t))}
+              style={{ backgroundColor: c.primary, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 }}>
+              <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>{t} ×</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TextInput
+            style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border, flex: 1 }]}
+            placeholder="Добавить тег..."
+            placeholderTextColor={c.textSecondary}
+            value={tagInput} onChangeText={setTagInput}
+            onSubmitEditing={handleAddTag}
+            autoCapitalize="none"
+          />
+          <TouchableOpacity onPress={handleAddTag}
+            style={{ backgroundColor: c.primary, borderRadius: 8, paddingHorizontal: 14, justifyContent: 'center' }}>
+            <Text style={{ color: '#FFF', fontWeight: '700' }}>+</Text>
+          </TouchableOpacity>
+        </View>
+        {/* Suggest existing tags */}
+        {allTags.filter((t) => !tags.includes(t)).length > 0 && (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+            {allTags.filter((t) => !tags.includes(t)).map((t) => (
+              <TouchableOpacity key={t} onPress={() => setTags([...tags, t])}
+                style={{ backgroundColor: c.card, borderColor: c.border, borderWidth: 1, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 }}>
+                <Text style={{ color: c.textSecondary, fontSize: 12 }}>{t}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+          <TouchableOpacity style={[s.formBtn, { backgroundColor: c.primary, flex: 1 }]} onPress={handleSave}>
+            <Text style={{ color: '#FFF', fontWeight: '700' }}>{editingId ? 'Сохранить' : 'Добавить'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.formBtn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border, flex: 1 }]} onPress={resetForm}>
+            <Text style={{ color: c.text, fontWeight: '600' }}>Отмена</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  return (
+    <View style={{ flex: 1 }}>
+      {/* Tag filter */}
+      {allTags.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ gap: 6, paddingHorizontal: 12, paddingVertical: 8 }}>
+          <TouchableOpacity onPress={() => setFilterTag(null)}
+            style={[s.statusChip, { backgroundColor: !filterTag ? c.primary : c.card, borderColor: c.border }]}>
+            <Text style={{ color: !filterTag ? '#FFF' : c.text, fontSize: 12, fontWeight: '600' }}>Все</Text>
+          </TouchableOpacity>
+          {allTags.map((t) => (
+            <TouchableOpacity key={t} onPress={() => setFilterTag(filterTag === t ? null : t)}
+              style={[s.statusChip, { backgroundColor: filterTag === t ? c.primary : c.card, borderColor: c.border }]}>
+              <Text style={{ color: filterTag === t ? '#FFF' : c.text, fontSize: 12, fontWeight: '600' }}>{t}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
+      <FlatList
+        data={filtered}
+        keyExtractor={(n) => n.id}
+        contentContainerStyle={{ padding: 12 }}
+        ListEmptyComponent={<Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Нет заметок</Text>}
+        renderItem={({ item: n }) => {
+          const isExpanded = expanded === n.id;
+          return (
+            <View style={[s.card, { borderColor: c.border, backgroundColor: c.card }]}>
+              <TouchableOpacity style={s.cardHeader} onPress={() => setExpanded(isExpanded ? null : n.id)}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.cardTitle, { color: c.text }]} numberOfLines={isExpanded ? undefined : 2}>{n.text}</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                    {n.tags.map((t) => (
+                      <Text key={t} style={{ color: c.primary, fontSize: 11, fontWeight: '600' }}>#{t}</Text>
+                    ))}
+                  </View>
+                  <Text style={[s.cardDate, { color: c.textSecondary }]}>{n.createdAt.substring(0, 10)}</Text>
+                </View>
+              </TouchableOpacity>
+              {isExpanded && (
+                <View style={s.cardBody}>
+                  {n.imagePath && (
+                    <View style={{ marginBottom: 8 }}>
+                      <Image source={{ uri: n.imagePath }} style={s.flightImg} resizeMode="contain" />
+                      <TouchableOpacity style={s.imgDelete} onPress={() => removeImage(n.id)}>
+                        <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700' }}>×</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  {!n.imagePath && (
+                    <View style={s.imgButtons}>
+                      <TouchableOpacity style={[s.imgBtn, { borderColor: c.border }]} onPress={() => handlePickImage(n.id)}>
+                        <Text style={{ color: c.text, fontSize: 13 }}>Галерея</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[s.imgBtn, { borderColor: c.border }]} onPress={() => handleCamera(n.id)}>
+                        <Text style={{ color: c.text, fontSize: 13 }}>Камера</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  <View style={[s.imgButtons, { marginTop: 8 }]}>
+                    <TouchableOpacity style={[s.imgBtn, { borderColor: c.border }]} onPress={() => startEdit(n)}>
+                      <Text style={{ color: c.text, fontSize: 13 }}>Изменить</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[s.imgBtn, { borderColor: '#EF4444' }]} onPress={() => handleDelete(n)}>
+                      <Text style={{ color: '#EF4444', fontSize: 13 }}>Удалить</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </View>
+          );
+        }}
+      />
+      <View style={{ padding: 12 }}>
+        <TouchableOpacity style={[s.addBtn, { backgroundColor: c.primary }]} onPress={() => setShowForm(true)}>
+          <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 15 }}>+ Заметка</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
 // ─── Main Planner Tab with 2 modes ───
 const PLANNER_MODES = [
   { key: 'calendar' as const, label: 'Календарь', icon: '📅' },
   { key: 'flights' as const, label: 'Перелёты', icon: '✈️' },
+  { key: 'notes' as const, label: 'Заметки', icon: '📝' },
   { key: 'history' as const, label: 'История', icon: '📋' },
 ];
 
-type PlannerMode = 'calendar' | 'flights' | 'history';
+type PlannerMode = 'calendar' | 'flights' | 'notes' | 'history';
 
 export function PlannerTab() {
   const theme = useSettingsStore((s) => s.theme);
@@ -847,13 +1237,13 @@ export function PlannerTab() {
             style={[s.modeBtn, { backgroundColor: mode === m.key ? c.primary : c.card, borderColor: c.border, borderWidth: 1 }]}
             onPress={() => setMode(m.key)}
           >
-            <Text style={{ fontSize: 16 }}>{m.icon}</Text>
-            <Text style={[s.modeBtnText, { color: mode === m.key ? '#FFF' : c.text }]}>{m.label}</Text>
+            <Text style={{ fontSize: 18 }}>{m.icon}</Text>
           </TouchableOpacity>
         ))}
       </View>
       {mode === 'flights' ? <FlightsContent travelerId={selectedTravelerId} />
         : mode === 'history' ? <HistoryContent travelerId={selectedTravelerId} />
+        : mode === 'notes' ? <NotesContent />
         : <CalendarContent />}
     </View>
   );
@@ -861,9 +1251,8 @@ export function PlannerTab() {
 
 const s = StyleSheet.create({
   container: { flex: 1 },
-  modeRow: { flexDirection: 'row', gap: 8, marginHorizontal: 12, marginTop: 10, marginBottom: 4 },
-  modeBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 10 },
-  modeBtnText: { fontSize: 13, fontWeight: '700' },
+  modeRow: { flexDirection: 'row', gap: 6, marginHorizontal: 12, marginTop: 8, marginBottom: 4 },
+  modeBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 8, borderRadius: 10 },
   card: { borderWidth: 1, borderRadius: 10, marginBottom: 10, overflow: 'hidden' },
   cardHeader: { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 10 },
   statusDot: { width: 10, height: 10, borderRadius: 5 },
@@ -880,7 +1269,7 @@ const s = StyleSheet.create({
   formLabel: { fontSize: 12, fontWeight: '600', marginTop: 10, marginBottom: 4, textTransform: 'uppercase' },
   input: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 15 },
   statusRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
-  statusChip: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  statusChip: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 3 },
   formBtn: { borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
   // Calendar
   calHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 8 },

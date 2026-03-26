@@ -18,6 +18,7 @@ import { useDoctorStore } from './src/store/doctorStore';
 import { useTravelerStore } from './src/store/travelerStore';
 import { useDocumentStore } from './src/store/documentStore';
 import { useCarStore } from './src/store/carStore';
+import { useNoteStore } from './src/store/noteStore';
 import { loadSyncFolder } from './src/db/database';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -54,6 +55,7 @@ function AppLoader() {
   const loadTravelers = useTravelerStore((s) => s.load);
   const loadDocuments = useDocumentStore((s) => s.load);
   const loadCars = useCarStore((s) => s.load);
+  const loadNotes = useNoteStore((s) => s.load);
 
   useEffect(() => {
     (async () => {
@@ -75,6 +77,7 @@ function AppLoader() {
         loadTravelers(),
         loadDocuments(),
         loadCars(),
+        loadNotes(),
       ]);
       setReady(true);
     })();

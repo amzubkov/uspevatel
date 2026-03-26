@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, ScrollView, StyleSheet, Alert } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSportStore, SportEntry } from '../store/sportStore';
+import { useExerciseStore } from '../store/exerciseStore';
 import { ExercisesScreen } from './ExercisesScreen';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
@@ -376,6 +377,8 @@ function StatsTab() {
   const entries = useSportStore((s) => s.entries);
   const updateEntry = useSportStore((s) => s.updateEntry);
   const removeEntry = useSportStore((s) => s.removeEntry);
+  const exLogs = useExerciseStore((s) => s.logs);
+  const exercises = useExerciseStore((s) => s.exercises);
   const today = useTodayStr();
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
 
@@ -390,7 +393,20 @@ function StatsTab() {
   const todayAbs = useMemo(() => todayEntries.filter((e) => e.type === 'abs').reduce((s, e) => s + e.count, 0), [todayEntries]);
   const todayTriceps = useMemo(() => todayEntries.filter((e) => e.type === 'triceps').reduce((s, e) => s + e.count, 0), [todayEntries]);
   const todayRuns = useMemo(() => todayEntries.filter((e) => e.type === 'run').length, [todayEntries]);
-  const todayCal = useMemo(() => calcCaloriesForEntries(todayEntries, lastWeight), [todayEntries, lastWeight]);
+
+  // Calories from exercises (workout_logs)
+  const exCalForDate = (date: string) => {
+    const dayLogs = exLogs.filter((l) => l.date === date);
+    let cal = 0;
+    for (const l of dayLogs) {
+      const ex = exercises.find((e) => e.id === l.exerciseId);
+      if (ex && ex.caloriesPerRep > 0) cal += l.reps * l.setNum * ex.caloriesPerRep;
+    }
+    return Math.round(cal);
+  };
+
+  const todayExCal = useMemo(() => exCalForDate(today), [exLogs, exercises, today]);
+  const todayCal = useMemo(() => calcCaloriesForEntries(todayEntries, lastWeight) + todayExCal, [todayEntries, lastWeight, todayExCal]);
 
   // Last 7 days
   const last7 = useMemo(() => {
@@ -404,11 +420,11 @@ function StatsTab() {
       const abs = dayEntries.filter((e) => e.type === 'abs').reduce((s, e) => s + e.count, 0);
       const triceps = dayEntries.filter((e) => e.type === 'triceps').reduce((s, e) => s + e.count, 0);
       const runs = dayEntries.filter((e) => e.type === 'run').length;
-      const cal = calcCaloriesForEntries(dayEntries, lastWeight);
+      const cal = calcCaloriesForEntries(dayEntries, lastWeight) + exCalForDate(ds);
       days.push({ date: ds, pullups, abs, triceps, runs, cal, entries: dayEntries });
     }
     return days;
-  }, [entries, lastWeight]);
+  }, [entries, lastWeight, exLogs, exercises]);
 
   const weekPullUps = last7.reduce((s, d) => s + d.pullups, 0);
   const weekAbs = last7.reduce((s, d) => s + d.abs, 0);
@@ -436,6 +452,10 @@ function StatsTab() {
           <Text style={[styles.statNum, { color: c.primary }]}>{todayRuns}</Text>
           <Text style={[styles.statLabel, { color: c.textSecondary }]}>бег</Text>
         </View>
+        <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
+          <Text style={[styles.statNum, { color: c.primary }]}>{todayExCal}</Text>
+          <Text style={[styles.statLabel, { color: c.textSecondary }]}>упр. kcal</Text>
+        </View>
       </View>
       <View style={[styles.calCard, { backgroundColor: c.card, borderColor: c.border }]}>
         <Text style={[styles.statNum, { color: '#FF6B35' }]}>{todayCal}</Text>
@@ -459,6 +479,10 @@ function StatsTab() {
         <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
           <Text style={[styles.statNum, { color: c.primary }]}>{weekRuns}</Text>
           <Text style={[styles.statLabel, { color: c.textSecondary }]}>бег</Text>
+        </View>
+        <View style={[styles.statCard, { backgroundColor: c.card, borderColor: c.border }]}>
+          <Text style={[styles.statNum, { color: c.primary }]}>{last7.reduce((s, d) => s + exCalForDate(d.date), 0)}</Text>
+          <Text style={[styles.statLabel, { color: c.textSecondary }]}>упр. kcal</Text>
         </View>
       </View>
       <View style={[styles.calCard, { backgroundColor: c.card, borderColor: c.border }]}>

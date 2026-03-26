@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback } from "react";
+import React, { useMemo, useCallback, useState, useEffect } from "react";
 import { TouchableOpacity, Text, View, StyleSheet, Alert } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import {
@@ -34,6 +34,7 @@ import { ExerciseDetailScreen } from "../screens/ExerciseDetailScreen";
 import { PlannerTab } from "../screens/PlannerTab";
 import { HealthScreen } from "../screens/HealthScreen";
 import { DocumentsScreen } from "../screens/DocumentsScreen";
+import { TelegramSyncScreen } from "../screens/TelegramSyncScreen";
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -91,6 +92,12 @@ const HeaderButtons = React.memo(function HeaderButtons() {
       </TouchableOpacity>
       <TouchableOpacity
         style={hStyles.btn}
+        onPress={() => navigation.navigate("TelegramSync")}
+      >
+        <Text style={hStyles.emoji}>🤖</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={hStyles.btn}
         onPress={() => navigation.navigate("Settings")}
       >
         <Text style={hStyles.emoji}>⚙️</Text>
@@ -106,6 +113,23 @@ const hStyles = StyleSheet.create({
 });
 
 const renderHeaderRight = () => <HeaderButtons />;
+
+const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
+function PlannerDateTime() {
+  const [now, setNow] = useState(new Date());
+  const theme = useSettingsStore((s) => s.theme);
+  const c = colors[theme];
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(id);
+  }, []);
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mm = MONTHS_SHORT[now.getMonth()];
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mi = String(now.getMinutes()).padStart(2, '0');
+  return <Text style={{ color: c.textSecondary, fontSize: 14, marginRight: 14 }}>{dd} {mm} {hh}:{mi}</Text>;
+}
 
 function CategoryTabs() {
   const theme = useSettingsStore((s) => s.theme);
@@ -281,7 +305,7 @@ export function AppNavigator() {
         <Stack.Screen
           name="Planner"
           component={PlannerTab}
-          options={{ title: "Планнер" }}
+          options={{ title: "Планнер", headerRight: () => <PlannerDateTime /> }}
         />
         <Stack.Screen
           name="Health"
@@ -302,6 +326,11 @@ export function AppNavigator() {
           name="Stats"
           component={StatsScreen}
           options={{ title: "Статистика" }}
+        />
+        <Stack.Screen
+          name="TelegramSync"
+          component={TelegramSyncScreen}
+          options={{ title: "Telegram Sync" }}
         />
         <Stack.Screen
           name="Settings"
