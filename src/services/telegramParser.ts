@@ -38,7 +38,14 @@ export interface ParsedHealth {
   msgDate: number;
 }
 
-export type ParsedItem = ParsedTask | ParsedFlight | ParsedDoc | ParsedHealth;
+export interface ParsedRef {
+  type: 'ref';
+  source: string;
+  refs: { name: string; refMin?: number; refMax?: number; periodDays?: number }[];
+  msgDate: number;
+}
+
+export type ParsedItem = ParsedTask | ParsedFlight | ParsedDoc | ParsedHealth | ParsedRef;
 
 // Normalise date: "14.04.2026" → "2026-04-14", "2026-04-14" stays as is
 function normaliseDate(s: string): string | null {
@@ -164,6 +171,29 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
     }
     if (results.length > 0 || metrics.length > 0) {
       return { type: 'health', results, metrics, date, msgDate };
+    }
+  }
+
+  // /ref source:XXX — update reference values
+  // lines: name; refMin; refMax[; periodDays]
+  const refMatch = trimmed.match(/^\/ref\s+([\s\S]+)/i);
+  if (refMatch) {
+    const lines = refMatch[1].split('\n').map((l) => l.trim()).filter(Boolean);
+    let source = '';
+    const refs: ParsedRef['refs'] = [];
+    for (const line of lines) {
+      const srcMatch = line.match(/^source:(\S+)$/i);
+      if (srcMatch) { source = srcMatch[1].toUpperCase(); continue; }
+      const parts = line.split(/[,;\t]/).map((p) => p.trim());
+      if (parts.length < 3) continue;
+      const refMin = parseFloat(parts[1].replace(',', '.'));
+      const refMax = parseFloat(parts[2].replace(',', '.'));
+      const periodDays = parts[3] ? parseInt(parts[3]) : undefined;
+      if (isNaN(refMin) || isNaN(refMax)) continue;
+      refs.push({ name: parts[0], refMin, refMax, periodDays: isNaN(periodDays as any) ? undefined : periodDays });
+    }
+    if (source && refs.length > 0) {
+      return { type: 'ref', source, refs, msgDate };
     }
   }
 

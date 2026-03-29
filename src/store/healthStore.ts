@@ -12,6 +12,15 @@ export interface HealthMetric {
   sortOrder: number;
 }
 
+export interface MetricRef {
+  id: string;
+  metricId: string;
+  source: string; // WHO, MZ_RF, USPSTF
+  refMin?: number;
+  refMax?: number;
+  periodDays?: number;
+}
+
 export interface HealthEntry {
   id: string;
   metricId: string;
@@ -23,6 +32,7 @@ export interface HealthEntry {
 
 interface HealthState {
   metrics: HealthMetric[];
+  metricRefs: MetricRef[];
   entries: HealthEntry[];
   loaded: boolean;
   load: () => Promise<void>;
@@ -33,6 +43,7 @@ interface HealthState {
   updateEntry: (id: string, fields: Partial<Omit<HealthEntry, 'id' | 'createdAt'>>) => Promise<void>;
   removeEntry: (id: string) => Promise<void>;
   bulkImport: (lines: { name: string; value: number; unit?: string; refMin?: number; refMax?: number }[], date: string) => Promise<number>;
+  loadPresets: () => Promise<number>;
 }
 
 function rowToMetric(r: any): HealthMetric {
@@ -60,6 +71,7 @@ function rowToEntry(r: any): HealthEntry {
 
 export const useHealthStore = create<HealthState>()((set, get) => ({
   metrics: [],
+  metricRefs: [],
   entries: [],
   loaded: false,
 
@@ -68,7 +80,19 @@ export const useHealthStore = create<HealthState>()((set, get) => ({
     const db = await getDb();
     const mRows = await db.getAllAsync('SELECT * FROM health_metrics ORDER BY sort_order, name');
     const eRows = await db.getAllAsync('SELECT * FROM health_entries ORDER BY date DESC');
-    set({ metrics: mRows.map(rowToMetric), entries: eRows.map(rowToEntry), loaded: true });
+    const rRows = await db.getAllAsync('SELECT * FROM health_metric_refs') as any[];
+    const metricRefs: MetricRef[] = rRows.map((r: any) => ({
+      id: r.id, metricId: r.metric_id, source: r.source,
+      refMin: r.ref_min != null ? r.ref_min : undefined,
+      refMax: r.ref_max != null ? r.ref_max : undefined,
+      periodDays: r.period_days != null ? r.period_days : undefined,
+    }));
+    set({ metrics: mRows.map(rowToMetric), metricRefs, entries: eRows.map(rowToEntry), loaded: true });
+    // Auto-load presets if no metrics, no refs, or new sources missing
+    const hasSources = new Set(rRows.map((r: any) => r.source));
+    if (mRows.length === 0 || rRows.length === 0 || !hasSources.has('JSHC') || !hasSources.has('CN_WST') || !hasSources.has('ESC')) {
+      await get().loadPresets();
+    }
   },
 
   addMetric: async (m) => {
@@ -182,5 +206,57 @@ export const useHealthStore = create<HealthState>()((set, get) => ({
       entries: [...newEntries, ...s.entries],
     }));
     return lines.length;
+  },
+
+  loadPresets: async () => {
+    const { HEALTH_PRESETS } = require('../db/healthPresets');
+    const db = await getDb();
+    let currentMetrics = [...get().metrics];
+    const newMetrics: HealthMetric[] = [];
+    const newRefs: MetricRef[] = [];
+    let maxOrder = Math.max(0, ...currentMetrics.map((x) => x.sortOrder));
+    let added = 0;
+
+    for (const p of HEALTH_PRESETS) {
+      let metric = currentMetrics.find((m) => m.name.toLowerCase() === p.name.toLowerCase());
+      if (!metric) {
+        maxOrder++;
+        // Use first ref as default
+        const firstRef = p.refs[0];
+        metric = {
+          id: Crypto.randomUUID(), name: p.name, unit: p.unit,
+          refMin: firstRef?.refMin, refMax: firstRef?.refMax,
+          periodDays: firstRef?.periodDays, sortOrder: maxOrder,
+        };
+        newMetrics.push(metric);
+        currentMetrics.push(metric);
+        await db.runAsync(
+          'INSERT INTO health_metrics (id, name, unit, ref_min, ref_max, period_days, sort_order) VALUES (?,?,?,?,?,?,?)',
+          [metric.id, metric.name, metric.unit, metric.refMin ?? null, metric.refMax ?? null, metric.periodDays ?? null, metric.sortOrder],
+        );
+        added++;
+      } else if (!metric.unit && p.unit) {
+        metric.unit = p.unit;
+        await db.runAsync('UPDATE health_metrics SET unit = ? WHERE id = ?', [p.unit, metric.id]);
+      }
+
+      // Insert refs for each source
+      for (const ref of p.refs) {
+        const refId = Crypto.randomUUID();
+        try {
+          await db.runAsync(
+            'INSERT OR IGNORE INTO health_metric_refs (id, metric_id, source, ref_min, ref_max, period_days) VALUES (?,?,?,?,?,?)',
+            [refId, metric.id, ref.source, ref.refMin ?? null, ref.refMax ?? null, ref.periodDays ?? null],
+          );
+          newRefs.push({ id: refId, metricId: metric.id, source: ref.source, refMin: ref.refMin, refMax: ref.refMax, periodDays: ref.periodDays });
+        } catch {}
+      }
+    }
+
+    set((s) => ({
+      metrics: [...s.metrics, ...newMetrics],
+      metricRefs: [...s.metricRefs, ...newRefs],
+    }));
+    return added;
   },
 }));

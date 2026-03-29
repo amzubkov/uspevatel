@@ -42,7 +42,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 20;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -247,6 +247,18 @@ CREATE TABLE IF NOT EXISTS health_entries (
 
 CREATE INDEX IF NOT EXISTS idx_health_entries_metric ON health_entries(metric_id);
 CREATE INDEX IF NOT EXISTS idx_health_entries_date ON health_entries(date);
+
+CREATE TABLE IF NOT EXISTS health_metric_refs (
+  id TEXT PRIMARY KEY,
+  metric_id TEXT NOT NULL REFERENCES health_metrics(id) ON DELETE CASCADE,
+  source TEXT NOT NULL,
+  ref_min REAL,
+  ref_max REAL,
+  period_days INTEGER,
+  UNIQUE(metric_id, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_health_refs_metric ON health_metric_refs(metric_id);
 
 CREATE TABLE IF NOT EXISTS attachments (
   id TEXT PRIMARY KEY,
@@ -607,6 +619,25 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
         await db.execAsync('CREATE INDEX IF NOT EXISTS idx_flights_depart ON flights(depart_date);');
       }
     } catch {}
+  }
+
+  if (currentVer < 19) {
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS health_metric_refs (
+        id TEXT PRIMARY KEY,
+        metric_id TEXT NOT NULL REFERENCES health_metrics(id) ON DELETE CASCADE,
+        source TEXT NOT NULL,
+        ref_min REAL,
+        ref_max REAL,
+        period_days INTEGER,
+        UNIQUE(metric_id, source)
+      );`);
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_health_refs_metric ON health_metric_refs(metric_id);');
+    } catch {}
+  }
+
+  if (currentVer < 20) {
+    try { await db.execAsync("ALTER TABLE documents ADD COLUMN notes TEXT NOT NULL DEFAULT '';"); } catch {}
   }
 
   if (currentVer < SCHEMA_VERSION) {

@@ -143,6 +143,8 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
             if (item.photoFileId) photoJobs.push({ type: 'doc', id: docId, fileId: item.photoFileId, subdir: 'document_images' });
           } else if (item.type === 'health') {
             healthCount += item.results.length + item.metrics.length;
+          } else if (item.type === 'ref') {
+            healthCount += item.refs.length;
           }
         }
 
@@ -175,6 +177,26 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
               await hs.bulkImport(rs, d);
             }
           }
+        }
+      }
+
+      // Import ref updates
+      for (const { item } of selected) {
+        if (item.type === 'ref') {
+          const hs = useHealthStore.getState();
+          const db = await getDb();
+          for (const ref of item.refs) {
+            const metric = hs.metrics.find((m) => m.name.toLowerCase() === ref.name.toLowerCase());
+            if (!metric) continue;
+            // Delete old, insert new
+            await db.runAsync('DELETE FROM health_metric_refs WHERE metric_id = ? AND source = ?', [metric.id, item.source]);
+            await db.runAsync(
+              'INSERT INTO health_metric_refs (id, metric_id, source, ref_min, ref_max, period_days) VALUES (?,?,?,?,?,?)',
+              [Crypto.randomUUID(), metric.id, item.source, ref.refMin ?? null, ref.refMax ?? null, ref.periodDays ?? null]
+            );
+          }
+          useHealthStore.setState({ loaded: false });
+          await useHealthStore.getState().load();
         }
       }
 
@@ -223,8 +245,8 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
 
   const renderItem = ({ item: si, index }: { item: SelectableItem; index: number }) => {
     const { item, selected } = si;
-    const typeColor = item.type === 'task' ? '#3B82F6' : item.type === 'flight' ? '#F59E0B' : item.type === 'health' ? '#22C55E' : '#8B5CF6';
-    const typeLabel = item.type === 'task' ? 'ЗАДАЧА' : item.type === 'flight' ? (item.kind === 'hotel' ? 'ОТЕЛЬ' : 'ПЕРЕЛЁТ') : item.type === 'health' ? 'АНАЛИЗЫ' : 'ДОКУМЕНТ';
+    const typeColor = item.type === 'task' ? '#3B82F6' : item.type === 'flight' ? '#F59E0B' : item.type === 'health' ? '#22C55E' : item.type === 'ref' ? '#F59E0B' : '#8B5CF6';
+    const typeLabel = item.type === 'task' ? 'ЗАДАЧА' : item.type === 'flight' ? (item.kind === 'hotel' ? 'ОТЕЛЬ' : 'ПЕРЕЛЁТ') : item.type === 'health' ? 'АНАЛИЗЫ' : item.type === 'ref' ? 'РЕФЫ' : 'ДОКУМЕНТ';
     return (
       <TouchableOpacity
         style={[st.row, { backgroundColor: selected ? c.card : 'transparent', borderColor: c.border }]}
@@ -234,7 +256,7 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
         <View style={{ flex: 1 }}>
           <Text style={{ color: typeColor, fontSize: 11, fontWeight: '700' }}>{typeLabel}</Text>
           <Text style={{ color: c.text, fontSize: 14 }} numberOfLines={2}>
-            {item.type === 'task' ? item.subject : item.type === 'flight' ? item.title : item.type === 'health' ? `${item.results.length} рез. ${item.metrics.length} показ.` : item.name}
+            {item.type === 'task' ? item.subject : item.type === 'flight' ? item.title : item.type === 'health' ? `${item.results.length} рез. ${item.metrics.length} показ.` : item.type === 'ref' ? `${item.source}: ${item.refs.length} рефов` : item.name}
           </Text>
           {item.type === 'task' && item.project && (
             <Text style={{ color: c.textSecondary, fontSize: 11 }}>Проект: {item.project}</Text>

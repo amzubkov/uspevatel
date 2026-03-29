@@ -12,13 +12,147 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { StorageAccessFramework } from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
+import * as DocumentPicker from "expo-document-picker";
+import { File, Paths, Directory } from "expo-file-system";
 import { useSettingsStore } from "../store/settingsStore";
 import { useTaskStore } from "../store/taskStore";
 import { useProjectStore } from "../store/projectStore";
 import { colors } from "../utils/theme";
 import { useRoutineStore } from "../store/routineStore";
+import { CHANGELOG } from "../changelog";
 import { getSyncFolder, setSyncFolder, getDb } from "../db/database";
 import { validateToken } from "../services/telegramService";
+
+const IMAGE_DIRS = ['task_images', 'flight_images', 'document_images', 'note_images', 'exercise_images'];
+
+function BackupRestore({ c }: { c: any }) {
+  const handleBackup = useCallback(async () => {
+    try {
+      if (Platform.OS !== 'android') { Alert.alert('Только Android'); return; }
+      const perm = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+      if (!perm.granted || !perm.directoryUri) { Alert.alert('Отменено'); return; }
+      const destUri = perm.directoryUri;
+
+      // Copy DB
+      const dbSrc = new File(Paths.document, 'SQLite/uspevatel.db');
+      if (dbSrc.exists) {
+        const dbBytes = dbSrc.bytes();
+        const base64 = btoa(String.fromCharCode(...dbBytes));
+        await StorageAccessFramework.createFileAsync(destUri, 'uspevatel.db', 'application/x-sqlite3')
+          .then(async (uri) => {
+            await StorageAccessFramework.writeAsStringAsync(uri, base64, { encoding: 'base64' as any });
+          });
+      }
+
+      // Copy photos
+      let photoCount = 0;
+      for (const dirName of IMAGE_DIRS) {
+        const srcDir = new Directory(Paths.document, dirName);
+        if (!srcDir.exists) continue;
+        for (const item of srcDir.list()) {
+          if (item instanceof File) {
+            const bytes = item.bytes();
+            const b64 = btoa(String.fromCharCode(...bytes));
+            const fileName = `${dirName}__${item.name}`;
+            await StorageAccessFramework.createFileAsync(destUri, fileName, 'image/jpeg')
+              .then(async (uri) => {
+                await StorageAccessFramework.writeAsStringAsync(uri, b64, { encoding: 'base64' as any });
+              });
+            photoCount++;
+          }
+        }
+      }
+
+      Alert.alert('Бэкап готов', `БД + ${photoCount} фото сохранены`);
+    } catch (e: any) {
+      Alert.alert('Ошибка', String(e?.message || e));
+    }
+  }, []);
+
+  const handleRestore = useCallback(async () => {
+    Alert.alert('Восстановить?', 'Текущие данные будут заменены. Перезапустите приложение после.', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Выбрать папку', onPress: async () => {
+        try {
+          if (Platform.OS !== 'android') return;
+          const perm = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+          if (!perm.granted || !perm.directoryUri) return;
+
+          // Read DB file
+          const files = await StorageAccessFramework.readDirectoryAsync(perm.directoryUri);
+          const dbFile = files.find((f) => decodeURIComponent(f).includes('uspevatel.db'));
+          if (dbFile) {
+            const db = await getDb();
+            await db.closeAsync();
+            const b64 = await StorageAccessFramework.readAsStringAsync(dbFile, { encoding: 'base64' as any });
+            const destPath = Paths.document.uri + '/SQLite/uspevatel.db';
+            const dest = new File(destPath);
+            dest.write(b64, { encoding: 'base64' });
+          }
+
+          // Restore photos
+          let photoCount = 0;
+          for (const fileUri of files) {
+            const name = decodeURIComponent(fileUri).split('/').pop() || '';
+            const sep = name.indexOf('__');
+            if (sep === -1) continue;
+            const dirName = name.substring(0, sep);
+            const fileName = name.substring(sep + 2);
+            if (!IMAGE_DIRS.includes(dirName)) continue;
+            const imgDir = new Directory(Paths.document, dirName);
+            if (!imgDir.exists) imgDir.create();
+            const b64 = await StorageAccessFramework.readAsStringAsync(fileUri, { encoding: 'base64' as any });
+            const dest = new File(imgDir, fileName);
+            dest.write(b64, { encoding: 'base64' });
+            photoCount++;
+          }
+
+          Alert.alert('Готово', `БД${dbFile ? '' : ' (не найдена)'} + ${photoCount} фото восстановлены.\nПерезапустите приложение.`);
+        } catch (e: any) {
+          Alert.alert('Ошибка', String(e?.message || e));
+        }
+      }},
+    ]);
+  }, []);
+
+  return (
+    <>
+      <TouchableOpacity style={[styles.exportBtn, { backgroundColor: '#22C55E', marginTop: 8 }]} onPress={handleBackup}>
+        <Text style={styles.exportBtnText}>Бэкап (БД + фото)</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={[styles.exportBtn, { backgroundColor: '#F59E0B', marginTop: 8 }]} onPress={handleRestore}>
+        <Text style={styles.exportBtnText}>Восстановить из бэкапа</Text>
+      </TouchableOpacity>
+    </>
+  );
+}
+
+function ChangeLogSection({ c }: { c: any }) {
+  const [show, setShow] = useState(false);
+  return (
+    <>
+      <TouchableOpacity
+        style={[styles.exportBtn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border, marginTop: 16 }]}
+        onPress={() => setShow(!show)}
+      >
+        <Text style={{ color: c.text, fontSize: 16, fontWeight: '600' }}>
+          {show ? 'Скрыть изменения' : 'Что нового'}
+        </Text>
+      </TouchableOpacity>
+      {show && CHANGELOG.map((ver) => (
+        <View key={ver.version} style={{ marginTop: 12 }}>
+          <Text style={{ color: c.primary, fontSize: 15, fontWeight: '700' }}>v{ver.version} — {ver.date}</Text>
+          {ver.changes.map((ch, i) => (
+            <Text key={i} style={{ color: c.textSecondary, fontSize: 12, marginTop: 2, paddingLeft: 8 }}>
+              • {ch}
+            </Text>
+          ))}
+        </View>
+      ))}
+    </>
+  );
+}
 
 function NavBarToggle({ c }: { c: any }) {
   const navBarPadding = useSettingsStore((s) => s.navBarPadding);
@@ -424,6 +558,10 @@ export function SettingsScreen() {
       >
         <Text style={styles.exportBtnText}>Экспортировать данные</Text>
       </TouchableOpacity>
+
+      <BackupRestore c={c} />
+
+      <ChangeLogSection c={c} />
 
       <TouchableOpacity
         style={[styles.dangerBtn]}

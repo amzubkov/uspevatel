@@ -7,6 +7,7 @@ import { getDb, getImageBaseDir } from '../db/database';
 export interface Document {
   id: string;
   name: string;
+  notes: string;
   sortOrder: number;
   createdAt: string;
 }
@@ -47,7 +48,7 @@ export const useDocumentStore = create<DocumentState>()((set, get) => ({
     const dRows = await db.getAllAsync('SELECT * FROM documents ORDER BY sort_order');
     const iRows = await db.getAllAsync('SELECT * FROM document_images ORDER BY sort_order');
     set({
-      documents: dRows.map((r: any) => ({ id: r.id, name: r.name, sortOrder: r.sort_order, createdAt: r.created_at })),
+      documents: dRows.map((r: any) => ({ id: r.id, name: r.name, notes: r.notes || '', sortOrder: r.sort_order, createdAt: r.created_at })),
       images: iRows.map((r: any) => ({ id: r.id, documentId: r.document_id, imagePath: resolveImageUri(r.image_path), sortOrder: r.sort_order, createdAt: r.created_at })),
       loaded: true,
     });
@@ -55,17 +56,21 @@ export const useDocumentStore = create<DocumentState>()((set, get) => ({
 
   addDocument: async (name) => {
     const maxOrder = Math.max(0, ...get().documents.map((d) => d.sortOrder));
-    const doc: Document = { id: Crypto.randomUUID(), name, sortOrder: maxOrder + 1, createdAt: new Date().toISOString() };
+    const doc: Document = { id: Crypto.randomUUID(), name, notes: '', sortOrder: maxOrder + 1, createdAt: new Date().toISOString() };
     set((s) => ({ documents: [...s.documents, doc] }));
     const db = await getDb();
-    await db.runAsync('INSERT INTO documents (id, name, sort_order, created_at) VALUES (?,?,?,?)', [doc.id, doc.name, doc.sortOrder, doc.createdAt]);
+    await db.runAsync('INSERT INTO documents (id, name, notes, sort_order, created_at) VALUES (?,?,?,?,?)', [doc.id, doc.name, '', doc.sortOrder, doc.createdAt]);
     return doc.id;
   },
 
-  updateDocument: async (id, name) => {
-    set((s) => ({ documents: s.documents.map((d) => d.id === id ? { ...d, name } : d) }));
+  updateDocument: async (id, updates: Partial<Pick<Document, 'name' | 'notes'>>) => {
+    set((s) => ({ documents: s.documents.map((d) => d.id === id ? { ...d, ...updates } : d) }));
     const db = await getDb();
-    await db.runAsync('UPDATE documents SET name = ? WHERE id = ?', [name, id]);
+    const sets: string[] = [];
+    const vals: any[] = [];
+    if (updates.name !== undefined) { sets.push('name = ?'); vals.push(updates.name); }
+    if (updates.notes !== undefined) { sets.push('notes = ?'); vals.push(updates.notes); }
+    if (sets.length) { vals.push(id); await db.runAsync(`UPDATE documents SET ${sets.join(', ')} WHERE id = ?`, vals); }
   },
 
   removeDocument: async (id) => {

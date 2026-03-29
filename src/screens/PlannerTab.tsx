@@ -254,6 +254,7 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
   const [showImport, setShowImport] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<FlightStatus | null>(null);
 
   // Form state
   const [kind, setKind] = useState<FlightKind>('flight');
@@ -274,14 +275,14 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
     const isAll = travelerId === '__all__';
     const isMe = travelerId === ME_TRAVELER.id;
     return flights
-      .filter((f) => f.status !== 'completed' && f.status !== 'cancelled')
+      .filter((f) => statusFilter ? f.status === statusFilter : f.status !== 'completed' && f.status !== 'cancelled')
       .filter((f) => isAll ? true : isMe ? f.travelerIds.length === 0 || f.travelerIds.includes(ME_TRAVELER.id) : f.travelerIds.includes(travelerId))
       .sort((a, b) => {
         const cmp = a.departDate.localeCompare(b.departDate);
         if (cmp !== 0) return cmp;
         return (a.departTime || '99:99').localeCompare(b.departTime || '99:99');
       });
-  }, [flights, travelerId]);
+  }, [flights, travelerId, statusFilter]);
 
   const resetForm = () => {
     setKind('flight'); setTitle(''); setCity(''); setStatus('planned'); setDepartDate(''); setDepartTime('');
@@ -554,12 +555,27 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
         <>
           <View style={{ flexDirection: 'row', gap: 8, marginHorizontal: 12, marginTop: 12, marginBottom: 4 }}>
             <TouchableOpacity style={[s.addBtn, { backgroundColor: c.primary, flex: 1 }]} onPress={() => setShowForm(true)}>
-              <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 15 }}>+ Перелёт</Text>
+              <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>+ Перелёт</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[s.addBtn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => setShowImport(true)}>
-              <Text style={{ color: c.text, fontWeight: '700', fontSize: 15 }}>Импорт</Text>
+              <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>Импорт</Text>
             </TouchableOpacity>
           </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 4, paddingHorizontal: 12, paddingVertical: 4 }}>
+            <TouchableOpacity
+              style={[s.statusChip, { backgroundColor: !statusFilter ? c.primary : c.card, borderColor: c.border }]}
+              onPress={() => setStatusFilter(null)}>
+              <Text style={{ color: !statusFilter ? '#FFF' : c.text, fontSize: 11, fontWeight: '600' }}>Все</Text>
+            </TouchableOpacity>
+            {(['not_planned', 'reserved', 'planned', 'booked'] as FlightStatus[]).map((st) => (
+              <TouchableOpacity key={st}
+                style={[s.statusChip, { backgroundColor: statusFilter === st ? STATUS_COLORS[st] : c.card, borderColor: STATUS_COLORS[st] }]}
+                onPress={() => setStatusFilter(statusFilter === st ? null : st)}>
+                <Text style={{ color: statusFilter === st ? '#FFF' : STATUS_COLORS[st], fontSize: 11, fontWeight: '600' }}>{STATUS_LABELS[st]}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
           <FlatList
             data={sorted}
             keyExtractor={(f) => f.id}
@@ -1265,7 +1281,7 @@ const s = StyleSheet.create({
   imgDelete: { position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
   imgButtons: { flexDirection: 'row', gap: 8, marginTop: 8 },
   imgBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
-  addBtn: { borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
+  addBtn: { borderRadius: 8, paddingVertical: 8, alignItems: 'center' },
   formLabel: { fontSize: 12, fontWeight: '600', marginTop: 10, marginBottom: 4, textTransform: 'uppercase' },
   input: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 15 },
   statusRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },

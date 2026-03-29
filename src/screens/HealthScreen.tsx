@@ -1,18 +1,20 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput,
+  View, Text, StyleSheet, FlatList, SectionList, TouchableOpacity, TextInput,
   Alert, ScrollView, KeyboardAvoidingView, Platform, Image,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useSettingsStore } from '../store/settingsStore';
-import { useHealthStore, HealthMetric, HealthEntry } from '../store/healthStore';
+import { useHealthStore, HealthMetric, HealthEntry, MetricRef } from '../store/healthStore';
 import { useDoctorStore, DoctorVisit, DoctorVisitImage } from '../store/doctorStore';
 import { DatePickerField } from '../components/DatePickerField';
 import { colors } from '../utils/theme';
+import { HEALTH_PRESETS, HEALTH_GROUPS, HEALTH_SOURCES, SOURCE_LABELS, HealthSource } from '../db/healthPresets';
 
-function statusColor(value: number, metric: HealthMetric, c: any): string {
-  if (metric.refMin != null && value < metric.refMin) return c.warning;
-  if (metric.refMax != null && value > metric.refMax) return c.danger;
+function statusColor(value: number, refMin?: number, refMax?: number, c?: any): string {
+  if (!c) return '#22C55E';
+  if (refMin != null && value < refMin) return c.warning;
+  if (refMax != null && value > refMax) return c.danger;
   return c.success;
 }
 
@@ -182,7 +184,9 @@ function MetricsContent() {
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
   const metrics = useHealthStore((s) => s.metrics);
+  const metricRefs = useHealthStore((s) => s.metricRefs);
   const entries = useHealthStore((s) => s.entries);
+  const [selectedSource, setSelectedSource] = useState<HealthSource | null>(null);
   const addMetric = useHealthStore((s) => s.addMetric);
   const updateMetric = useHealthStore((s) => s.updateMetric);
   const removeMetric = useHealthStore((s) => s.removeMetric);
@@ -197,6 +201,17 @@ function MetricsContent() {
   const [showImportForm, setShowImportForm] = useState(false);
   const [expandedMetric, setExpandedMetric] = useState<string | null>(null);
 
+  const getRef = useCallback((metricId: string): { refMin?: number; refMax?: number; periodDays?: number } | null => {
+    if (!selectedSource) return null; // use metric's own refs
+    return metricRefs.find((r) => r.metricId === metricId && r.source === selectedSource) || null;
+  }, [metricRefs, selectedSource]);
+
+  const filteredMetrics = useMemo(() => {
+    if (!selectedSource) return metrics;
+    const hasRef = new Set(metricRefs.filter((r) => r.source === selectedSource).map((r) => r.metricId));
+    return metrics.filter((m) => hasRef.has(m.id));
+  }, [metrics, metricRefs, selectedSource]);
+
   const entriesForMetric = useCallback(
     (metricId: string) => entries.filter((e) => e.metricId === metricId).sort((a, b) => b.date.localeCompare(a.date)),
     [entries],
@@ -206,15 +221,21 @@ function MetricsContent() {
     const isExpanded = expandedMetric === m.id;
     const metricEntries = entriesForMetric(m.id);
     const latest = metricEntries[0];
-    const refStr = [m.refMin != null ? String(m.refMin) : '', m.refMax != null ? String(m.refMax) : ''].filter(Boolean).join(' – ');
+    const srcRef = getRef(m.id);
+    const activeRefMin = srcRef ? srcRef.refMin : m.refMin;
+    const activeRefMax = srcRef ? srcRef.refMax : m.refMax;
+    const activePeriod = srcRef ? srcRef.periodDays : m.periodDays;
+    const refStr = [activeRefMin != null ? String(activeRefMin) : '', activeRefMax != null ? String(activeRefMax) : ''].filter(Boolean).join(' – ');
+
+    // Sources available for this metric
+    const sources = metricRefs.filter((r) => r.metricId === m.id).map((r) => r.source);
 
     // Period info
     let periodInfo = '';
-    if (m.periodDays && latest) {
+    if (activePeriod && latest) {
       const diff = daysDiff(latest.date, todayStr());
-      const remaining = m.periodDays - diff;
+      const remaining = activePeriod - diff;
       if (remaining <= 0) periodInfo = 'Пора сдавать!';
-      else if (remaining <= 7) periodInfo = `Через ${remaining} дн.`;
       else periodInfo = `Через ${remaining} дн.`;
     }
 
@@ -229,7 +250,8 @@ function MetricsContent() {
             <View style={{ flex: 1 }}>
               <Text style={[s.metricName, { color: c.text }]}>{m.name}</Text>
               <Text style={{ color: c.textSecondary, fontSize: 12 }}>
-                {m.unit}{refStr ? ` | Реф: ${refStr}` : ''}{m.periodDays ? ` | Каждые ${m.periodDays} дн.` : ''}
+                {m.unit}{refStr ? ` | Реф: ${refStr}` : ''}{activePeriod ? ` | ${activePeriod} дн.` : ''}
+                {sources.length > 0 ? `  ${sources.map((s) => SOURCE_LABELS[s as HealthSource] || s).join(' ')}` : ''}
               </Text>
               {periodInfo ? (
                 <Text style={{ color: periodInfo === 'Пора сдавать!' ? c.danger : c.warning, fontSize: 11, fontWeight: '600', marginTop: 2 }}>{periodInfo}</Text>
@@ -237,10 +259,10 @@ function MetricsContent() {
             </View>
             {latest && (() => {
               const age = daysDiff(latest.date, todayStr());
-              const ageColor = m.periodDays && age > m.periodDays ? c.danger : age > 90 ? c.warning : c.textSecondary;
+              const ageColor = activePeriod && age > activePeriod ? c.danger : age > 90 ? c.warning : c.textSecondary;
               return (
                 <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={{ fontSize: 18, fontWeight: '700', color: statusColor(latest.value, m, c) }}>{latest.value}</Text>
+                  <Text style={{ fontSize: 18, fontWeight: '700', color: statusColor(latest.value, activeRefMin, activeRefMax, c) }}>{latest.value}</Text>
                   <Text style={{ color: c.textSecondary, fontSize: 11 }}>{latest.date}</Text>
                   <Text style={{ color: ageColor, fontSize: 10, fontWeight: '600' }}>{age} дн. назад</Text>
                 </View>
@@ -264,7 +286,7 @@ function MetricsContent() {
                   onLongPress={() =>
                     Alert.alert('Удалить?', '', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: () => removeEntry(e.id) }])
                   } style={s.entryRow}>
-                  <Text style={{ color: statusColor(e.value, m, c), fontWeight: '600', width: 60 }}>{e.value}</Text>
+                  <Text style={{ color: statusColor(e.value, activeRefMin, activeRefMax, c), fontWeight: '600', width: 60 }}>{e.value}</Text>
                   <Text style={{ color: c.textSecondary, fontSize: 12, width: 80 }}>{e.date}</Text>
                   <Text style={{ color: eAge > 90 ? c.warning : c.textSecondary, fontSize: 11, width: 40 }}>{eAge}д</Text>
                   {e.notes ? <Text style={{ color: c.textSecondary, fontSize: 12, flex: 1 }} numberOfLines={1}>{e.notes}</Text> : null}
@@ -299,9 +321,56 @@ function MetricsContent() {
           onCancel={() => setShowImportForm(false)} />
       )}
 
-      <FlatList data={metrics} keyExtractor={(m) => m.id} renderItem={renderMetric}
-        contentContainerStyle={{ padding: 12 }}
-        ListEmptyComponent={<Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Добавьте показатели</Text>} />
+      {/* Source switcher */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}
+        style={{ minHeight: 34, maxHeight: 34 }}
+        contentContainerStyle={{ gap: 4, paddingHorizontal: 8, alignItems: 'center' }}>
+        <TouchableOpacity
+          style={[s.chip, { backgroundColor: !selectedSource ? c.primary : c.border }]}
+          onPress={() => setSelectedSource(null)}>
+          <Text style={{ color: !selectedSource ? '#FFF' : c.text, fontSize: 11, fontWeight: '600' }}>Все</Text>
+        </TouchableOpacity>
+        {HEALTH_SOURCES.map((src) => (
+          <TouchableOpacity key={src}
+            style={[s.chip, { backgroundColor: selectedSource === src ? c.primary : c.border }]}
+            onPress={() => setSelectedSource(selectedSource === src ? null : src)}>
+            <Text style={{ color: selectedSource === src ? '#FFF' : c.text, fontSize: 11, fontWeight: '600' }}>{SOURCE_LABELS[src]}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      <SectionList
+        sections={(() => {
+          // Build group map from presets
+          const groupMap = new Map<string, string>();
+          for (const p of HEALTH_PRESETS) groupMap.set(p.name.toLowerCase(), p.group);
+          // Group metrics
+          const grouped = new Map<string, HealthMetric[]>();
+          for (const m of filteredMetrics) {
+            const group = groupMap.get(m.name.toLowerCase()) || 'Другое';
+            const arr = grouped.get(group) || [];
+            arr.push(m);
+            grouped.set(group, arr);
+          }
+          // Sort groups by HEALTH_GROUPS order
+          const sections: { title: string; data: HealthMetric[] }[] = [];
+          for (const g of [...HEALTH_GROUPS, 'Другое']) {
+            const data = grouped.get(g);
+            if (data?.length) sections.push({ title: g, data });
+          }
+          return sections;
+        })()}
+        keyExtractor={(m) => m.id}
+        renderItem={({ item }) => renderMetric({ item })}
+        renderSectionHeader={({ section }) => (
+          <Text style={{ color: c.primary, fontSize: 13, fontWeight: '700', paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4 }}>
+            {section.title}
+          </Text>
+        )}
+        contentContainerStyle={{ padding: 0, paddingBottom: 12 }}
+        ListEmptyComponent={<Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Добавьте показатели</Text>}
+        stickySectionHeadersEnabled={false}
+      />
 
       <View style={s.fabRow}>
         {!showMetricForm && !showEntryForm && !showImportForm && (
@@ -531,7 +600,7 @@ const s = StyleSheet.create({
   btn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
   smallBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 },
   btnText: { color: '#FFF', fontWeight: '600', fontSize: 13 },
-  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, marginRight: 6 },
+  chip: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
   fabRow: { flexDirection: 'row', justifyContent: 'center', gap: 12, paddingBottom: 16, paddingTop: 8 },
   fab: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 },
   fabText: { color: '#FFF', fontWeight: '700', fontSize: 13 },

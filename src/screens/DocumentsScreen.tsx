@@ -17,12 +17,16 @@ function DocsContent() {
   const documents = useDocumentStore((s) => s.documents);
   const images = useDocumentStore((s) => s.images);
   const addDocument = useDocumentStore((s) => s.addDocument);
+  const updateDocument = useDocumentStore((s) => s.updateDocument);
   const removeDocument = useDocumentStore((s) => s.removeDocument);
   const addImage = useDocumentStore((s) => s.addImage);
   const removeImage = useDocumentStore((s) => s.removeImage);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editNotes, setEditNotes] = useState('');
 
   const imagesFor = useCallback(
     (docId: string) => images.filter((i) => i.documentId === docId).sort((a, b) => a.sortOrder - b.sortOrder),
@@ -57,19 +61,49 @@ function DocsContent() {
     ]);
   };
 
+  const startEdit = (doc: Document) => {
+    setEditingId(doc.id); setEditName(doc.name); setEditNotes(doc.notes || '');
+  };
+
+  const saveEdit = () => {
+    if (!editName.trim()) return;
+    updateDocument(editingId!, { name: editName.trim(), notes: editNotes.trim() });
+    setEditingId(null);
+  };
+
   const renderDoc = ({ item }: { item: Document }) => {
     const isExpanded = expanded === item.id;
+    const isEditing = editingId === item.id;
     const docImages = imagesFor(item.id);
     return (
       <View style={[s.card, { backgroundColor: c.card, borderColor: c.border }]}>
         <TouchableOpacity style={s.cardHeader} onPress={() => setExpanded(isExpanded ? null : item.id)}>
           <Text style={{ fontSize: 20 }}>📄</Text>
-          <Text style={[s.cardTitle, { color: c.text, flex: 1 }]}>{item.name}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.cardTitle, { color: c.text }]}>{item.name}</Text>
+            {item.notes ? <Text style={{ color: c.textSecondary, fontSize: 11 }} numberOfLines={1}>{item.notes}</Text> : null}
+          </View>
           <Text style={{ color: c.textSecondary, fontSize: 12 }}>{docImages.length} фото</Text>
         </TouchableOpacity>
 
         {isExpanded && (
           <View style={s.cardBody}>
+            {isEditing ? (
+              <View style={{ marginBottom: 8 }}>
+                <TextInput style={[s.input, { color: c.text, borderColor: c.border }]}
+                  value={editName} onChangeText={setEditName} placeholder="Название" placeholderTextColor={c.textSecondary} />
+                <TextInput style={[s.input, { color: c.text, borderColor: c.border }]}
+                  value={editNotes} onChangeText={setEditNotes} placeholder="Заметки..." placeholderTextColor={c.textSecondary} />
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity style={[s.imgBtn, { borderColor: c.primary, flex: 1, alignItems: 'center' }]} onPress={saveEdit}>
+                    <Text style={{ color: c.primary, fontSize: 13, fontWeight: '600' }}>Сохранить</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[s.imgBtn, { borderColor: c.border, flex: 1, alignItems: 'center' }]} onPress={() => setEditingId(null)}>
+                    <Text style={{ color: c.textSecondary, fontSize: 13 }}>Отмена</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
             {docImages.length > 0 && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
                 {docImages.map((img) => (
@@ -90,9 +124,14 @@ function DocsContent() {
                 <Text style={{ color: c.textSecondary, fontSize: 13 }}>Камера</Text>
               </TouchableOpacity>
             </View>
-            <TouchableOpacity style={{ marginTop: 10 }} onPress={() => handleDelete(item)}>
-              <Text style={{ color: '#EF4444', fontSize: 13 }}>Удалить</Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 16, marginTop: 10 }}>
+              <TouchableOpacity onPress={() => startEdit(item)}>
+                <Text style={{ color: c.primary, fontSize: 13, fontWeight: '600' }}>Редактировать</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => handleDelete(item)}>
+                <Text style={{ color: '#EF4444', fontSize: 13 }}>Удалить</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </View>
