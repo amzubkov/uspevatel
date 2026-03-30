@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   start_date TEXT,
   deadline TEXT,
   reminder_at TEXT,
-  priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('high','normal','low')),
+  priority TEXT NOT NULL DEFAULT 'normal',
   is_recurring INTEGER NOT NULL DEFAULT 0,
   recur_days TEXT,
   completed INTEGER NOT NULL DEFAULT 0,

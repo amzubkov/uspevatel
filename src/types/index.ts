@@ -9,7 +9,7 @@ export interface Task {
   project?: string;
   notes: string;
   startDate?: string; // ISO string
-  priority: 'high' | 'normal' | 'low';
+  priority: 'super' | 'high' | 'normal' | 'low';
   isRecurring: boolean;
   recurDays?: number[]; // [1,3,5] = Mon,Wed,Fri
   completed: boolean;

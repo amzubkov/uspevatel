@@ -119,7 +119,7 @@ export function hideOldCompleted(tasks: Task[]): Task[] {
   });
 }
 
-const PRIORITY_ORDER: Record<string, number> = { high: 0, normal: 1, low: 2 };
+const PRIORITY_ORDER: Record<string, number> = { super: -1, high: 0, normal: 1, low: 2 };
 
 /** Sort: priority (high→normal→low), then deadline (earliest first, no deadline last) */
 export function sortByPriorityDeadline(tasks: Task[]): Task[] {

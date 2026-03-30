@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput,
-  Alert, ScrollView, Image,
+  Alert, ScrollView, Image, Modal,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useSettingsStore } from '../store/settingsStore';
@@ -27,6 +27,7 @@ function DocsContent() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [fullImg, setFullImg] = useState<string | null>(null);
 
   const imagesFor = useCallback(
     (docId: string) => images.filter((i) => i.documentId === docId).sort((a, b) => a.sortOrder - b.sortOrder),
@@ -108,7 +109,9 @@ function DocsContent() {
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
                 {docImages.map((img) => (
                   <View key={img.id} style={{ marginRight: 8, position: 'relative' }}>
-                    <Image source={{ uri: img.imagePath }} style={s.docImg} resizeMode="cover" />
+                    <TouchableOpacity activeOpacity={0.9} onPress={() => setFullImg(img.imagePath)}>
+                      <Image source={{ uri: img.imagePath }} style={s.docImg} resizeMode="cover" />
+                    </TouchableOpacity>
                     <TouchableOpacity style={s.imgDelete} onPress={() => handleDeleteImage(img)}>
                       <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700' }}>×</Text>
                     </TouchableOpacity>
@@ -140,6 +143,11 @@ function DocsContent() {
 
   return (
     <View style={{ flex: 1 }}>
+      <Modal visible={!!fullImg} transparent animationType="fade" onRequestClose={() => setFullImg(null)}>
+        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center' }} activeOpacity={1} onPress={() => setFullImg(null)}>
+          {fullImg && <Image source={{ uri: fullImg }} style={{ width: '100%', height: '90%' }} resizeMode="contain" />}
+        </TouchableOpacity>
+      </Modal>
       {showAdd ? (
         <View style={[s.addRow, { borderColor: c.border }]}>
           <TextInput style={[s.input, { color: c.text, borderColor: c.border, flex: 1 }]}
@@ -163,7 +171,7 @@ function DocsContent() {
           <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 15 }}>+ Документ</Text>
         </TouchableOpacity>
       )}
-      <FlatList data={documents} keyExtractor={(d) => d.id} renderItem={renderDoc}
+      <FlatList data={documents.filter((d) => !d.notes?.startsWith('insurance:'))} keyExtractor={(d) => d.id} renderItem={renderDoc}
         contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
         ListEmptyComponent={<Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Добавьте документы</Text>} />
     </View>
@@ -197,6 +205,7 @@ function CarsContent() {
   const [svcMileage, setSvcMileage] = useState('');
   const [svcNotes, setSvcNotes] = useState('');
   const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
+  const [fullImg, setFullImg] = useState<string | null>(null);
 
   // Auto-select first car
   const car = useMemo(() => {
@@ -241,6 +250,11 @@ function CarsContent() {
 
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12, paddingBottom: 40 }}>
+      <Modal visible={!!fullImg} transparent animationType="fade" onRequestClose={() => setFullImg(null)}>
+        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center' }} activeOpacity={1} onPress={() => setFullImg(null)}>
+          {fullImg && <Image source={{ uri: fullImg }} style={{ width: '100%', height: '90%' }} resizeMode="contain" />}
+        </TouchableOpacity>
+      </Modal>
       {/* Car selector */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
         {cars.map((cr) => (
@@ -363,7 +377,9 @@ function CarsContent() {
                       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
                         {docImgs.map((img) => (
                           <View key={img.id} style={{ marginRight: 8, position: 'relative' }}>
-                            <Image source={{ uri: img.imagePath }} style={s.docImg} resizeMode="cover" />
+                            <TouchableOpacity activeOpacity={0.9} onPress={() => setFullImg(img.imagePath)}>
+                              <Image source={{ uri: img.imagePath }} style={s.docImg} resizeMode="cover" />
+                            </TouchableOpacity>
                             <TouchableOpacity style={s.imgDelete} onPress={() =>
                               Alert.alert('Удалить фото?', '', [
                                 { text: 'Отмена', style: 'cancel' },
@@ -425,13 +441,169 @@ function CarsContent() {
   );
 }
 
+/* ── Insurance Tab ── */
+function InsuranceContent() {
+  const theme = useSettingsStore((s) => s.theme);
+  const c = colors[theme];
+  const documents = useDocumentStore((s) => s.documents);
+  const images = useDocumentStore((s) => s.images);
+  const addDocument = useDocumentStore((s) => s.addDocument);
+  const updateDocument = useDocumentStore((s) => s.updateDocument);
+  const removeDocument = useDocumentStore((s) => s.removeDocument);
+  const addImage = useDocumentStore((s) => s.addImage);
+  const removeImage = useDocumentStore((s) => s.removeImage);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [fullImg, setFullImg] = useState<string | null>(null);
+
+  // Insurance docs have notes starting with "insurance:"
+  const insuranceDocs = useMemo(() => documents.filter((d) => d.notes?.startsWith('insurance:')), [documents]);
+
+  const imagesFor = useCallback(
+    (docId: string) => images.filter((i) => i.documentId === docId).sort((a, b) => a.sortOrder - b.sortOrder),
+    [images],
+  );
+
+  const handlePickImage = async (docId: string) => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') { Alert.alert('Нет доступа'); return; }
+    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
+    if (!r.canceled && r.assets[0]) await addImage(docId, r.assets[0].uri);
+  };
+
+  const handleCamera = async (docId: string) => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') { Alert.alert('Нет доступа'); return; }
+    const r = await ImagePicker.launchCameraAsync({ quality: 0.7 });
+    if (!r.canceled && r.assets[0]) await addImage(docId, r.assets[0].uri);
+  };
+
+  const getExpiry = (doc: Document): string | null => {
+    const m = doc.notes?.match(/^insurance:(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : null;
+  };
+
+  const daysUntil = (dateStr: string): number => {
+    return Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86400000);
+  };
+
+  return (
+    <View style={{ flex: 1 }}>
+      <Modal visible={!!fullImg} transparent animationType="fade" onRequestClose={() => setFullImg(null)}>
+        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center' }} activeOpacity={1} onPress={() => setFullImg(null)}>
+          {fullImg && <Image source={{ uri: fullImg }} style={{ width: '100%', height: '90%' }} resizeMode="contain" />}
+        </TouchableOpacity>
+      </Modal>
+      {showAdd ? (
+        <InsuranceForm c={c} onSave={async (name, expiry) => {
+          const id = await addDocument(name);
+          await updateDocument(id, { notes: `insurance:${expiry}` });
+          setShowAdd(false);
+        }} onCancel={() => setShowAdd(false)} />
+      ) : (
+        <TouchableOpacity style={[s.fabBtn, { backgroundColor: c.primary, margin: 12 }]} onPress={() => setShowAdd(true)}>
+          <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 15 }}>+ Страховка</Text>
+        </TouchableOpacity>
+      )}
+      <FlatList data={insuranceDocs} keyExtractor={(d) => d.id}
+        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
+        ListEmptyComponent={<Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Нет страховок</Text>}
+        renderItem={({ item }) => {
+          const isExp = expanded === item.id;
+          const docImages = imagesFor(item.id);
+          const expiry = getExpiry(item);
+          const days = expiry ? daysUntil(expiry) : null;
+          return (
+            <View style={[s.card, { backgroundColor: c.card, borderColor: c.border }]}>
+              <TouchableOpacity style={s.cardHeader} onPress={() => setExpanded(isExp ? null : item.id)}>
+                <Text style={{ fontSize: 20 }}>🛡</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.cardTitle, { color: c.text }]}>{item.name}</Text>
+                  {expiry && (
+                    <Text style={{ color: days != null && days < 30 ? '#EF4444' : days != null && days < 90 ? '#F59E0B' : c.textSecondary, fontSize: 11 }}>
+                      до {expiry}{days != null ? ` (${days > 0 ? `${days} дн.` : 'истекла!'})` : ''}
+                    </Text>
+                  )}
+                </View>
+                <Text style={{ color: c.textSecondary, fontSize: 12 }}>{docImages.length} фото</Text>
+              </TouchableOpacity>
+              {isExp && (
+                <View style={s.cardBody}>
+                  {docImages.length > 0 && (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+                      {docImages.map((img) => (
+                        <View key={img.id} style={{ marginRight: 8, position: 'relative' }}>
+                          <TouchableOpacity activeOpacity={0.9} onPress={() => setFullImg(img.imagePath)}>
+                            <Image source={{ uri: img.imagePath }} style={s.docImg} resizeMode="cover" />
+                          </TouchableOpacity>
+                          <TouchableOpacity style={s.imgDelete} onPress={() =>
+                            Alert.alert('Удалить фото?', '', [
+                              { text: 'Отмена', style: 'cancel' },
+                              { text: 'Удалить', style: 'destructive', onPress: () => removeImage(img.id) },
+                            ])}>
+                            <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700' }}>×</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  )}
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity style={[s.imgBtn, { borderColor: c.border }]} onPress={() => handlePickImage(item.id)}>
+                      <Text style={{ color: c.textSecondary, fontSize: 13 }}>Галерея</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[s.imgBtn, { borderColor: c.border }]} onPress={() => handleCamera(item.id)}>
+                      <Text style={{ color: c.textSecondary, fontSize: 13 }}>Камера</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity style={{ marginTop: 10 }} onPress={() =>
+                    Alert.alert('Удалить?', item.name, [
+                      { text: 'Отмена', style: 'cancel' },
+                      { text: 'Удалить', style: 'destructive', onPress: () => removeDocument(item.id) },
+                    ])}>
+                    <Text style={{ color: '#EF4444', fontSize: 13 }}>Удалить</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          );
+        }}
+      />
+    </View>
+  );
+}
+
+function InsuranceForm({ c, onSave, onCancel }: { c: any; onSave: (name: string, expiry: string) => void; onCancel: () => void }) {
+  const [name, setName] = useState('');
+  const [expiry, setExpiry] = useState('');
+  return (
+    <View style={{ padding: 12 }}>
+      <TextInput style={[s.input, { color: c.text, borderColor: c.border }]}
+        placeholder="Название (ОСАГО, ДМС, путешественника...)" placeholderTextColor={c.textSecondary}
+        value={name} onChangeText={setName} autoFocus />
+      <DatePickerField value={expiry} onChange={setExpiry} label="Дата истечения"
+        textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} />
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+        <TouchableOpacity style={[s.addBtn, { backgroundColor: c.primary, flex: 1, alignItems: 'center' }]}
+          onPress={() => { if (!name.trim() || !expiry) { Alert.alert('Заполните поля'); return; } onSave(name.trim(), expiry); }}>
+          <Text style={{ color: '#FFF', fontWeight: '700' }}>Добавить</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.addBtn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border, flex: 1, alignItems: 'center' }]} onPress={onCancel}>
+          <Text style={{ color: c.text }}>Отмена</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
 /* ── Main Screen ── */
 const MODES = [
   { key: 'docs' as const, label: 'Документы', icon: '📄' },
+  { key: 'insurance' as const, label: 'Страховки', icon: '🛡' },
   { key: 'cars' as const, label: 'Авто', icon: '🚗' },
 ];
 
-type Mode = 'docs' | 'cars';
+type Mode = 'docs' | 'insurance' | 'cars';
 
 export function DocumentsScreen() {
   const theme = useSettingsStore((s) => s.theme);
@@ -450,7 +622,7 @@ export function DocumentsScreen() {
           </TouchableOpacity>
         ))}
       </View>
-      {mode === 'docs' ? <DocsContent /> : <CarsContent />}
+      {mode === 'docs' ? <DocsContent /> : mode === 'insurance' ? <InsuranceContent /> : <CarsContent />}
     </View>
   );
 }

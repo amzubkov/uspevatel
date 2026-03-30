@@ -253,19 +253,19 @@ export function TaskDetailScreen() {
       {/* Приоритет */}
       <Text style={[styles.label, { color: c.textSecondary }]}>Приоритет</Text>
       <View style={styles.chips}>
-        {(['high', 'normal', 'low'] as const).map((p) => (
+        {(['super', 'high', 'normal', 'low'] as const).map((p) => (
           <TouchableOpacity
             key={p}
             style={[styles.chip, {
               backgroundColor: priority === p
-                ? (p === 'high' ? '#DC2626' : p === 'normal' ? '#16A34A' : '#EAB308')
+                ? (p === 'super' ? '#7F1D1D' : p === 'high' ? '#DC2626' : p === 'normal' ? '#16A34A' : '#EAB308')
                 : c.card,
               borderWidth: 1, borderColor: c.border,
             }]}
             onPress={() => setPriority(p)}
           >
             <Text style={[styles.chipText, { color: priority === p ? '#FFF' : c.text }]}>
-              {p === 'high' ? 'Высокий' : p === 'normal' ? 'Обычный' : 'Низкий'}
+              {p === 'super' ? 'Супер' : p === 'high' ? 'Высокий' : p === 'normal' ? 'Обычный' : 'Низкий'}
             </Text>
           </TouchableOpacity>
         ))}

@@ -29,12 +29,14 @@ export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPre
 
   const vPad = Math.max(2, fontSize - 11);
 
+  const isSuper = task.priority === 'super' && !task.completed;
+
   return (
-    <TouchableOpacity style={[styles.card, { paddingVertical: vPad }]} onPress={onPress} activeOpacity={0.7}>
+    <TouchableOpacity style={[styles.card, { paddingVertical: vPad }, isSuper && { backgroundColor: '#DC2626', borderRadius: 8, marginHorizontal: 4, marginVertical: 2 }]} onPress={onPress} activeOpacity={0.7}>
       <View style={styles.row}>
         {onComplete && (
           <TouchableOpacity
-            style={[styles.checkbox, { width: fontSize + 4, height: fontSize + 4, borderRadius: (fontSize + 4) / 2 }, task.completed && { backgroundColor: c.success, borderColor: c.success }]}
+            style={[styles.checkbox, { width: fontSize + 4, height: fontSize + 4, borderRadius: (fontSize + 4) / 2 }, isSuper && { borderColor: '#FFF' }, task.completed && { backgroundColor: c.success, borderColor: c.success }]}
             onPress={onComplete}
           >
             {task.completed && <Text style={[styles.checkmark, { fontSize: fontSize - 3 }]}>✓</Text>}
@@ -42,10 +44,10 @@ export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPre
         )}
         <View style={styles.content}>
           <View style={styles.topRow}>
-            <Text style={[styles.action, { color: c.text, fontSize }, task.completed && styles.completedText]} numberOfLines={2}>
+            <Text style={[styles.action, { color: isSuper ? '#FFF' : c.text, fontSize }, task.completed && styles.completedText]} numberOfLines={2}>
               {showCategory ? CATEGORY_EMOJI[task.category] : ''}{dayAge > 2 ? <Text style={{ color: c.danger, fontSize: smallFont }}>{dayAge}д </Text> : ''}{task.deadline ? <Text style={{ color: c.danger }}>{new Date(task.deadline).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} </Text> : null}{task.project ? <Text style={{ color: c.primary }}>{task.project} </Text> : null}{task.subject ? <Text style={{ color: c.textSecondary }}>{task.subject} </Text> : null}{task.action}
             </Text>
-            {task.priority === 'high' && <View style={[styles.priorityDot, { backgroundColor: c.danger }]} />}
+            {(task.priority === 'high' || task.priority === 'super') && <View style={[styles.priorityDot, { backgroundColor: isSuper ? '#FFF' : c.danger }]} />}
           </View>
           <View style={styles.tags}>
             {task.contextCategory && (

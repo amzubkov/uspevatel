@@ -150,7 +150,7 @@ function normalizeRemoteTask(raw: Record<string, unknown>): Task {
     project: raw.project ? String(raw.project) : undefined,
     notes: String(raw.notes ?? ''),
     startDate: raw.startDate ? String(raw.startDate) : undefined,
-    priority: (['high', 'normal', 'low'].includes(String(raw.priority))
+    priority: (['super', 'high', 'normal', 'low'].includes(String(raw.priority))
       ? String(raw.priority)
       : 'normal') as Task['priority'],
     isRecurring: raw.isRecurring === true || raw.isRecurring === 'true',

@@ -10,7 +10,7 @@ import { Category, CATEGORY_LABELS } from '../types';
 import { useNavigation, useRoute } from '@react-navigation/native';
 
 const CATEGORIES: Category[] = ['IN', 'DAY', 'LATER', 'CONTROL', 'MAYBE'];
-const PRIORITIES = ['high', 'normal', 'low'] as const;
+const PRIORITIES = ['super', 'high', 'normal', 'low'] as const;
 
 export function AddTaskScreen() {
   const navigation = useNavigation<any>();
@@ -30,7 +30,7 @@ export function AddTaskScreen() {
   const [contextCategory, setContextCategory] = useState<string | undefined>();
   const [startDate, setStartDate] = useState('');
   const [notes, setNotes] = useState('');
-  const [priority, setPriority] = useState<'high' | 'normal' | 'low'>('normal');
+  const [priority, setPriority] = useState<'super' | 'high' | 'normal' | 'low'>('normal');
   const [deadline, setDeadline] = useState<string | undefined>();
   const [showDeadlinePicker, setShowDeadlinePicker] = useState(false);
   const [showDeadlineTimePicker, setShowDeadlineTimePicker] = useState(false);
@@ -98,7 +98,7 @@ export function AddTaskScreen() {
               styles.chip,
               {
                 backgroundColor: priority === p
-                  ? (p === 'high' ? '#DC2626' : p === 'normal' ? '#16A34A' : '#EAB308')
+                  ? (p === 'super' ? '#7F1D1D' : p === 'high' ? '#DC2626' : p === 'normal' ? '#16A34A' : '#EAB308')
                   : c.card,
                 borderWidth: 1,
                 borderColor: c.border,
@@ -107,7 +107,7 @@ export function AddTaskScreen() {
             onPress={() => setPriority(p)}
           >
             <Text style={[styles.chipText, { color: priority === p ? '#FFF' : c.text }]}>
-              {p === 'high' ? 'Высокий' : p === 'normal' ? 'Обычный' : 'Низкий'}
+              {p === 'super' ? 'Супер' : p === 'high' ? 'Высокий' : p === 'normal' ? 'Обычный' : 'Низкий'}
             </Text>
           </TouchableOpacity>
         ))}
