@@ -7,6 +7,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useSettingsStore } from '../store/settingsStore';
 import { useDocumentStore, Document, DocumentImage } from '../store/documentStore';
 import { useCarStore, Car, CarDocument, CarDocImage, CarService } from '../store/carStore';
+import { AttachmentList } from '../components/AttachmentList';
 import { DatePickerField } from '../components/DatePickerField';
 import { colors } from '../utils/theme';
 
@@ -119,7 +120,8 @@ function DocsContent() {
                 ))}
               </ScrollView>
             )}
-            <View style={{ flexDirection: 'row', gap: 8 }}>
+            <AttachmentList entityType="document" entityId={item.id} />
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
               <TouchableOpacity style={[s.imgBtn, { borderColor: c.border }]} onPress={() => handlePickImage(item.id)}>
                 <Text style={{ color: c.textSecondary, fontSize: 13 }}>Галерея</Text>
               </TouchableOpacity>

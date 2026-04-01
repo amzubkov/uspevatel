@@ -26,7 +26,10 @@ export interface ParsedFlight {
 export interface ParsedDoc {
   type: 'doc';
   name: string;
-  photoFileId?: string; // largest photo file_id from telegram
+  photoFileId?: string;
+  docFileId?: string;   // telegram document (PDF etc)
+  docFileName?: string;
+  docMimeType?: string;
   msgDate: number;
 }
 
@@ -66,7 +69,7 @@ function parseDatetime(s: string): { date: string; time?: string } | null {
 }
 
 // Parse text (or caption) + optional photo
-export function parseMessage(text: string, msgDate: number, photoFileId?: string): ParsedItem | null {
+export function parseMessage(text: string, msgDate: number, photoFileId?: string, docFileId?: string, docFileName?: string, docMimeType?: string): ParsedItem | null {
   const trimmed = text.trim();
 
   // /task [project:XXX] <subject>[, <deadline>]
@@ -137,10 +140,10 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
     return { type: 'flight', kind: isHotel ? 'hotel' : 'flight', title, city, departDate: depart.date, departTime: depart.time, arriveDate: arrive?.date, arriveTime: arrive?.time, notes, price, currency, photoFileId, msgDate };
   }
 
-  // /doc <name> (with optional photo attached)
+  // /doc <name> (with optional photo or document attached)
   const docMatch = trimmed.match(/^\/doc\s+(.+)/i);
   if (docMatch) {
-    return { type: 'doc', name: docMatch[1].trim(), photoFileId, msgDate };
+    return { type: 'doc', name: docMatch[1].trim(), photoFileId, docFileId, docFileName, docMimeType, msgDate };
   }
 
   // /health - multi-line: each line "name, value[, unit, refMin, refMax]"

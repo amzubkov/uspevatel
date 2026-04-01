@@ -8,6 +8,14 @@ export interface TgPhotoSize {
   file_size?: number;
 }
 
+export interface TgDocument {
+  file_id: string;
+  file_unique_id: string;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+}
+
 export interface TgMessage {
   message_id: number;
   chat: { id: number; title?: string };
@@ -15,6 +23,7 @@ export interface TgMessage {
   text?: string;
   caption?: string;
   photo?: TgPhotoSize[];
+  document?: TgDocument;
 }
 
 export interface TgUpdate {

@@ -9,6 +9,7 @@ import { useFlightStore } from '../store/flightStore';
 import { useDocumentStore } from '../store/documentStore';
 import { useHealthStore } from '../store/healthStore';
 import { colors } from '../utils/theme';
+import { useAttachmentStore } from '../store/attachmentStore';
 import { fetchUpdates, getFileUrl } from '../services/telegramService';
 import { parseMessage, ParsedItem } from '../services/telegramParser';
 
@@ -72,7 +73,10 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
         const photoFileId = msg.photo?.length
           ? msg.photo[msg.photo.length - 1].file_id
           : undefined;
-        const p = parseMessage(text, msg.date, photoFileId);
+        const docFileId = msg.document?.file_id;
+        const docFileName = msg.document?.file_name;
+        const docMimeType = msg.document?.mime_type;
+        const p = parseMessage(text, msg.date, photoFileId, docFileId, docFileName, docMimeType);
         if (p) parsed.push({ item: p, updateId: u.update_id, selected: true });
       }
 
@@ -141,6 +145,7 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
             );
             docCount++;
             if (item.photoFileId) photoJobs.push({ type: 'doc', id: docId, fileId: item.photoFileId, subdir: 'document_images' });
+            if (item.docFileId) (item as any)._savedDocId = docId;
           } else if (item.type === 'health') {
             healthCount += item.results.length + item.metrics.length;
           } else if (item.type === 'ref') {
@@ -218,6 +223,37 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
         }
       }
 
+      // Download document files (PDF etc) for /doc commands
+      for (const { item } of selected) {
+        if (item.type === 'doc' && item.docFileId && tgToken) {
+          const docId = (item as any)._savedDocId;
+          if (!docId) continue;
+          try {
+            const fileUrl = await getFileUrl(tgToken, item.docFileId);
+            const ext = (item.docFileName || 'file').split('.').pop() || 'pdf';
+            const fileName = item.docFileName || `document.${ext}`;
+            const dir = new Directory(getImageBaseDir(), 'attachments');
+            if (!dir.exists) dir.create();
+            const attId = Crypto.randomUUID();
+            const relPath = `attachments/${attId}.${ext}`;
+            const dest = new File(dir, `${attId}.${ext}`);
+            const res = await fetch(fileUrl);
+            const blob = await res.blob();
+            const reader = new FileReader();
+            const base64 = await new Promise<string>((resolve, reject) => {
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+            dest.write(base64.split(',')[1], { encoding: 'base64' });
+            // Save as attachment linked to document
+            await useAttachmentStore.getState().addAttachment('document', docId, dest.uri, fileName, item.docMimeType, undefined);
+          } catch (e: any) {
+            console.warn('Failed to download doc file:', e?.message);
+          }
+        }
+      }
+
       // Reload stores
       useTaskStore.setState({ loaded: false });
       useFlightStore.setState({ loaded: false });
@@ -277,6 +313,9 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
           )}
           {'photoFileId' in item && item.photoFileId && (
             <Text style={{ color: c.textSecondary, fontSize: 11 }}>+ фото</Text>
+          )}
+          {item.type === 'doc' && item.docFileId && (
+            <Text style={{ color: c.textSecondary, fontSize: 11 }}>+ {item.docFileName || 'файл'}</Text>
           )}
         </View>
       </TouchableOpacity>
