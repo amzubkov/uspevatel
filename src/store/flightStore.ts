@@ -5,7 +5,7 @@ import { File, Paths, Directory } from 'expo-file-system';
 import { getDb, getImageBaseDir } from '../db/database';
 
 export type FlightStatus = 'not_planned' | 'planned' | 'reserved' | 'booked' | 'completed' | 'cancelled';
-export type FlightKind = 'flight' | 'hotel';
+export type FlightKind = 'flight' | 'hotel' | 'event';
 
 export interface Flight {
   id: string;

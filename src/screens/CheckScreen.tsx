@@ -67,7 +67,7 @@ export function CheckScreen() {
   };
 
   const handleListLongPress = (listId: string, listName: string) => {
-    if (typeof window !== 'undefined' && window.confirm) {
+    if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
       const action = window.prompt(`Список "${listName}"\n\nВведите новое имя или "удалить" для удаления:`);
       if (action === 'удалить' && listId !== 'default') removeList(listId);
       else if (action && action !== 'удалить') renameList(listId, action);

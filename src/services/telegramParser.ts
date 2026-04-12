@@ -9,7 +9,7 @@ export interface ParsedTask {
 
 export interface ParsedFlight {
   type: 'flight';
-  kind: 'flight' | 'hotel';
+  kind: 'flight' | 'hotel' | 'event';
   title: string;       // SVO-KUF or hotel name
   city?: string;       // city for hotels
   departDate: string;  // YYYY-MM-DD (check-in for hotel)
@@ -96,11 +96,14 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
 
   // /flight <route>, <depart_date> [time][, <arrive_date> [time]]
   // /hotel <city>, <name>, <check-in>, <check-out>  OR  /hotel <name>, <check-in>, <check-out>
+  // /event <name>, <date> [time][, <end_time>]
   const flightMatch = trimmed.match(/^\/flight\s+(.+)/i);
   const hotelMatch = trimmed.match(/^\/hotel\s+(.+)/i);
-  if (flightMatch || hotelMatch) {
+  const eventMatch = trimmed.match(/^\/event\s+(.+)/i);
+  if (flightMatch || hotelMatch || eventMatch) {
     const isHotel = !!hotelMatch;
-    const body = (flightMatch || hotelMatch)![1];
+    const isEvent = !!eventMatch;
+    const body = (flightMatch || hotelMatch || eventMatch)![1];
     const parts = body.split(',').map((p) => p.trim());
     if (parts.length < 2) return null;
     let dateIdx = -1;
@@ -111,7 +114,7 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
 
     let title: string;
     let city: string | undefined;
-    if (isHotel && dateIdx >= 2) {
+    if ((isHotel || isEvent) && dateIdx >= 2) {
       city = parts.slice(0, dateIdx - 1).join(', ').trim();
       title = parts[dateIdx - 1].trim();
     } else {
@@ -137,7 +140,7 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
       }
     }
     const notes = notesParts.join(', ').trim() || undefined;
-    return { type: 'flight', kind: isHotel ? 'hotel' : 'flight', title, city, departDate: depart.date, departTime: depart.time, arriveDate: arrive?.date, arriveTime: arrive?.time, notes, price, currency, photoFileId, msgDate };
+    return { type: 'flight', kind: isEvent ? 'event' : isHotel ? 'hotel' : 'flight', title, city, departDate: depart.date, departTime: depart.time, arriveDate: arrive?.date, arriveTime: arrive?.time, notes, price, currency, photoFileId, msgDate };
   }
 
   // /doc <name> (with optional photo or document attached)

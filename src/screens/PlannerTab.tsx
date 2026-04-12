@@ -62,6 +62,30 @@ function fmtHotelDate(f: Flight): string {
   return s;
 }
 
+function fmtEventDate(f: Flight): string {
+  let s = fmtDate(f.departDate);
+  if (f.departTime) {
+    s += ` ${f.departTime}`;
+    if (f.arriveTime) {
+      s += ` – ${f.arriveTime}`;
+      // calc duration
+      const dateStr = f.arriveDate || f.departDate;
+      const d1 = new Date(`${f.departDate}T${f.departTime}`);
+      const d2 = new Date(`${dateStr}T${f.arriveTime}`);
+      const diffMin = Math.round((d2.getTime() - d1.getTime()) / 60000);
+      if (diffMin > 0) {
+        const h = Math.floor(diffMin / 60);
+        const m = diffMin % 60;
+        s += ` (${h}ч${m > 0 ? ` ${m}м` : ''})`;
+      }
+    }
+  }
+  if (f.arriveDate && f.arriveDate !== f.departDate) {
+    s += `  →  ${fmtDate(f.arriveDate)}`;
+  }
+  return s;
+}
+
 const STATUS_LABELS: Record<FlightStatus, string> = {
   not_planned: 'нужно',
   planned: 'plan',
@@ -79,9 +103,9 @@ const STATUS_COLORS: Record<FlightStatus, string> = {
   cancelled: '#EF4444',
 };
 const STATUSES: FlightStatus[] = ['not_planned', 'planned', 'reserved', 'booked', 'completed', 'cancelled'];
-const KIND_EMOJI: Record<FlightKind, string> = { flight: '✈️', hotel: '🏨' };
-const KIND_LABEL: Record<FlightKind, string> = { flight: 'Перелёт', hotel: 'Отель' };
-const KINDS: FlightKind[] = ['flight', 'hotel'];
+const KIND_EMOJI: Record<FlightKind, string> = { flight: '✈️', hotel: '🏨', event: '📌' };
+const KIND_LABEL: Record<FlightKind, string> = { flight: 'Перелёт', hotel: 'Отель', event: 'Событие' };
+const KINDS: FlightKind[] = ['flight', 'hotel', 'event'];
 
 // ─── Import flights form ───
 function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travelerId: string; onDone: (n: number) => void; onCancel: () => void; c: any }) {
@@ -156,6 +180,7 @@ function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travelerId: st
         arriveDate: item.arrive?.date,
         arriveTime: item.arrive?.time,
         notes: '',
+        currency: 'EUR',
         travelerIds: tids,
         createdAt: new Date().toISOString(),
       }));
@@ -181,7 +206,7 @@ function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travelerId: st
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }}>
       <Text style={[s.formLabel, { color: c.text, fontSize: 15, fontWeight: '700', textTransform: 'none' }]}>
-        Импорт {kind === 'flight' ? 'перелётов' : 'проживания'}
+        Импорт {kind === 'flight' ? 'перелётов' : kind === 'event' ? 'событий' : 'проживания'}
       </Text>
 
       <Text style={[s.formLabel, { color: c.textSecondary }]}>Тип</Text>
@@ -198,13 +223,15 @@ function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travelerId: st
       </View>
 
       <Text style={[s.formLabel, { color: c.textSecondary }]}>
-        {kind === 'hotel' ? 'По строке: город, отель, заезд, выезд' : 'По строке: маршрут, дата [время][, прилёт]'}
+        {kind === 'hotel' ? 'По строке: город, отель, заезд, выезд' : kind === 'event' ? 'По строке: место, название, дата [время]' : 'По строке: маршрут, дата [время][, прилёт]'}
         {'\n'}Разделитель строк: перенос или ;
       </Text>
       <TextInput
         style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border, height: 140, textAlignVertical: 'top' }]}
         placeholder={kind === 'hotel'
           ? 'Стамбул, Hilton, 2026-04-01, 2026-04-05\nТбилиси, Marriott, 2026-04-05, 2026-04-08'
+          : kind === 'event'
+          ? 'Стамбул, Экскурсия, 2026-04-02 10:00\nТбилиси, Концерт, 2026-04-06 19:00'
           : 'SVO → IST, 2026-04-01 14:30, 2026-04-01 18:45\nIST → TBS, 2026-04-05 10:00'}
         placeholderTextColor={c.textSecondary}
         value={text} onChangeText={setText} multiline
@@ -255,6 +282,22 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<FlightStatus | null>(null);
+  const [dateFilter, setDateFilter] = useState<string | null>(null);
+
+  const dateButtons = useMemo(() => {
+    const DAY_NAMES_SHORT = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+    const result: { date: string; label: string; dow: string }[] = [];
+    for (let i = 0; i < 6; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const dateStr = `${y}-${m}-${day}`;
+      result.push({ date: dateStr, label: `${d.getDate()}.${m}`, dow: DAY_NAMES_SHORT[d.getDay()] });
+    }
+    return result;
+  }, []);
 
   // Form state
   const [kind, setKind] = useState<FlightKind>('flight');
@@ -277,12 +320,13 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
     return flights
       .filter((f) => statusFilter ? f.status === statusFilter : f.status !== 'completed' && f.status !== 'cancelled')
       .filter((f) => isAll ? true : isMe ? f.travelerIds.length === 0 || f.travelerIds.includes(ME_TRAVELER.id) : f.travelerIds.includes(travelerId))
+      .filter((f) => dateFilter ? f.departDate === dateFilter : true)
       .sort((a, b) => {
         const cmp = a.departDate.localeCompare(b.departDate);
         if (cmp !== 0) return cmp;
         return (a.departTime || '99:99').localeCompare(b.departTime || '99:99');
       });
-  }, [flights, travelerId, statusFilter]);
+  }, [flights, travelerId, statusFilter, dateFilter]);
 
   const resetForm = () => {
     setKind('flight'); setTitle(''); setCity(''); setStatus('planned'); setDepartDate(''); setDepartTime('');
@@ -298,7 +342,7 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
 
   const handleSave = async () => {
     if (!title.trim() || !departDate.trim()) {
-      Alert.alert('Ошибка', 'Введите название и дату вылета');
+      Alert.alert('Ошибка', 'Введите название и дату');
       return;
     }
     const effectiveTravelerIds = editingId ? formTravelerIds : (travelerId === ME_TRAVELER.id || travelerId === '__all__') ? [] : [travelerId];
@@ -359,19 +403,19 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
     return (
       <View style={[s.card, { backgroundColor: c.card, borderColor: c.border }]}>
         <TouchableOpacity style={s.cardHeader} onPress={() => setExpanded(isExpanded ? null : item.id)}>
-          <Text style={{ fontSize: 20 }}>{KIND_EMOJI[item.kind]}</Text>
+          <Text style={{ fontSize: 14 }}>{KIND_EMOJI[item.kind]}</Text>
           <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={[s.cardTitle, { color: c.text, flex: 1 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text style={[s.cardTitle, { color: c.text, flex: 1 }]} numberOfLines={1}>
                 {item.title}{itemTravelers.length > 0 ? ` (${itemTravelers.map((t) => t.icon).join('')})` : ''}
               </Text>
               <TouchableOpacity onPress={() => handleStatusChange(item)}>
                 <Text style={[s.statusBadge, { color: sc, borderColor: sc }]}>{STATUS_LABELS[item.status]}</Text>
               </TouchableOpacity>
             </View>
-            {item.city ? <Text style={{ color: c.textSecondary, fontSize: 12 }}>{item.city}</Text> : null}
+            {item.city ? <Text style={{ color: c.textSecondary, fontSize: 11 }}>{item.city}</Text> : null}
             <Text style={[s.cardDate, { color: c.textSecondary }]}>
-              {item.kind === 'flight' ? fmtFlightDate(item) : fmtHotelDate(item)}
+              {item.kind === 'flight' ? fmtFlightDate(item) : item.kind === 'event' ? fmtEventDate(item) : fmtHotelDate(item)}
               {item.price ? `  ${item.price} ${item.currency === 'EUR' ? '€' : '₽'}` : ''}
             </Text>
           </View>
@@ -460,18 +504,18 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
             ))}
           </View>
 
-          <Text style={[s.formLabel, { color: c.textSecondary }]}>{kind === 'flight' ? 'Рейс / маршрут' : 'Название отеля'}</Text>
+          <Text style={[s.formLabel, { color: c.textSecondary }]}>{kind === 'flight' ? 'Рейс / маршрут' : kind === 'event' ? 'Название' : 'Название отеля'}</Text>
           <TextInput style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
             value={title} onChangeText={setTitle}
-            placeholder={kind === 'flight' ? 'SVO → IST' : 'Hilton Istanbul'}
+            placeholder={kind === 'flight' ? 'SVO → IST' : kind === 'event' ? 'Экскурсия, концерт...' : 'Hilton Istanbul'}
             placeholderTextColor={c.textSecondary} />
 
-          {kind === 'hotel' && (
+          {(kind === 'hotel' || kind === 'event') && (
             <>
-              <Text style={[s.formLabel, { color: c.textSecondary }]}>Город</Text>
+              <Text style={[s.formLabel, { color: c.textSecondary }]}>{kind === 'event' ? 'Место' : 'Город'}</Text>
               <TextInput style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
                 value={city} onChangeText={setCity}
-                placeholder="Стамбул"
+                placeholder={kind === 'event' ? 'Город, адрес...' : 'Стамбул'}
                 placeholderTextColor={c.textSecondary} />
             </>
           )}
@@ -508,19 +552,21 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
           )}
 
           <DatePickerField value={departDate} onChange={setDepartDate}
-            label={kind === 'flight' ? 'Дата вылета *' : 'Дата заезда *'}
+            label={kind === 'flight' ? 'Дата вылета *' : kind === 'event' ? 'Дата *' : 'Дата заезда *'}
             textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
 
           <TimePickerField value={departTime} onChange={setDepartTime}
-            label={kind === 'flight' ? 'Время вылета' : 'Время заезда'}
+            label={kind === 'flight' ? 'Время вылета' : kind === 'event' ? 'Время начала' : 'Время заезда'}
             textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
 
-          <DatePickerField value={arriveDate} onChange={setArriveDate}
-            label={kind === 'flight' ? 'Дата прилёта' : 'Дата выезда'}
-            textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
+          {kind !== 'event' && (
+            <DatePickerField value={arriveDate} onChange={setArriveDate}
+              label={kind === 'flight' ? 'Дата прилёта' : 'Дата выезда'}
+              textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
+          )}
 
           <TimePickerField value={arriveTime} onChange={setArriveTime}
-            label={kind === 'flight' ? 'Время прилёта' : 'Время выезда'}
+            label={kind === 'flight' ? 'Время прилёта' : kind === 'event' ? 'Время окончания' : 'Время выезда'}
             textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
 
           <Text style={[s.formLabel, { color: c.textSecondary }]}>Заметки</Text>
@@ -555,7 +601,7 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
         <>
           <View style={{ flexDirection: 'row', gap: 8, marginHorizontal: 12, marginTop: 12, marginBottom: 4 }}>
             <TouchableOpacity style={[s.addBtn, { backgroundColor: c.primary, flex: 1 }]} onPress={() => setShowForm(true)}>
-              <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>+ Перелёт</Text>
+              <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>+ Добавить</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[s.addBtn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => setShowImport(true)}>
               <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>Импорт</Text>
@@ -576,12 +622,31 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
               </TouchableOpacity>
             ))}
           </ScrollView>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 4, paddingHorizontal: 12, paddingVertical: 4 }}>
+            <TouchableOpacity
+              style={[s.dateChip, { backgroundColor: !dateFilter ? c.primary : c.card, borderColor: !dateFilter ? c.primary : c.border }]}
+              onPress={() => setDateFilter(null)}>
+              <Text style={[s.dateChipLabel, { color: !dateFilter ? '#FFF' : c.text }]}>Все</Text>
+            </TouchableOpacity>
+            {dateButtons.map((db) => {
+              const active = dateFilter === db.date;
+              return (
+                <TouchableOpacity key={db.date}
+                  style={[s.dateChip, { backgroundColor: active ? c.primary : c.card, borderColor: active ? c.primary : c.border }]}
+                  onPress={() => setDateFilter(active ? null : db.date)}>
+                  <Text style={[s.dateChipLabel, { color: active ? '#FFF' : c.text }]}>{db.label}</Text>
+                  <Text style={[s.dateChipDow, { color: active ? 'rgba(255,255,255,0.7)' : c.textSecondary }]}>{db.dow}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
           <FlatList
             data={sorted}
             keyExtractor={(f) => f.id}
             renderItem={renderFlight}
             contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
-            ListEmptyComponent={<Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Нет перелётов</Text>}
+            ListEmptyComponent={<Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Нет записей</Text>}
           />
         </>
       )}
@@ -643,7 +708,7 @@ function HistoryContent({ travelerId }: { travelerId: string }) {
             <Text style={[s.cardTitle, { color: c.text }]}>{item.title}</Text>
             {item.city ? <Text style={{ color: c.textSecondary, fontSize: 12 }}>{item.city}</Text> : null}
             <Text style={[s.cardDate, { color: c.textSecondary }]}>
-              {item.kind === 'flight' ? fmtFlightDate(item) : fmtHotelDate(item)}
+              {item.kind === 'flight' ? fmtFlightDate(item) : item.kind === 'event' ? fmtEventDate(item) : fmtHotelDate(item)}
               {item.price ? `  ${item.price} ${item.currency === 'EUR' ? '€' : '₽'}` : ''}
             </Text>
           </View>
@@ -1222,7 +1287,7 @@ export function PlannerTab() {
     <View style={[s.container, { backgroundColor: c.background }]}>
       {/* Traveler selector row */}
       <View style={s.travelerRow}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingHorizontal: 12, paddingVertical: 6 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 4, paddingHorizontal: 12, paddingVertical: 4 }}>
           {allTravelers.map((t) => (
             <TouchableOpacity key={t.id}
               style={[s.travelerChip, {
@@ -1231,13 +1296,13 @@ export function PlannerTab() {
               }]}
               onPress={() => setSelectedTravelerId(t.id)}
               onLongPress={() => handleLongPressTraveler(t)}>
-              <Text style={{ fontSize: 18 }}>{t.icon}</Text>
-              <Text style={{ color: selectedTravelerId === t.id ? '#FFF' : c.text, fontSize: 12, fontWeight: '600' }}>{t.name}</Text>
+              <Text style={{ fontSize: 14 }}>{t.icon}</Text>
+              <Text style={{ color: selectedTravelerId === t.id ? '#FFF' : c.text, fontSize: 11, fontWeight: '600' }}>{t.name}</Text>
             </TouchableOpacity>
           ))}
           <TouchableOpacity style={[s.travelerChip, { borderColor: c.border, backgroundColor: c.card }]}
             onPress={() => setShowAddTraveler(true)}>
-            <Text style={{ color: c.textSecondary, fontSize: 16, fontWeight: '700' }}>+</Text>
+            <Text style={{ color: c.textSecondary, fontSize: 14, fontWeight: '700' }}>+</Text>
           </TouchableOpacity>
         </ScrollView>
       </View>
@@ -1269,11 +1334,11 @@ const s = StyleSheet.create({
   container: { flex: 1 },
   modeRow: { flexDirection: 'row', gap: 4, marginHorizontal: 12, marginTop: 6, marginBottom: 2 },
   modeBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 5, borderRadius: 8 },
-  card: { borderWidth: 1, borderRadius: 10, marginBottom: 10, overflow: 'hidden' },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 10 },
+  card: { borderWidth: 1, borderRadius: 10, marginBottom: 6, overflow: 'hidden' },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', padding: 10, gap: 8 },
   statusDot: { width: 10, height: 10, borderRadius: 5 },
-  cardTitle: { fontSize: 15, fontWeight: '700' },
-  cardDate: { fontSize: 12, marginTop: 2 },
+  cardTitle: { fontSize: 14, fontWeight: '700' },
+  cardDate: { fontSize: 11, marginTop: 1 },
   statusBadge: { fontSize: 11, fontWeight: '600', borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
   cardBody: { paddingHorizontal: 12, paddingBottom: 12 },
   notes: { fontSize: 13 },
@@ -1304,7 +1369,10 @@ const s = StyleSheet.create({
   eventTitle: { fontSize: 14, fontWeight: '600' },
   // Traveler
   travelerRow: {},
-  travelerChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16, borderWidth: 1 },
+  dateChip: { alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, borderWidth: 1 },
+  dateChipLabel: { fontSize: 12, fontWeight: '700' },
+  dateChipDow: { fontSize: 9, fontWeight: '500', marginTop: 1 },
+  travelerChip: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1 },
   travelerForm: { marginHorizontal: 12, marginBottom: 4, padding: 12, borderWidth: 1, borderRadius: 10 },
   travelerInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 15, marginBottom: 8 },
 });
