@@ -42,7 +42,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -98,8 +98,15 @@ CREATE TABLE IF NOT EXISTS routine_completions (
   PRIMARY KEY (routine_id, date)
 );
 
+CREATE TABLE IF NOT EXISTS checklists (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS checklist (
   id TEXT PRIMARY KEY,
+  list_id TEXT NOT NULL DEFAULT 'default' REFERENCES checklists(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   done INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
@@ -638,6 +645,18 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
 
   if (currentVer < 20) {
     try { await db.execAsync("ALTER TABLE documents ADD COLUMN notes TEXT NOT NULL DEFAULT '';"); } catch {}
+  }
+
+  if (currentVer < 21) {
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS checklists (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      );`);
+      await db.execAsync("INSERT OR IGNORE INTO checklists (id, name, sort_order) VALUES ('default', 'Чеклист', 0);");
+      try { await db.execAsync("ALTER TABLE checklist ADD COLUMN list_id TEXT NOT NULL DEFAULT 'default' REFERENCES checklists(id) ON DELETE CASCADE;"); } catch {}
+    } catch {}
   }
 
   if (currentVer < SCHEMA_VERSION) {

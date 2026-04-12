@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
 import { useTaskStore } from '../store/taskStore';
-import { useProjectStore } from '../store/projectStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
 import { RoutineStep } from '../components/RoutineStep';
@@ -9,7 +8,7 @@ import { TaskCard } from '../components/TaskCard';
 import { useNavigation } from '@react-navigation/native';
 import { Category } from '../types';
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 4;
 
 export function DailyRoutineScreen() {
   const [step, setStep] = useState(1);
@@ -18,8 +17,6 @@ export function DailyRoutineScreen() {
   const moveTask = useTaskStore((s) => s.moveTask);
   const completeTask = useTaskStore((s) => s.completeTask);
   const deleteTask = useTaskStore((s) => s.deleteTask);
-  const allProjects = useProjectStore((s) => s.projects);
-  const projects = useMemo(() => allProjects.filter((p) => p.isCurrent), [allProjects]);
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
 
@@ -142,45 +139,21 @@ export function DailyRoutineScreen() {
   }
 
   // Step 4: Review CONTROL
-  if (step === 4) {
-    return (
-      <RoutineStep
-        stepNumber={4} totalSteps={TOTAL_STEPS}
-        title="Просмотр CONTROL"
-        description={`${controlTasks.length} задач на контроле. Проверьте статусы.`}
-        onNext={handleNext} onBack={handleBack}
-      >
-        <FlatList
-          data={controlTasks}
-          keyExtractor={(t) => t.id}
-          renderItem={({ item }) => (
-            <TaskCard task={item} onPress={() => {}} onComplete={() => completeTask(item.id)} />
-          )}
-          ListEmptyComponent={<Text style={[styles.emptyMsg, { color: c.textSecondary }]}>Нет задач на контроле</Text>}
-        />
-      </RoutineStep>
-    );
-  }
-
-  // Step 5: Projects overview
   return (
     <RoutineStep
-      stepNumber={5} totalSteps={TOTAL_STEPS}
-      title="Обзор проектов"
-      description="Беглый просмотр текущих проектов."
+      stepNumber={4} totalSteps={TOTAL_STEPS}
+      title="Просмотр CONTROL"
+      description={`${controlTasks.length} задач на контроле. Проверьте статусы.`}
       onNext={handleNext} onBack={handleBack}
       nextLabel="Готово"
     >
       <FlatList
-        data={projects}
-        keyExtractor={(p) => p.id}
+        data={controlTasks}
+        keyExtractor={(t) => t.id}
         renderItem={({ item }) => (
-          <View style={[styles.projectCard, { backgroundColor: c.card, borderColor: c.border }]}>
-            <Text style={[styles.projectName, { color: c.text }]}>{item.name}</Text>
-            {item.notes ? <Text style={[styles.projectNotes, { color: c.textSecondary }]}>{item.notes}</Text> : null}
-          </View>
+          <TaskCard task={item} onPress={() => {}} onComplete={() => completeTask(item.id)} />
         )}
-        ListEmptyComponent={<Text style={[styles.emptyMsg, { color: c.textSecondary }]}>Нет текущих проектов</Text>}
+        ListEmptyComponent={<Text style={[styles.emptyMsg, { color: c.textSecondary }]}>Нет задач на контроле</Text>}
       />
     </RoutineStep>
   );
@@ -199,7 +172,4 @@ const styles = StyleSheet.create({
   emptyMsg: { textAlign: 'center', paddingVertical: 40, fontSize: 15 },
   laterRow: { flexDirection: 'row', alignItems: 'center' },
   toDayBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginRight: 16 },
-  projectCard: { padding: 14, borderRadius: 10, borderWidth: 1, marginHorizontal: 16, marginBottom: 8 },
-  projectName: { fontSize: 16, fontWeight: '700' },
-  projectNotes: { fontSize: 13, marginTop: 4 },
 });
