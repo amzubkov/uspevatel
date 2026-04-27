@@ -67,6 +67,11 @@ export function MoneyScreen() {
   const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set());
   const [periodFilter, setPeriodFilter] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [overviewPeriod, setOverviewPeriod] = useState<'month' | 'year' | 'all'>('month');
+  const [categorizingMode, setCategorizingMode] = useState(false);
+  const [expandedTxId, setExpandedTxId] = useState<string | null>(null);
+  const [newCatInput, setNewCatInput] = useState('');
+  const [newTagInput, setNewTagInput] = useState('');
 
   const [showCorrectionForm, setShowCorrectionForm] = useState(false);
   const [correctionBalance, setCorrectionBalance] = useState('');
@@ -126,6 +131,42 @@ export function MoneyScreen() {
 
   const existingCategories = useMemo(() => getAllCategories(), [useMoneyStore((s) => s.transactions)]);
   const existingTags = useMemo(() => getAllTags(), [useMoneyStore((s) => s.transactions)]);
+
+  const allTransactions = useMoneyStore((s) => s.transactions);
+  const overviewData = useMemo(() => {
+    const now = new Date();
+    let cutoff = '0000';
+    if (overviewPeriod === 'month') {
+      cutoff = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    } else if (overviewPeriod === 'year') {
+      cutoff = `${now.getFullYear()}-01-01`;
+    }
+    const txs = allTransactions.filter((t) => !t.isCorrection && t.amount < 0 && t.date >= cutoff);
+    const catMap = new Map<string, { total: number; currency: string }[]>();
+    for (const t of txs) {
+      const cat = t.category || 'Без категории';
+      const acc = accounts.find((a) => a.id === t.accountId);
+      const cur = acc?.currency || 'RUB';
+      let arr = catMap.get(cat);
+      if (!arr) { arr = []; catMap.set(cat, arr); }
+      let entry = arr.find((e) => e.currency === cur);
+      if (!entry) { entry = { total: 0, currency: cur }; arr.push(entry); }
+      entry.total += Math.abs(t.amount);
+    }
+    return [...catMap.entries()]
+      .map(([cat, totals]) => ({ cat, totals }))
+      .sort((a, b) => {
+        const sumA = a.totals.reduce((s, t) => s + t.total, 0);
+        const sumB = b.totals.reduce((s, t) => s + t.total, 0);
+        return sumB - sumA;
+      });
+  }, [allTransactions, accounts, overviewPeriod]);
+
+  const uncategorizedTxs = useMemo(() =>
+    allTransactions.filter((t) => !t.isCorrection && !t.category).sort((a, b) => b.date.localeCompare(a.date)),
+    [allTransactions],
+  );
+  const uncategorizedCount = uncategorizedTxs.length;
 
   const resetAccountForm = () => {
     setAccName(''); setAccCurrency('RUB'); setAccColor(undefined); setShowAccountForm(false); setEditingAccountId(null);
@@ -461,6 +502,124 @@ export function MoneyScreen() {
     );
   }
 
+  // ── Categorization mode ──
+  if (categorizingMode) {
+    const handleSetCategory = async (txId: string, category: string) => {
+      await updateTransaction(txId, { category });
+      setExpandedTxId(null);
+      setNewCatInput('');
+    };
+    const handleSetTag = async (txId: string, tag: string) => {
+      await updateTransaction(txId, { tag });
+    };
+    return (
+      <View style={[st.container, { backgroundColor: c.background }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, gap: 8 }}>
+          <TouchableOpacity onPress={() => { setCategorizingMode(false); setExpandedTxId(null); }}>
+            <Text style={{ color: c.primary, fontSize: 15, fontWeight: '600' }}>← Назад</Text>
+          </TouchableOpacity>
+          <Text style={{ color: c.text, fontSize: 16, fontWeight: '700', flex: 1 }}>Без категории ({uncategorizedCount})</Text>
+        </View>
+        <FlatList
+          data={uncategorizedTxs}
+          keyExtractor={(t) => t.id}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 40 }}
+          renderItem={({ item: tx }) => {
+            const acc = accounts.find((a) => a.id === tx.accountId);
+            const isExpanded = expandedTxId === tx.id;
+            return (
+              <View style={{ borderBottomWidth: 0.5, borderColor: c.border, paddingVertical: 8 }}>
+                <TouchableOpacity onPress={() => setExpandedTxId(isExpanded ? null : tx.id)}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View style={{ flex: 1 }}>
+                      {tx.comment ? <Text style={{ color: c.text, fontSize: 14 }} numberOfLines={1}>{tx.comment}</Text> : null}
+                      <Text style={{ color: c.textSecondary, fontSize: 11 }}>
+                        {fmtDate(tx.date)} · {acc?.name || ''}
+                        {tx.tag ? ` #${tx.tag}` : ''}
+                      </Text>
+                    </View>
+                    <Text style={{ color: tx.amount >= 0 ? c.success : c.danger, fontSize: 15, fontWeight: '700' }}>
+                      {fmtAmount(tx.amount, acc?.currency || 'RUB')}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                {isExpanded && (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={{ color: c.textSecondary, fontSize: 11, fontWeight: '600', marginBottom: 4 }}>КАТЕГОРИЯ</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+                      {existingCategories.map((cat) => (
+                        <TouchableOpacity key={cat}
+                          style={[st.chip, { backgroundColor: c.card, borderColor: c.border }]}
+                          onPress={() => handleSetCategory(tx.id, cat)}>
+                          <Text style={{ color: c.text, fontSize: 12 }}>{cat}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 6, marginBottom: 10 }}>
+                      <TextInput
+                        style={[st.input, { flex: 1, color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13, paddingVertical: 4, marginBottom: 0 }]}
+                        value={newCatInput} onChangeText={setNewCatInput}
+                        placeholder="Новая категория..." placeholderTextColor={c.textSecondary}
+                        returnKeyType="done"
+                        onSubmitEditing={() => { if (newCatInput.trim()) { handleSetCategory(tx.id, newCatInput.trim()); setNewCatInput(''); } }}
+                      />
+                      {newCatInput.trim() ? (
+                        <TouchableOpacity style={[st.btn, { backgroundColor: c.primary, paddingVertical: 6, paddingHorizontal: 12 }]}
+                          onPress={() => { handleSetCategory(tx.id, newCatInput.trim()); setNewCatInput(''); }}>
+                          <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>+</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                    <Text style={{ color: c.textSecondary, fontSize: 11, fontWeight: '600', marginBottom: 4 }}>ТЕГ</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+                      {tx.tag ? (
+                        <TouchableOpacity
+                          style={[st.chip, { backgroundColor: c.primary, borderColor: c.primary }]}
+                          onPress={() => handleSetTag(tx.id, '')}>
+                          <Text style={{ color: '#FFF', fontSize: 12 }}>#{tx.tag} ✕</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      {existingTags.filter((t) => t !== tx.tag).map((tag) => (
+                        <TouchableOpacity key={tag}
+                          style={[st.chip, { backgroundColor: c.card, borderColor: c.border }]}
+                          onPress={() => handleSetTag(tx.id, tag)}>
+                          <Text style={{ color: c.text, fontSize: 12 }}>#{tag}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      <TextInput
+                        style={[st.input, { flex: 1, color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13, paddingVertical: 4, marginBottom: 0 }]}
+                        value={newTagInput} onChangeText={setNewTagInput}
+                        placeholder="Новый тег..." placeholderTextColor={c.textSecondary}
+                        returnKeyType="done"
+                        onSubmitEditing={() => { if (newTagInput.trim()) { handleSetTag(tx.id, newTagInput.trim()); setNewTagInput(''); } }}
+                      />
+                      {newTagInput.trim() ? (
+                        <TouchableOpacity style={[st.btn, { backgroundColor: c.primary, paddingVertical: 6, paddingHorizontal: 12 }]}
+                          onPress={() => { handleSetTag(tx.id, newTagInput.trim()); setNewTagInput(''); }}>
+                          <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>+</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  </View>
+                )}
+              </View>
+            );
+          }}
+          ListEmptyComponent={
+            <View style={st.empty}>
+              <Text style={{ color: c.success, fontSize: 16, fontWeight: '600' }}>Все транзакции категоризованы!</Text>
+              <TouchableOpacity style={{ marginTop: 12 }} onPress={() => setCategorizingMode(false)}>
+                <Text style={{ color: c.primary, fontSize: 14, fontWeight: '600' }}>← К обзору</Text>
+              </TouchableOpacity>
+            </View>
+          }
+        />
+      </View>
+    );
+  }
+
   // ── Main screen ──
   return (
     <View style={[st.container, { backgroundColor: c.background }]}>
@@ -616,13 +775,49 @@ export function MoneyScreen() {
             </View>
           }
         />
-      ) : (
+      ) : accounts.length === 0 ? (
         <View style={st.empty}>
           <Text style={{ fontSize: 48 }}>💰</Text>
-          <Text style={{ color: c.textSecondary, fontSize: 14, marginTop: 8 }}>
-            {accounts.length === 0 ? 'Добавьте первый счёт' : 'Выберите счёт'}
-          </Text>
+          <Text style={{ color: c.textSecondary, fontSize: 14, marginTop: 8 }}>Добавьте первый счёт</Text>
         </View>
+      ) : (
+        <>
+          <View style={{ flexDirection: 'row', gap: 4, marginHorizontal: 12, marginVertical: 6, height: 28 }}>
+            {([{ key: 'month' as const, label: 'Месяц' }, { key: 'year' as const, label: 'Год' }, { key: 'all' as const, label: 'Все' }]).map((p) => (
+              <TouchableOpacity key={p.key}
+                style={[st.filterChip, { backgroundColor: overviewPeriod === p.key ? c.primary : c.card, borderColor: overviewPeriod === p.key ? c.primary : c.border }]}
+                onPress={() => setOverviewPeriod(p.key)}>
+                <Text style={{ color: overviewPeriod === p.key ? '#FFF' : c.text, fontSize: 11, fontWeight: '600' }}>{p.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <FlatList
+            data={overviewData}
+            keyExtractor={(item) => item.cat}
+            contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={[st.txRow, { borderColor: c.border }]}
+                onPress={item.cat === 'Без категории' ? () => setCategorizingMode(true) : undefined}
+                activeOpacity={item.cat === 'Без категории' ? 0.6 : 1}>
+                <Text style={{ color: item.cat === 'Без категории' ? c.textSecondary : c.text, fontSize: 14, fontWeight: '600', flex: 1 }}>
+                  {item.cat}{item.cat === 'Без категории' ? ` →` : ''}
+                </Text>
+                <View style={{ alignItems: 'flex-end' }}>
+                  {item.totals.map((t) => (
+                    <Text key={t.currency} style={{ color: c.danger, fontSize: 14, fontWeight: '700' }}>
+                      −{t.total % 1 === 0 ? t.total.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') : t.total.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} {curSym(t.currency)}
+                    </Text>
+                  ))}
+                </View>
+              </TouchableOpacity>
+            )}
+            ListEmptyComponent={
+              <View style={st.empty}>
+                <Text style={{ color: c.textSecondary, fontSize: 14 }}>Нет расходов</Text>
+              </View>
+            }
+          />
+        </>
       )}
     </View>
   );
