@@ -605,6 +605,24 @@ export function MoneyScreen() {
       setExpandedTxId(null);
       setNewCatInput('');
     };
+    const handleApplySimilar = async (tx: Transaction, category: string) => {
+      const comment = tx.comment.trim();
+      if (!comment) return;
+      const similar = uncategorizedTxs.filter((t) => t.id !== tx.id && t.comment.trim() === comment);
+      if (similar.length === 0) { Alert.alert('Нет похожих'); return; }
+      Alert.alert(
+        'Применить ко всем?',
+        `«${comment}» → ${category}\n\nНайдено: ${similar.length} транзакций`,
+        [
+          { text: 'Отмена', style: 'cancel' },
+          { text: `Применить (${similar.length})`, onPress: async () => {
+            for (const t of similar) await updateTransaction(t.id, { category });
+            await updateTransaction(tx.id, { category });
+            setExpandedTxId(null);
+          }},
+        ],
+      );
+    };
     const handleSetTag = async (txId: string, tag: string) => {
       await updateTransaction(txId, { tag });
     };
@@ -646,12 +664,13 @@ export function MoneyScreen() {
                       {existingCategories.map((cat) => (
                         <TouchableOpacity key={cat}
                           style={[st.chip, { backgroundColor: c.card, borderColor: c.border }]}
-                          onPress={() => handleSetCategory(tx.id, cat)}>
+                          onPress={() => handleSetCategory(tx.id, cat)}
+                          onLongPress={() => handleApplySimilar(tx, cat)}>
                           <Text style={{ color: c.text, fontSize: 12 }}>{cat}</Text>
                         </TouchableOpacity>
                       ))}
                     </View>
-                    <View style={{ flexDirection: 'row', gap: 6, marginBottom: 10 }}>
+                    <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4 }}>
                       <TextInput
                         style={[st.input, { flex: 1, color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13, paddingVertical: 4, marginBottom: 0 }]}
                         value={newCatInput} onChangeText={setNewCatInput}
@@ -666,6 +685,11 @@ export function MoneyScreen() {
                         </TouchableOpacity>
                       ) : null}
                     </View>
+                    {tx.comment.trim() && uncategorizedTxs.filter((t) => t.id !== tx.id && t.comment.trim() === tx.comment.trim()).length > 0 && (
+                      <Text style={{ color: c.textSecondary, fontSize: 10, marginBottom: 6 }}>
+                        Похожих: {uncategorizedTxs.filter((t) => t.id !== tx.id && t.comment.trim() === tx.comment.trim()).length} · долгий тап на категорию → применить ко всем
+                      </Text>
+                    )}
                     <Text style={{ color: c.textSecondary, fontSize: 11, fontWeight: '600', marginBottom: 4 }}>ТЕГ</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
                       {tx.tag ? (
