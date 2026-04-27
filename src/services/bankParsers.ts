@@ -66,10 +66,10 @@ function parseRevolut(rows: any[][]): ParsedTransaction[] {
     h.includes('дата начала') || h.includes('started') || h === 'date');
   const amountIdx = header.findIndex((h) =>
     h === 'сумма' || h === 'amount');
+  const feeIdx = header.findIndex((h) =>
+    h === 'комиссия' || h === 'fee');
   const descIdx = header.findIndex((h) =>
     h === 'описание' || h === 'description');
-  const typeIdx = header.findIndex((h) =>
-    h === 'тип' || h === 'type');
   const stateIdx = header.findIndex((h) =>
     h === 'state' || h === 'статус');
 
@@ -88,16 +88,29 @@ function parseRevolut(rows: any[][]): ParsedTransaction[] {
     const dt = parseDate(row[dateIdx]);
     const amount = parseAmount(row[amountIdx]);
     if (!dt || amount == null) continue;
-    const type = typeIdx >= 0 ? String(row[typeIdx] || '') : '';
     const desc = descIdx >= 0 ? String(row[descIdx] || '') : '';
     results.push({
       date: dt.date,
       timestamp: dt.timestamp,
       amount,
-      category: type,
+      category: '',
       tag: '',
       comment: desc,
     });
+    // Fee as separate transaction
+    if (feeIdx >= 0) {
+      const fee = parseAmount(row[feeIdx]);
+      if (fee && fee > 0) {
+        results.push({
+          date: dt.date,
+          timestamp: dt.timestamp,
+          amount: -fee,
+          category: 'Комиссия',
+          tag: '',
+          comment: desc,
+        });
+      }
+    }
   }
   return results;
 }
