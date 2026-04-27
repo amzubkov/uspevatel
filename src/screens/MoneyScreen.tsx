@@ -7,7 +7,7 @@ import { DatePickerField } from '../components/DatePickerField';
 import { parseBankFile, BANK_LABELS, ParsedTransaction } from '../services/bankParsers';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Crypto from 'expo-crypto';
-import { File } from 'expo-file-system';
+import * as LegacyFS from 'expo-file-system/legacy';
 
 const CURRENCIES = ['RUB', 'EUR', 'USDT'];
 const ACC_COLORS = ['#EF4444', '#F59E0B', '#22C55E', '#3B82F6', '#8B5CF6', '#EC4899', '#06B6D4', '#6B7280'];
@@ -550,20 +550,9 @@ export function MoneyScreen() {
       const isXlsx = fileName.toLowerCase().endsWith('.xlsx') || fileName.toLowerCase().endsWith('.xls');
       let content: string;
       if (isXlsx) {
-        const res = await fetch(uri);
-        const blob = await res.blob();
-        const reader = new FileReader();
-        content = await new Promise<string>((resolve, reject) => {
-          reader.onloadend = () => {
-            const dataUrl = reader.result as string;
-            resolve(dataUrl.split(',')[1] || '');
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
+        content = await LegacyFS.readAsStringAsync(uri, { encoding: LegacyFS.EncodingType.Base64 });
       } else {
-        const res = await fetch(uri);
-        content = await res.text();
+        content = await LegacyFS.readAsStringAsync(uri, { encoding: LegacyFS.EncodingType.UTF8 });
       }
       const parsed = parseBankFile(content, selectedAccount.bank, isXlsx);
       if (parsed.length === 0) {
