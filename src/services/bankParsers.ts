@@ -71,6 +71,8 @@ function parseRevolut(rows: any[][]): ParsedTransaction[] {
     h === 'описание' || h === 'description');
   const stateIdx = header.findIndex((h) =>
     h === 'state' || h === 'статус');
+  const productIdx = header.findIndex((h) =>
+    h === 'продукт' || h === 'product');
 
   if (dateIdx === -1 || amountIdx === -1) return [];
 
@@ -78,11 +80,15 @@ function parseRevolut(rows: any[][]): ParsedTransaction[] {
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row || !row[dateIdx]) continue;
-    // Skip failed/reverted
+    // Only completed transactions
     if (stateIdx >= 0) {
       const state = String(row[stateIdx] || '').toLowerCase();
-      if (state === 'failed' || state === 'reverted' || state === 'declined'
-        || state === 'отменено' || state === 'неудачно') continue;
+      if (state !== 'completed' && state !== 'выполнено') continue;
+    }
+    // Skip savings/deposit products (separate account)
+    if (productIdx >= 0) {
+      const product = String(row[productIdx] || '').toLowerCase();
+      if (product.includes('депозит') || product.includes('savings') || product.includes('сбереж')) continue;
     }
     const dt = parseDate(row[dateIdx]);
     const amount = parseAmount(row[amountIdx]);
