@@ -95,17 +95,25 @@ export function MoneyScreen() {
   const selectedAccount = useMemo(() => accounts.find((a) => a.id === selectedAccountId), [accounts, selectedAccountId]);
   const accountTxs = useMemo(() => selectedAccountId ? getTransactionsForAccount(selectedAccountId) : [], [selectedAccountId, useMoneyStore((s) => s.transactions)]);
 
-  const duplicateIds = useMemo(() => {
+  const { duplicateIds, duplicateGroups } = useMemo(() => {
     const ids = new Set<string>();
-    const seen = new Map<string, string>();
+    const groups = new Map<string, Transaction[]>();
     for (const tx of accountTxs) {
       const key = `${tx.accountId}|${tx.date}|${tx.amount}|${tx.category}|${tx.tag}|${tx.comment}`;
-      const prev = seen.get(key);
-      if (prev) { ids.add(prev); ids.add(tx.id); }
-      else seen.set(key, tx.id);
+      const arr = groups.get(key) || [];
+      arr.push(tx);
+      groups.set(key, arr);
     }
-    return ids;
+    const dupGroups: Transaction[][] = [];
+    for (const arr of groups.values()) {
+      if (arr.length > 1) {
+        for (const tx of arr) ids.add(tx.id);
+        dupGroups.push(arr);
+      }
+    }
+    return { duplicateIds: ids, duplicateGroups: dupGroups };
   }, [accountTxs]);
+  const [showDuplicates, setShowDuplicates] = useState(false);
 
   const filteredTxs = useMemo(() => {
     let txs = accountTxs;
@@ -707,11 +715,18 @@ export function MoneyScreen() {
           <View style={{ flexDirection: 'row', gap: 4, marginHorizontal: 12, marginVertical: 2, height: 24 }}>
             {[{ key: null, label: 'Все' }, { key: 'today', label: 'День' }, { key: 'week', label: 'Неделя' }, { key: 'month', label: 'Месяц' }, { key: 'year', label: 'Год' }].map((p) => (
               <TouchableOpacity key={p.key ?? 'all'}
-                style={[st.filterChip, { backgroundColor: periodFilter === p.key ? c.primary : c.card, borderColor: periodFilter === p.key ? c.primary : c.border }]}
-                onPress={() => setPeriodFilter(p.key)}>
-                <Text style={{ color: periodFilter === p.key ? '#FFF' : c.text, fontSize: 10, fontWeight: '600' }}>{p.label}</Text>
+                style={[st.filterChip, { backgroundColor: periodFilter === p.key && !showDuplicates ? c.primary : c.card, borderColor: periodFilter === p.key && !showDuplicates ? c.primary : c.border }]}
+                onPress={() => { setPeriodFilter(p.key); setShowDuplicates(false); }}>
+                <Text style={{ color: periodFilter === p.key && !showDuplicates ? '#FFF' : c.text, fontSize: 10, fontWeight: '600' }}>{p.label}</Text>
               </TouchableOpacity>
             ))}
+            {duplicateGroups.length > 0 && (
+              <TouchableOpacity
+                style={[st.filterChip, { backgroundColor: showDuplicates ? '#F59E0B' : c.card, borderColor: showDuplicates ? '#F59E0B' : c.border }]}
+                onPress={() => setShowDuplicates(!showDuplicates)}>
+                <Text style={{ color: showDuplicates ? '#FFF' : '#F59E0B', fontSize: 10, fontWeight: '700' }}>Дубли {duplicateGroups.length}</Text>
+              </TouchableOpacity>
+            )}
           </View>
           {accountCategories.length > 0 && (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, height: 28, marginVertical: 2 }}
@@ -734,7 +749,51 @@ export function MoneyScreen() {
       )}
 
       {/* Transactions */}
-      {selectedAccountId ? (
+      {selectedAccountId && showDuplicates ? (
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}>
+          {duplicateGroups.map((group, gi) => (
+            <View key={gi} style={{ marginBottom: 12, borderWidth: 1, borderColor: '#F59E0B', borderRadius: 10, overflow: 'hidden' }}>
+              <View style={{ backgroundColor: theme === 'dark' ? '#3D2E00' : '#FEF3C7', paddingHorizontal: 10, paddingVertical: 4 }}>
+                <Text style={{ color: '#F59E0B', fontSize: 11, fontWeight: '700' }}>
+                  {group.length} дубля · {fmtAmount(group[0].amount, selectedAccount?.currency || '')} · {fmtDate(group[0].date)}
+                </Text>
+              </View>
+              {group.map((tx, ti) => {
+                const isMarked = selectedForDelete.has(tx.id);
+                return (
+                  <TouchableOpacity key={tx.id}
+                    style={[st.txRow, { borderColor: c.border, paddingHorizontal: 10, backgroundColor: isMarked ? (theme === 'dark' ? '#3B1818' : '#FEE2E2') : 'transparent' }]}
+                    onPress={() => deleteMode ? toggleDeleteSelect(tx.id) : undefined}
+                    onLongPress={() => !deleteMode ? enterDeleteMode(tx.id) : undefined}>
+                    {deleteMode && (
+                      <Text style={{ fontSize: 16, marginRight: 8 }}>{isMarked ? '☑' : '☐'}</Text>
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        {tx.category ? <Text style={[st.txCat, { color: c.primary }]}>{tx.category}</Text> : null}
+                        {tx.tag ? <Text style={[st.txTag, { color: c.textSecondary }]}>#{tx.tag}</Text> : null}
+                      </View>
+                      {tx.comment ? <Text style={{ color: c.text, fontSize: 13 }} numberOfLines={1}>{tx.comment}</Text> : null}
+                      <Text style={{ color: c.textSecondary, fontSize: 11 }}>
+                        {fmtDate(tx.date)}{tx.timestamp && !tx.timestamp.endsWith('T00:00:00') ? ` ${tx.timestamp.substring(11, 16)}` : ''}
+                        {` · id: ...${tx.id.slice(-6)}`}
+                      </Text>
+                    </View>
+                    <Text style={[st.txAmount, { color: tx.amount >= 0 ? c.success : c.danger }]}>
+                      {fmtAmount(tx.amount, selectedAccount?.currency || '')}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ))}
+          {duplicateGroups.length === 0 && (
+            <View style={st.empty}>
+              <Text style={{ color: c.success, fontSize: 14, fontWeight: '600' }}>Нет дублей</Text>
+            </View>
+          )}
+        </ScrollView>
+      ) : selectedAccountId ? (
         <FlatList
           data={filteredTxs}
           keyExtractor={(t) => t.id}
