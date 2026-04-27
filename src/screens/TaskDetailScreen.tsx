@@ -6,7 +6,7 @@ import { useTaskStore } from '../store/taskStore';
 import { useProjectStore } from '../store/projectStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
-import { Category, CATEGORY_LABELS } from '../types';
+import { Category, CATEGORY_LABELS, Task } from '../types';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { AttachmentList } from '../components/AttachmentList';
 import * as DocumentPicker from 'expo-document-picker';
@@ -39,6 +39,7 @@ export function TaskDetailScreen() {
   const [notes, setNotes] = useState(task?.notes || '');
   const [category, setCategory] = useState<Category>(task?.category || 'IN');
   const [priority, setPriority] = useState<'super' | 'high' | 'normal' | 'low'>(task?.priority || 'normal');
+  const [goalType, setGoalType] = useState<Task['goalType']>(task?.goalType);
   const [project, setProject] = useState<string | undefined>(task?.project);
   const [contextCategory, setContextCategory] = useState<string | undefined>(task?.contextCategory);
   const [deadline, setDeadline] = useState<string | undefined>(task?.deadline);
@@ -75,7 +76,7 @@ export function TaskDetailScreen() {
     const unsubscribe = navigation.addListener('beforeRemove', () => {
       if (!deletedRef.current && task) {
         ensureProjectExists(project);
-        updateTask(taskId, { subject, action, notes, category, priority, project: project || undefined, contextCategory: contextCategory || undefined, deadline: deadline || undefined });
+        updateTask(taskId, { subject, action, notes, category, priority, goalType, project: project || undefined, contextCategory: contextCategory || undefined, deadline: deadline || undefined });
       }
     });
     return unsubscribe;
@@ -98,7 +99,7 @@ export function TaskDetailScreen() {
   const handleSave = () => {
     deletedRef.current = true;
     ensureProjectExists(project);
-    updateTask(taskId, { subject, action, notes, category, priority, project: project || undefined, contextCategory: contextCategory || undefined, deadline: deadline || undefined });
+    updateTask(taskId, { subject, action, notes, category, priority, goalType, project: project || undefined, contextCategory: contextCategory || undefined, deadline: deadline || undefined });
     navigation.goBack();
   };
 
@@ -271,6 +272,25 @@ export function TaskDetailScreen() {
         ))}
       </View>
 
+      {/* Цель */}
+      <Text style={[styles.label, { color: c.textSecondary }]}>Цель</Text>
+      <View style={styles.chips}>
+        {([undefined, 'day', 'week', 'month', 'quarter', 'year'] as const).map((g) => (
+          <TouchableOpacity
+            key={g ?? 'none'}
+            style={[styles.chip, {
+              backgroundColor: goalType === g ? '#7C3AED' : c.card,
+              borderWidth: 1, borderColor: c.border,
+            }]}
+            onPress={() => setGoalType(g)}
+          >
+            <Text style={[styles.chipText, { color: goalType === g ? '#FFF' : c.text }]}>
+              {g === undefined ? '—' : g === 'day' ? 'День' : g === 'week' ? 'Неделя' : g === 'month' ? 'Месяц' : g === 'quarter' ? 'Квартал' : 'Год'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       {task.completedAt && (
         <View style={[styles.infoRow, { borderColor: c.border }]}>
           <Text style={[styles.infoLabel, { color: c.textSecondary }]}>Выполнено</Text>
@@ -338,7 +358,8 @@ export function TaskDetailScreen() {
           }
         }}
         multiline
-        numberOfLines={1}
+        numberOfLines={4}
+        scrollEnabled
       />
 
       {/* Фото и файлы */}
@@ -544,7 +565,7 @@ const styles = StyleSheet.create({
   createdDate: { fontSize: 11, textAlign: 'right', marginBottom: -8 },
   label: { fontSize: 13, fontWeight: '600', marginTop: 16, marginBottom: 6 },
   input: { borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 15 },
-  textArea: { minHeight: 36, textAlignVertical: 'top' },
+  textArea: { minHeight: 80, maxHeight: 160, textAlignVertical: 'top' },
   dropdown: {
     borderWidth: 1,
     borderTopWidth: 0,

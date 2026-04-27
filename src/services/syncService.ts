@@ -4,7 +4,7 @@ import { RoutineItem } from '../store/routineStore';
 const TASK_FIELDS: (keyof Task)[] = [
   'id', 'subject', 'action', 'category', 'contextCategory', 'project',
   'notes', 'startDate', 'priority', 'isRecurring', 'recurDays', 'completed',
-  'completedAt', 'deadline', 'createdAt', 'updatedAt', 'reminderAt',
+  'completedAt', 'deadline', 'createdAt', 'updatedAt', 'reminderAt', 'goalType',
 ];
 
 async function gasFetch(url: string, options?: RequestInit): Promise<string> {
@@ -165,5 +165,7 @@ function normalizeRemoteTask(raw: Record<string, unknown>): Task {
     createdAt: String(raw.createdAt ?? new Date().toISOString()),
     updatedAt: String(raw.updatedAt ?? new Date().toISOString()),
     reminderAt: raw.reminderAt ? String(raw.reminderAt) : undefined,
+    goalType: (['day', 'week', 'month', 'quarter', 'year'].includes(String(raw.goalType))
+      ? String(raw.goalType) : undefined) as Task['goalType'],
   };
 }

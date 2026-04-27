@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, FlatList, Text, StyleSheet } from 'react-native';
+import { View, FlatList, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useTaskStore } from '../store/taskStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { useProjectStore } from '../store/projectStore';
@@ -24,6 +24,9 @@ export function DayScreen() {
   const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
 
   const categoryTasks = useMemo(() => hideOldCompleted(allTasks.filter((t) => t.category === 'DAY')), [allTasks]);
+
+  const dayGoals = useMemo(() => sortByPriorityDeadline(allTasks.filter((t) => t.goalType === 'day' && !t.completed)), [allTasks]);
+  const weekGoals = useMemo(() => sortByPriorityDeadline(allTasks.filter((t) => t.goalType === 'week' && !t.completed)), [allTasks]);
 
   const tasks = useMemo(() => {
     let filtered = applyFilters(categoryTasks, deadlineFilter, projectFilter, subjectFilter);
@@ -62,6 +65,22 @@ export function DayScreen() {
         <FlatList
           data={tasks}
           keyExtractor={(t) => t.id}
+          ListHeaderComponent={(dayGoals.length > 0 || weekGoals.length > 0) ? (
+            <View style={[styles.goalsSection, { borderColor: c.border }]}>
+              {dayGoals.map((g) => (
+                <TouchableOpacity key={g.id} style={styles.goalRow} onPress={() => navigation.navigate('TaskDetail', { taskId: g.id })}>
+                  <Text style={styles.goalLabel}>🎯 День</Text>
+                  <Text style={[styles.goalText, { color: c.text }]} numberOfLines={1}>{g.action}</Text>
+                </TouchableOpacity>
+              ))}
+              {weekGoals.map((g) => (
+                <TouchableOpacity key={g.id} style={styles.goalRow} onPress={() => navigation.navigate('TaskDetail', { taskId: g.id })}>
+                  <Text style={styles.goalLabel}>🎯 Неделя</Text>
+                  <Text style={[styles.goalText, { color: c.text }]} numberOfLines={1}>{g.action}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
           renderItem={({ item, index }) => (
             <View style={{ backgroundColor: index % 2 === 1 ? (theme === 'dark' ? '#252525' : '#F0F0F0') : 'transparent' }}>
               <TaskCard
@@ -84,4 +103,8 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { fontSize: 18, fontWeight: '600', marginTop: 12 },
+  goalsSection: { borderBottomWidth: 2, paddingBottom: 2, marginBottom: 2 },
+  goalRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 5 },
+  goalLabel: { color: '#7C3AED', fontSize: 12, fontWeight: '700', marginRight: 8, width: 80 },
+  goalText: { flex: 1, fontSize: 14, fontWeight: '500' },
 });

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, SectionList, TouchableOpacity, TextInput,
-  Alert, ScrollView, KeyboardAvoidingView, Platform, Image,
+  Alert, ScrollView, KeyboardAvoidingView, Platform, Image, Modal,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useSettingsStore } from '../store/settingsStore';
@@ -200,6 +200,9 @@ function MetricsContent() {
   const [editingEntry, setEditingEntry] = useState<HealthEntry | null>(null);
   const [showImportForm, setShowImportForm] = useState(false);
   const [expandedMetric, setExpandedMetric] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showProblems, setShowProblems] = useState(false);
+  const [showExpired, setShowExpired] = useState(false);
 
   const getRef = useCallback((metricId: string): { refMin?: number; refMax?: number; periodDays?: number } | null => {
     if (!selectedSource) return null; // use metric's own refs
@@ -207,10 +210,38 @@ function MetricsContent() {
   }, [metricRefs, selectedSource]);
 
   const filteredMetrics = useMemo(() => {
-    if (!selectedSource) return metrics;
-    const hasRef = new Set(metricRefs.filter((r) => r.source === selectedSource).map((r) => r.metricId));
-    return metrics.filter((m) => hasRef.has(m.id));
-  }, [metrics, metricRefs, selectedSource]);
+    let result = metrics;
+    if (selectedSource) {
+      const hasRef = new Set(metricRefs.filter((r) => r.source === selectedSource).map((r) => r.metricId));
+      result = result.filter((m) => hasRef.has(m.id));
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter((m) => m.name.toLowerCase().includes(q) || m.unit.toLowerCase().includes(q));
+    }
+    if (showProblems) {
+      result = result.filter((m) => {
+        const latest = entries.filter((e) => e.metricId === m.id).sort((a, b) => b.date.localeCompare(a.date))[0];
+        if (!latest) return false;
+        const srcRef = getRef(m.id);
+        const refMin = srcRef ? srcRef.refMin : m.refMin;
+        const refMax = srcRef ? srcRef.refMax : m.refMax;
+        return (refMin != null && latest.value < refMin) || (refMax != null && latest.value > refMax);
+      });
+    }
+    if (showExpired) {
+      const today = todayStr();
+      result = result.filter((m) => {
+        const srcRef = getRef(m.id);
+        const period = srcRef ? srcRef.periodDays : m.periodDays;
+        if (!period) return false;
+        const latest = entries.filter((e) => e.metricId === m.id).sort((a, b) => b.date.localeCompare(a.date))[0];
+        if (!latest) return true; // never taken — overdue
+        return daysDiff(latest.date, today) >= period;
+      });
+    }
+    return result;
+  }, [metrics, metricRefs, selectedSource, searchQuery, showProblems, showExpired, entries, getRef]);
 
   const entriesForMetric = useCallback(
     (metricId: string) => entries.filter((e) => e.metricId === metricId).sort((a, b) => b.date.localeCompare(a.date)),
@@ -339,6 +370,29 @@ function MetricsContent() {
         ))}
       </ScrollView>
 
+      {/* Search + problem filter */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, gap: 6 }}>
+        <TextInput
+          style={{ flex: 1, fontSize: 13, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderRadius: 6, borderColor: c.border, color: c.text, backgroundColor: c.card }}
+          placeholder="Поиск анализов..."
+          placeholderTextColor={c.textSecondary}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          returnKeyType="search"
+          autoCorrect={false}
+        />
+        <TouchableOpacity
+          style={[s.chip, { backgroundColor: showProblems ? c.danger : c.border, paddingHorizontal: 8, paddingVertical: 5 }]}
+          onPress={() => setShowProblems(!showProblems)}>
+          <Text style={{ color: showProblems ? '#FFF' : c.text, fontSize: 11, fontWeight: '700' }}>Проблемы</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[s.chip, { backgroundColor: showExpired ? c.warning : c.border, paddingHorizontal: 8, paddingVertical: 5 }]}
+          onPress={() => setShowExpired(!showExpired)}>
+          <Text style={{ color: showExpired ? '#FFF' : c.text, fontSize: 11, fontWeight: '700' }}>Пересдать</Text>
+        </TouchableOpacity>
+      </View>
+
       <SectionList
         sections={(() => {
           // Build group map from presets
@@ -408,6 +462,7 @@ function DoctorsContent() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [fullImg, setFullImg] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
@@ -487,7 +542,9 @@ function DoctorsContent() {
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
                 {visitImages.map((img) => (
                   <View key={img.id} style={{ marginRight: 8, position: 'relative' }}>
-                    <Image source={{ uri: img.imagePath }} style={s.docImg} resizeMode="cover" />
+                    <TouchableOpacity onPress={() => setFullImg(img.imagePath)}>
+                      <Image source={{ uri: img.imagePath }} style={s.docImg} resizeMode="cover" />
+                    </TouchableOpacity>
                     <TouchableOpacity style={s.docImgDelete} onPress={() => handleDeleteImage(img)}>
                       <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700' }}>×</Text>
                     </TouchableOpacity>
@@ -551,6 +608,12 @@ function DoctorsContent() {
           />
         </>
       )}
+
+      <Modal visible={!!fullImg} transparent animationType="fade" onRequestClose={() => setFullImg(null)}>
+        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center' }} activeOpacity={1} onPress={() => setFullImg(null)}>
+          {fullImg && <Image source={{ uri: fullImg }} style={{ width: '100%', height: '80%' }} resizeMode="contain" />}
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }

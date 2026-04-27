@@ -56,6 +56,7 @@ function rowToTask(r: any): Task {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     imageBase64: r.image_data ? resolveImageUri(r.image_data) : undefined,
+    goalType: r.goal_type || undefined,
   };
 }
 
@@ -117,11 +118,11 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
     set((s) => ({ tasks: [...s.tasks, task] }));
     const db = await getDb();
     await db.runAsync(
-      `INSERT INTO tasks (id, subject, action, category, context_category, project, notes, start_date, deadline, reminder_at, priority, is_recurring, recur_days, completed, completed_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)`,
+      `INSERT INTO tasks (id, subject, action, category, context_category, project, notes, start_date, deadline, reminder_at, priority, is_recurring, recur_days, completed, completed_at, created_at, updated_at, goal_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)`,
       [task.id, task.subject, task.action, task.category, task.contextCategory || null, task.project || null,
        task.notes, task.startDate || null, task.deadline || null, task.reminderAt || null,
-       task.priority, task.isRecurring ? 1 : 0, task.recurDays ? JSON.stringify(task.recurDays) : null, now, now]
+       task.priority, task.isRecurring ? 1 : 0, task.recurDays ? JSON.stringify(task.recurDays) : null, now, now, task.goalType || null]
     );
   },
 
@@ -132,11 +133,11 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
     if (!task) return;
     const db = await getDb();
     await db.runAsync(
-      `UPDATE tasks SET subject=?, action=?, category=?, context_category=?, project=?, notes=?, start_date=?, deadline=?, reminder_at=?, priority=?, is_recurring=?, recur_days=?, completed=?, completed_at=?, updated_at=? WHERE id=?`,
+      `UPDATE tasks SET subject=?, action=?, category=?, context_category=?, project=?, notes=?, start_date=?, deadline=?, reminder_at=?, priority=?, is_recurring=?, recur_days=?, completed=?, completed_at=?, updated_at=?, goal_type=? WHERE id=?`,
       [task.subject, task.action, task.category, task.contextCategory || null, task.project || null,
        task.notes, task.startDate || null, task.deadline || null, task.reminderAt || null,
        task.priority, task.isRecurring ? 1 : 0, task.recurDays ? JSON.stringify(task.recurDays) : null,
-       task.completed ? 1 : 0, task.completedAt || null, now, id]
+       task.completed ? 1 : 0, task.completedAt || null, now, task.goalType || null, id]
     );
   },
 
@@ -175,12 +176,12 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
     });
     const db = await getDb();
     await db.runAsync(
-      `INSERT OR REPLACE INTO tasks (id, subject, action, category, context_category, project, notes, start_date, deadline, reminder_at, priority, is_recurring, recur_days, completed, completed_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO tasks (id, subject, action, category, context_category, project, notes, start_date, deadline, reminder_at, priority, is_recurring, recur_days, completed, completed_at, created_at, updated_at, goal_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [task.id, task.subject, task.action, task.category, task.contextCategory || null, task.project || null,
        task.notes, task.startDate || null, task.deadline || null, task.reminderAt || null,
        task.priority, task.isRecurring ? 1 : 0, task.recurDays ? JSON.stringify(task.recurDays) : null,
-       task.completed ? 1 : 0, task.completedAt || null, task.createdAt, task.updatedAt]
+       task.completed ? 1 : 0, task.completedAt || null, task.createdAt, task.updatedAt, task.goalType || null]
     );
   },
 

@@ -42,7 +42,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 26;
+const SCHEMA_VERSION = 27;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -782,6 +782,15 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
       if (!cols.some((c) => c.name === 'timestamp')) {
         await db.execAsync("ALTER TABLE transactions ADD COLUMN timestamp TEXT;");
         await db.execAsync("UPDATE transactions SET timestamp = date || 'T00:00:00' WHERE timestamp IS NULL;");
+      }
+    } catch {}
+  }
+
+  if (currentVer < 27) {
+    try {
+      const cols = await db.getAllAsync<{ name: string }>("PRAGMA table_info(tasks)");
+      if (!cols.some((c) => c.name === 'goal_type')) {
+        await db.execAsync("ALTER TABLE tasks ADD COLUMN goal_type TEXT;");
       }
     } catch {}
   }
