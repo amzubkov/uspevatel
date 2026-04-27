@@ -558,7 +558,8 @@ export function MoneyScreen() {
       const content = await LegacyFS.readAsStringAsync(uri, { encoding: LegacyFS.EncodingType.UTF8 });
       const parsed = parseBankFile(content, selectedAccount.bank);
       if (parsed.length === 0) {
-        Alert.alert('Импорт', 'Не удалось найти транзакции в файле');
+        const lines = content.split('\n').slice(0, 3).map((l, i) => `${i}: ${l.substring(0, 80)}`).join('\n');
+        Alert.alert('Импорт', `bank=${selectedAccount.bank}\nlen=${content.length}\n\n${lines}`);
         return;
       }
       // Filter out duplicates (same date + amount + comment)

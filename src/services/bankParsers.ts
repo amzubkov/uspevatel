@@ -167,44 +167,33 @@ function parseEurobank(rows: any[][]): ParsedTransaction[] {
   return results;
 }
 
-function csvToRows(text: string): any[][] {
-  const lines: string[] = [];
-  let current = '';
+function csvToRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let cell = '';
+  let row: string[] = [];
   let inQuotes = false;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (ch === '"') {
-      if (inQuotes && text[i + 1] === '"') { current += '"'; i++; }
+      if (inQuotes && text[i + 1] === '"') { cell += '"'; i++; }
       else inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      row.push(cell);
+      cell = '';
     } else if (ch === '\n' && !inQuotes) {
-      lines.push(current);
-      current = '';
+      row.push(cell);
+      if (row.some((c) => c.trim())) rows.push(row);
+      row = [];
+      cell = '';
     } else if (ch === '\r' && !inQuotes) {
       // skip
     } else {
-      current += ch;
+      cell += ch;
     }
   }
-  if (current.trim()) lines.push(current);
-  return lines.map((line) => {
-    const cells: string[] = [];
-    let cell = '';
-    let q = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (q && line[i + 1] === '"') { cell += '"'; i++; }
-        else q = !q;
-      } else if (ch === ',' && !q) {
-        cells.push(cell);
-        cell = '';
-      } else {
-        cell += ch;
-      }
-    }
-    cells.push(cell);
-    return cells;
-  });
+  row.push(cell);
+  if (row.some((c) => c.trim())) rows.push(row);
+  return rows;
 }
 
 const RU_MONTHS: Record<string, string> = {
@@ -250,9 +239,21 @@ function parseRevolutCrypto(rows: any[][]): ParsedTransaction[] {
   const feeIdx = header.findIndex((h) => h === 'fees' || h === 'комиссия');
   const dateIdx = header.findIndex((h) => h === 'date' || h === 'дата');
 
-  if (dateIdx === -1 || qtyIdx === -1) return [];
+  // Debug info as first transaction
+  const firstRow = rows[1];
+  const debugDate = firstRow ? String(firstRow[dateIdx] ?? 'UNDEF') : 'NO_ROW';
+  const debugQty = firstRow ? String(firstRow[qtyIdx] ?? 'UNDEF') : 'NO_ROW';
+  const testDate = firstRow ? parseRuDate(debugDate) : null;
+  const testQty = firstRow ? parseRuAmount(debugQty) : null;
+  const debugTx: ParsedTransaction = {
+    date: '0000-00-00', timestamp: '0000-00-00T00:00:00',
+    amount: 0, category: 'DEBUG', tag: '',
+    comment: `hdr=[${header.join('|')}] di=${dateIdx} qi=${qtyIdx} d="${debugDate.substring(0, 30)}" q="${debugQty.substring(0, 15)}" td=${!!testDate} tq=${testQty} rows=${rows.length} cols=${firstRow?.length}`,
+  };
 
-  const results: ParsedTransaction[] = [];
+  if (dateIdx === -1 || qtyIdx === -1) return [debugTx];
+
+  const results: ParsedTransaction[] = [debugTx];
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row || !row[dateIdx]) continue;
