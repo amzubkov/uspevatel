@@ -42,7 +42,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 28;
+const SCHEMA_VERSION = 29;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -800,6 +800,15 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
       const cols = await db.getAllAsync<{ name: string }>("PRAGMA table_info(flights)");
       if (!cols.some((c) => c.name === 'flight_number')) {
         await db.execAsync("ALTER TABLE flights ADD COLUMN flight_number TEXT;");
+      }
+    } catch {}
+  }
+
+  if (currentVer < 29) {
+    try {
+      const cols = await db.getAllAsync<{ name: string }>("PRAGMA table_info(accounts)");
+      if (!cols.some((c) => c.name === 'bank')) {
+        await db.execAsync("ALTER TABLE accounts ADD COLUMN bank TEXT;");
       }
     } catch {}
   }

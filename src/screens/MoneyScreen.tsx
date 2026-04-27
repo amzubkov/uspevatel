@@ -1,9 +1,13 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, ScrollView, KeyboardAvoidingView, Platform, StyleSheet, Alert } from 'react-native';
-import { useMoneyStore, Account, Transaction } from '../store/moneyStore';
+import { useMoneyStore, Account, Transaction, BankType } from '../store/moneyStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
 import { DatePickerField } from '../components/DatePickerField';
+import { parseXlsx, BANK_LABELS, ParsedTransaction } from '../services/bankParsers';
+import * as DocumentPicker from 'expo-document-picker';
+import * as Crypto from 'expo-crypto';
+import { File } from 'expo-file-system';
 
 const CURRENCIES = ['RUB', 'EUR', 'USDT'];
 const ACC_COLORS = ['#EF4444', '#F59E0B', '#22C55E', '#3B82F6', '#8B5CF6', '#EC4899', '#06B6D4', '#6B7280'];
@@ -80,6 +84,7 @@ export function MoneyScreen() {
   const [accName, setAccName] = useState('');
   const [accCurrency, setAccCurrency] = useState('RUB');
   const [accColor, setAccColor] = useState<string | undefined>(undefined);
+  const [accBank, setAccBank] = useState<BankType>(undefined);
 
   // Transaction form
   const [txAmount, setTxAmount] = useState('');
@@ -177,15 +182,15 @@ export function MoneyScreen() {
   const uncategorizedCount = uncategorizedTxs.length;
 
   const resetAccountForm = () => {
-    setAccName(''); setAccCurrency('RUB'); setAccColor(undefined); setShowAccountForm(false); setEditingAccountId(null);
+    setAccName(''); setAccCurrency('RUB'); setAccColor(undefined); setAccBank(undefined); setShowAccountForm(false); setEditingAccountId(null);
   };
 
   const handleSaveAccount = async () => {
     if (!accName.trim()) { Alert.alert('Введите название счёта'); return; }
     if (editingAccountId) {
-      await updateAccount(editingAccountId, { name: accName.trim(), currency: accCurrency, color: accColor });
+      await updateAccount(editingAccountId, { name: accName.trim(), currency: accCurrency, color: accColor, bank: accBank });
     } else {
-      await addAccount(accName.trim(), accCurrency, accColor);
+      await addAccount(accName.trim(), accCurrency, accColor, accBank);
     }
     resetAccountForm();
   };
@@ -195,6 +200,7 @@ export function MoneyScreen() {
     setAccName(acc.name);
     setAccCurrency(acc.currency);
     setAccColor(acc.color);
+    setAccBank(acc.bank);
     setShowAccountForm(true);
   };
 
@@ -361,6 +367,21 @@ export function MoneyScreen() {
                 onPress={() => setAccColor(clr)} />
             ))}
           </View>
+          <Text style={[st.label, { color: c.textSecondary }]}>Банк (для импорта выписок)</Text>
+          <View style={st.chipRow}>
+            <TouchableOpacity
+              style={[st.chip, { backgroundColor: !accBank ? c.primary : c.card, borderColor: !accBank ? c.primary : c.border }]}
+              onPress={() => setAccBank(undefined)}>
+              <Text style={{ color: !accBank ? '#FFF' : c.text, fontSize: 12, fontWeight: '600' }}>—</Text>
+            </TouchableOpacity>
+            {(['revolut', 'eurobank'] as BankType[]).map((b) => (
+              <TouchableOpacity key={b}
+                style={[st.chip, { backgroundColor: accBank === b ? c.primary : c.card, borderColor: accBank === b ? c.primary : c.border }]}
+                onPress={() => setAccBank(b)}>
+                <Text style={{ color: accBank === b ? '#FFF' : c.text, fontSize: 12, fontWeight: '600' }}>{BANK_LABELS[b!]}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
           <View style={st.formBtns}>
             <TouchableOpacity style={[st.btn, { backgroundColor: c.primary, flex: 1 }]} onPress={handleSaveAccount}>
               <Text style={{ color: '#FFF', fontWeight: '700' }}>{editingAccountId ? 'Сохранить' : 'Добавить'}</Text>
@@ -509,6 +530,62 @@ export function MoneyScreen() {
       </KeyboardAvoidingView>
     );
   }
+
+  const handleImportXlsx = async () => {
+    if (!selectedAccountId || !selectedAccount?.bank) return;
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      const uri = result.assets[0].uri;
+      const file = new File(uri);
+      const raw = file.text();
+      // expo-file-system File.text() returns UTF-8; we need base64 for xlsx
+      const bytes = file.bytes();
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const base64 = btoa(binary);
+      const parsed = parseXlsx(base64, selectedAccount.bank);
+      if (parsed.length === 0) {
+        Alert.alert('Импорт', 'Не удалось найти транзакции в файле');
+        return;
+      }
+      // Filter out duplicates (same date + amount + comment)
+      const existingKeys = new Set(
+        getTransactionsForAccount(selectedAccountId).map((t) => `${t.date}|${t.amount}|${t.comment}`)
+      );
+      const newTxs = parsed.filter((t) => !existingKeys.has(`${t.date}|${t.amount}|${t.comment}`));
+      if (newTxs.length === 0) {
+        Alert.alert('Импорт', `Найдено ${parsed.length} транзакций, все уже импортированы`);
+        return;
+      }
+      Alert.alert(
+        'Импорт',
+        `Найдено ${parsed.length} транзакций, новых: ${newTxs.length}`,
+        [
+          { text: 'Отмена', style: 'cancel' },
+          { text: `Импорт ${newTxs.length}`, onPress: async () => {
+            for (const t of newTxs) {
+              await addTransaction({
+                accountId: selectedAccountId,
+                amount: t.amount,
+                date: t.date,
+                timestamp: t.timestamp,
+                category: t.category,
+                tag: t.tag,
+                comment: t.comment,
+              });
+            }
+            Alert.alert('Готово', `Импортировано ${newTxs.length} транзакций`);
+          }},
+        ]
+      );
+    } catch (e: any) {
+      Alert.alert('Ошибка импорта', String(e?.message || e));
+    }
+  };
 
   // ── Categorization mode ──
   if (categorizingMode) {
@@ -668,6 +745,11 @@ export function MoneyScreen() {
           <TouchableOpacity style={[st.btn, { backgroundColor: c.primary, flex: 1, paddingVertical: 8 }]} onPress={() => setShowTxForm(true)}>
             <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>+ Транзакция</Text>
           </TouchableOpacity>
+          {selectedAccount?.bank && (
+            <TouchableOpacity style={[st.btn, { backgroundColor: '#8B5CF6', paddingVertical: 8, paddingHorizontal: 12 }]} onPress={handleImportXlsx}>
+              <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>Импорт</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity style={[st.btn, { backgroundColor: '#F59E0B', paddingVertical: 8, paddingHorizontal: 12 }]} onPress={() => { setShowCorrectionForm(true); setCorrectionBalance(''); }}>
             <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>✓</Text>
           </TouchableOpacity>

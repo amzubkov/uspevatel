@@ -2,11 +2,14 @@ import { create } from 'zustand';
 import * as Crypto from 'expo-crypto';
 import { getDb } from '../db/database';
 
+export type BankType = 'revolut' | 'eurobank' | undefined;
+
 export interface Account {
   id: string;
   name: string;
   currency: string;
   color?: string;
+  bank?: BankType;
   sortOrder: number;
   createdAt: string;
 }
@@ -31,8 +34,8 @@ interface MoneyState {
 
   load: () => Promise<void>;
 
-  addAccount: (name: string, currency: string, color?: string) => Promise<void>;
-  updateAccount: (id: string, fields: Partial<Pick<Account, 'name' | 'currency' | 'color'>>) => Promise<void>;
+  addAccount: (name: string, currency: string, color?: string, bank?: BankType) => Promise<void>;
+  updateAccount: (id: string, fields: Partial<Pick<Account, 'name' | 'currency' | 'color' | 'bank'>>) => Promise<void>;
   getLastTxDate: (accountId: string) => string | undefined;
   removeAccount: (id: string) => Promise<void>;
 
@@ -63,6 +66,7 @@ export const useMoneyStore = create<MoneyState>()((set, get) => ({
       accounts: accRows.map((r: any) => ({
         id: r.id, name: r.name, currency: r.currency,
         color: r.color || undefined,
+        bank: r.bank || undefined,
         sortOrder: r.sort_order, createdAt: r.created_at,
       })),
       transactions: txRows.map((r: any) => ({
@@ -75,15 +79,15 @@ export const useMoneyStore = create<MoneyState>()((set, get) => ({
     });
   },
 
-  addAccount: async (name, currency, color) => {
+  addAccount: async (name, currency, color, bank) => {
     const id = Crypto.randomUUID();
     const now = new Date().toISOString();
     const sortOrder = get().accounts.length;
-    const acc: Account = { id, name, currency, color, sortOrder, createdAt: now };
+    const acc: Account = { id, name, currency, color, bank, sortOrder, createdAt: now };
     set((s) => ({ accounts: [...s.accounts, acc] }));
     const db = await getDb();
-    await db.runAsync('INSERT INTO accounts (id, name, currency, color, sort_order, created_at) VALUES (?,?,?,?,?,?)',
-      [id, name, currency, color || null, sortOrder, now]);
+    await db.runAsync('INSERT INTO accounts (id, name, currency, color, bank, sort_order, created_at) VALUES (?,?,?,?,?,?,?)',
+      [id, name, currency, color || null, bank || null, sortOrder, now]);
   },
 
   updateAccount: async (id, fields) => {
@@ -94,6 +98,7 @@ export const useMoneyStore = create<MoneyState>()((set, get) => ({
     if (fields.name !== undefined) { sets.push('name = ?'); vals.push(fields.name); }
     if (fields.currency !== undefined) { sets.push('currency = ?'); vals.push(fields.currency); }
     if (fields.color !== undefined) { sets.push('color = ?'); vals.push(fields.color || null); }
+    if (fields.bank !== undefined) { sets.push('bank = ?'); vals.push(fields.bank || null); }
     if (sets.length) { vals.push(id); await db.runAsync(`UPDATE accounts SET ${sets.join(', ')} WHERE id = ?`, vals); }
   },
 
