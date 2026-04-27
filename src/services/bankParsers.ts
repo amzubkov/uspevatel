@@ -11,6 +11,7 @@ export interface ParsedTransaction {
 
 export const BANK_LABELS: Record<string, string> = {
   revolut: 'Revolut',
+  revolut_crypto: 'Revolut Crypto',
   eurobank: 'Eurobank',
 };
 
@@ -206,12 +207,106 @@ function csvToRows(text: string): any[][] {
   });
 }
 
+const RU_MONTHS: Record<string, string> = {
+  'янв': '01', 'фев': '02', 'мар': '03', 'апр': '04', 'мая': '05', 'май': '05',
+  'июн': '06', 'июл': '07', 'авг': '08', 'сен': '09', 'окт': '10', 'ноя': '11', 'дек': '12',
+  'нояб': '11',
+};
+
+function parseRuDate(val: string): { date: string; timestamp: string } | null {
+  // "22 нояб. 2023 г., 16:18:43" or "4 апр. 2024 г., 16:32:27"
+  const s = val.trim();
+  const m = s.match(/^(\d{1,2})\s+(\S+?)\.?\s+(\d{4})\s*г\.,?\s*(\d{2}:\d{2}(?::\d{2})?)/);
+  if (!m) return null;
+  const day = m[1].padStart(2, '0');
+  const monthStr = m[2].toLowerCase().replace('.', '');
+  const month = RU_MONTHS[monthStr];
+  if (!month) return null;
+  const year = m[3];
+  const time = m[4].length === 5 ? m[4] + ':00' : m[4];
+  const date = `${year}-${month}-${day}`;
+  return { date, timestamp: `${date}T${time}` };
+}
+
+function parseRuAmount(val: string): number | null {
+  // "3 107,00€" or "23,88 GEL" or "3 370,018163"
+  const s = val.replace(/[€$₽]/g, '').replace(/[A-Z]{3}/g, '').trim();
+  const cleaned = s.replace(/\s/g, '').replace(',', '.');
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? null : n;
+}
+
+/**
+ * Revolut Crypto CSV (Russian locale)
+ * Headers: Symbol, Type, Quantity, Price, Value, Fees, Date
+ * Types: Покупка, Продажа, Отправка, Получение, Платеж
+ */
+function parseRevolutCrypto(rows: any[][]): ParsedTransaction[] {
+  const header = rows[0]?.map((h: any) => String(h || '').toLowerCase().trim()) || [];
+  const symbolIdx = header.findIndex((h) => h === 'symbol');
+  const typeIdx = header.findIndex((h) => h === 'type' || h === 'тип');
+  const qtyIdx = header.findIndex((h) => h === 'quantity' || h === 'количество');
+  const priceIdx = header.findIndex((h) => h === 'price' || h === 'цена');
+  const feeIdx = header.findIndex((h) => h === 'fees' || h === 'комиссия');
+  const dateIdx = header.findIndex((h) => h === 'date' || h === 'дата');
+
+  if (dateIdx === -1 || qtyIdx === -1) return [];
+
+  const results: ParsedTransaction[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || !row[dateIdx]) continue;
+    const dt = parseRuDate(String(row[dateIdx])) || parseDate(row[dateIdx]);
+    if (!dt) continue;
+
+    const symbol = symbolIdx >= 0 ? String(row[symbolIdx] || '') : '';
+    const type = typeIdx >= 0 ? String(row[typeIdx] || '') : '';
+    const qty = parseRuAmount(String(row[qtyIdx] || ''));
+    if (qty == null) continue;
+
+    // Determine sign: Покупка/Получение = incoming (+), Продажа/Отправка/Платеж = outgoing (-)
+    const typeLower = type.toLowerCase();
+    const isOutgoing = typeLower.includes('продажа') || typeLower.includes('отправка')
+      || typeLower.includes('платеж') || typeLower === 'sell' || typeLower === 'send' || typeLower === 'payment';
+    const amount = isOutgoing ? -qty : qty;
+
+    results.push({
+      date: dt.date,
+      timestamp: dt.timestamp,
+      amount,
+      category: type,
+      tag: symbol,
+      comment: `${type} ${qty} ${symbol}`,
+    });
+
+    // Fee as separate transaction (convert from fiat to crypto via price)
+    if (feeIdx >= 0 && priceIdx >= 0) {
+      const feeStr = String(row[feeIdx] || '');
+      const fee = parseRuAmount(feeStr);
+      const price = parseRuAmount(String(row[priceIdx] || ''));
+      if (fee && fee > 0 && price && price > 0) {
+        const feeInCrypto = fee / price;
+        results.push({
+          date: dt.date,
+          timestamp: dt.timestamp,
+          amount: -parseFloat(feeInCrypto.toFixed(6)),
+          category: 'Комиссия',
+          tag: symbol,
+          comment: `Комиссия ${symbol}`,
+        });
+      }
+    }
+  }
+  return results;
+}
+
 export function parseBankFile(content: string, bank: BankType): ParsedTransaction[] {
   const rows = csvToRows(content);
   if (!rows.length) return [];
 
   switch (bank) {
     case 'revolut': return parseRevolut(rows);
+    case 'revolut_crypto': return parseRevolutCrypto(rows);
     case 'eurobank': return parseEurobank(rows);
     default: return [];
   }
