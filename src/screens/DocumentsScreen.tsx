@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput,
-  Alert, ScrollView, Image, Modal,
+  Alert, ScrollView, Image,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useSettingsStore } from '../store/settingsStore';
@@ -10,6 +10,7 @@ import { useCarStore, Car, CarDocument, CarDocImage, CarService } from '../store
 import { AttachmentList } from '../components/AttachmentList';
 import { DatePickerField } from '../components/DatePickerField';
 import { colors } from '../utils/theme';
+import { ZoomableImage } from '../components/ZoomableImage';
 
 /* ── Documents Tab ── */
 function DocsContent() {
@@ -145,11 +146,7 @@ function DocsContent() {
 
   return (
     <View style={{ flex: 1 }}>
-      <Modal visible={!!fullImg} transparent animationType="fade" onRequestClose={() => setFullImg(null)}>
-        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center' }} activeOpacity={1} onPress={() => setFullImg(null)}>
-          {fullImg && <Image source={{ uri: fullImg }} style={{ width: '100%', height: '90%' }} resizeMode="contain" />}
-        </TouchableOpacity>
-      </Modal>
+      <ZoomableImage uri={fullImg} onClose={() => setFullImg(null)} />
       {showAdd ? (
         <View style={[s.addRow, { borderColor: c.border }]}>
           <TextInput style={[s.input, { color: c.text, borderColor: c.border, flex: 1 }]}
@@ -252,11 +249,7 @@ function CarsContent() {
 
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12, paddingBottom: 40 }}>
-      <Modal visible={!!fullImg} transparent animationType="fade" onRequestClose={() => setFullImg(null)}>
-        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center' }} activeOpacity={1} onPress={() => setFullImg(null)}>
-          {fullImg && <Image source={{ uri: fullImg }} style={{ width: '100%', height: '90%' }} resizeMode="contain" />}
-        </TouchableOpacity>
-      </Modal>
+      <ZoomableImage uri={fullImg} onClose={() => setFullImg(null)} />
       {/* Car selector */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
         {cars.map((cr) => (
@@ -492,11 +485,7 @@ function InsuranceContent() {
 
   return (
     <View style={{ flex: 1 }}>
-      <Modal visible={!!fullImg} transparent animationType="fade" onRequestClose={() => setFullImg(null)}>
-        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center' }} activeOpacity={1} onPress={() => setFullImg(null)}>
-          {fullImg && <Image source={{ uri: fullImg }} style={{ width: '100%', height: '90%' }} resizeMode="contain" />}
-        </TouchableOpacity>
-      </Modal>
+      <ZoomableImage uri={fullImg} onClose={() => setFullImg(null)} />
       {showAdd ? (
         <InsuranceForm c={c} onSave={async (name, expiry) => {
           const id = await addDocument(name);

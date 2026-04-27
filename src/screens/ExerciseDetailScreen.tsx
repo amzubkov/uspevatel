@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, Image, StyleSheet, Alert, Modal } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, Image, StyleSheet, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useExerciseStore } from '../store/exerciseStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { ZoomableImage } from '../components/ZoomableImage';
 import { colors } from '../utils/theme';
 import { useRoute } from '@react-navigation/native';
 
@@ -143,11 +144,7 @@ export function ExerciseDetailScreen() {
           <TouchableOpacity activeOpacity={0.9} onPress={() => setShowFullImg(true)}>
             <Image source={{ uri: currentImage }} style={styles.headerImg} />
           </TouchableOpacity>
-          <Modal visible={showFullImg} transparent animationType="fade" onRequestClose={() => setShowFullImg(false)}>
-            <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center' }} activeOpacity={1} onPress={() => setShowFullImg(false)}>
-              <Image source={{ uri: currentImage }} style={{ width: '100%', height: '80%' }} resizeMode="contain" />
-            </TouchableOpacity>
-          </Modal>
+          <ZoomableImage uri={showFullImg ? currentImage ?? null : null} onClose={() => setShowFullImg(false)} />
           </>
         ) : null}
         <View style={{ flex: 1 }}>

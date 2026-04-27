@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Modal, FlatList, Image, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, FlatList, Image, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useTaskStore } from '../store/taskStore';
@@ -12,6 +12,7 @@ import { AttachmentList } from '../components/AttachmentList';
 import * as DocumentPicker from 'expo-document-picker';
 import { useAttachmentStore } from '../store/attachmentStore';
 import { scheduleTaskReminder, cancelTaskReminder } from '../utils/notifications';
+import { ZoomableImage } from '../components/ZoomableImage';
 
 const CATEGORIES: Category[] = ['IN', 'DAY', 'LATER', 'CONTROL', 'MAYBE'];
 
@@ -372,11 +373,7 @@ export function TaskDetailScreen() {
           <TouchableOpacity style={{ position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, width: 24, height: 24, alignItems: 'center', justifyContent: 'center' }} onPress={() => removeImageFromTask(taskId)}>
             <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700' }}>×</Text>
           </TouchableOpacity>
-          <Modal visible={showFullImg} transparent animationType="fade" onRequestClose={() => setShowFullImg(false)}>
-            <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center' }} activeOpacity={1} onPress={() => setShowFullImg(false)}>
-              <Image source={{ uri: task.imageBase64 }} style={{ width: '100%', height: '80%' }} resizeMode="contain" />
-            </TouchableOpacity>
-          </Modal>
+          <ZoomableImage uri={showFullImg ? task.imageBase64 ?? null : null} onClose={() => setShowFullImg(false)} />
         </View>
       )}
       <AttachmentList entityType="task" entityId={taskId} hideAddButton />

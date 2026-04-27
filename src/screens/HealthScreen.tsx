@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, SectionList, TouchableOpacity, TextInput,
-  Alert, ScrollView, KeyboardAvoidingView, Platform, Image, Modal,
+  Alert, ScrollView, KeyboardAvoidingView, Platform, Image,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useSettingsStore } from '../store/settingsStore';
@@ -10,6 +10,7 @@ import { useDoctorStore, DoctorVisit, DoctorVisitImage } from '../store/doctorSt
 import { DatePickerField } from '../components/DatePickerField';
 import { colors } from '../utils/theme';
 import { HEALTH_PRESETS, HEALTH_GROUPS, HEALTH_SOURCES, SOURCE_LABELS, HealthSource } from '../db/healthPresets';
+import { ZoomableImage } from '../components/ZoomableImage';
 
 function statusColor(value: number, refMin?: number, refMax?: number, c?: any): string {
   if (!c) return '#22C55E';
@@ -609,11 +610,7 @@ function DoctorsContent() {
         </>
       )}
 
-      <Modal visible={!!fullImg} transparent animationType="fade" onRequestClose={() => setFullImg(null)}>
-        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center' }} activeOpacity={1} onPress={() => setFullImg(null)}>
-          {fullImg && <Image source={{ uri: fullImg }} style={{ width: '100%', height: '80%' }} resizeMode="contain" />}
-        </TouchableOpacity>
-      </Modal>
+      <ZoomableImage uri={fullImg} onClose={() => setFullImg(null)} />
     </View>
   );
 }
