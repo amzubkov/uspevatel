@@ -21,6 +21,9 @@ export interface ParsedFlight {
   price?: number;
   currency?: string;
   photoFileId?: string;
+  docFileId?: string;
+  docFileName?: string;
+  docMimeType?: string;
   msgDate: number;
 }
 
@@ -159,7 +162,7 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
       }
     }
     const notes = notesParts.join(', ').trim() || undefined;
-    return { type: 'flight', kind: isEvent ? 'event' : isHotel ? 'hotel' : 'flight', title, city, flightNumber, departDate: depart.date, departTime: depart.time, arriveDate: arrive?.date, arriveTime: arrive?.time, notes, price, currency, photoFileId, msgDate };
+    return { type: 'flight', kind: isEvent ? 'event' : isHotel ? 'hotel' : 'flight', title, city, flightNumber, departDate: depart.date, departTime: depart.time, arriveDate: arrive?.date, arriveTime: arrive?.time, notes, price, currency, photoFileId, docFileId, docFileName, docMimeType, msgDate };
   }
 
   // /doc <name> (with optional photo or document attached)

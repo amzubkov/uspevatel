@@ -137,6 +137,7 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
             );
             flightCount++;
             if (item.photoFileId) photoJobs.push({ type: 'flight', id, fileId: item.photoFileId, subdir: 'flight_images' });
+            if (item.docFileId) (item as any)._savedFlightId = id;
           } else if (item.type === 'doc') {
             const docId = Crypto.randomUUID();
             const now = new Date().toISOString();
@@ -280,6 +281,41 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
         }
       }
 
+      // Download document files (PDF etc) for /flight commands
+      for (const { item } of selected) {
+        if (item.type === 'flight' && item.docFileId && tgToken) {
+          const flightId = (item as any)._savedFlightId;
+          if (!flightId) continue;
+          try {
+            const fileUrl = await getFileUrl(tgToken, item.docFileId);
+            const ext = (item.docFileName || 'file').split('.').pop() || 'pdf';
+            const fileName = item.docFileName || `document.${ext}`;
+            const dir = new Directory(getImageBaseDir(), 'attachments');
+            if (!dir.exists) dir.create();
+            const attId = Crypto.randomUUID();
+            const relPath = `attachments/${attId}.${ext}`;
+            const dest = new File(dir, `${attId}.${ext}`);
+            const res = await fetch(fileUrl);
+            const blob = await res.blob();
+            const reader = new FileReader();
+            const base64 = await new Promise<string>((resolve, reject) => {
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+            dest.write(base64.split(',')[1], { encoding: 'base64' });
+            if (!dest.exists) throw new Error('Файл не записался');
+            const now = new Date().toISOString();
+            await db.runAsync(
+              'INSERT INTO attachments (id, entity_type, entity_id, name, file_path, mime_type, size, created_at) VALUES (?,?,?,?,?,?,?,?)',
+              [attId, 'flight', flightId, fileName, relPath, item.docMimeType || null, null, now],
+            );
+          } catch (e: any) {
+            Alert.alert('Ошибка загрузки PDF рейса', String(e?.message || e));
+          }
+        }
+      }
+
       // Reload attachments store to reflect newly added files
       useAttachmentStore.setState({ loaded: false });
       await useAttachmentStore.getState().load();
@@ -342,7 +378,9 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
                 {item.arriveTime ? ` ${item.arriveTime}` : ''}
               </Text>
               {item.price ? <Text style={{ color: c.textSecondary, fontSize: 11 }}>{item.price} {item.currency === 'RUB' ? '₽' : '€'}</Text> : null}
+              {item.flightNumber ? <Text style={{ color: c.textSecondary, fontSize: 11 }}>Рейс: {item.flightNumber}</Text> : null}
               {item.notes ? <Text style={{ color: c.textSecondary, fontSize: 11 }}>{item.notes}</Text> : null}
+              {item.docFileId ? <Text style={{ color: c.textSecondary, fontSize: 11 }}>+ {item.docFileName || 'файл'}</Text> : null}
             </>
           )}
           {item.type === 'tx' && (
