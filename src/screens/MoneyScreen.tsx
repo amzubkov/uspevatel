@@ -548,15 +548,22 @@ export function MoneyScreen() {
       const uri = result.assets[0].uri;
       const fileName = result.assets[0].name || '';
       const isXlsx = fileName.toLowerCase().endsWith('.xlsx') || fileName.toLowerCase().endsWith('.xls');
-      const file = new File(uri);
       let content: string;
       if (isXlsx) {
-        const bytes = file.bytes();
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-        content = btoa(binary);
+        const res = await fetch(uri);
+        const blob = await res.blob();
+        const reader = new FileReader();
+        content = await new Promise<string>((resolve, reject) => {
+          reader.onloadend = () => {
+            const dataUrl = reader.result as string;
+            resolve(dataUrl.split(',')[1] || '');
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
       } else {
-        content = file.text();
+        const res = await fetch(uri);
+        content = await res.text();
       }
       const parsed = parseBankFile(content, selectedAccount.bank, isXlsx);
       if (parsed.length === 0) {
