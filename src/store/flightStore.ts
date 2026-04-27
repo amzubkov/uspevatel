@@ -13,6 +13,7 @@ export interface Flight {
   kind: FlightKind;
   title: string;
   city?: string;
+  flightNumber?: string;
   status: FlightStatus;
   departDate: string;
   departTime?: string;
@@ -66,6 +67,7 @@ export const useFlightStore = create<FlightState>()((set, get) => ({
       kind: r.kind || 'flight',
       title: r.title,
       city: r.city || undefined,
+      flightNumber: r.flight_number || undefined,
       status: r.status,
       departDate: r.depart_date,
       departTime: r.depart_time || undefined,
@@ -86,15 +88,16 @@ export const useFlightStore = create<FlightState>()((set, get) => ({
     set((s) => ({ flights: [flight, ...s.flights] }));
     const db = await getDb();
     await db.runAsync(
-      'INSERT INTO flights (id, kind, title, city, status, depart_date, depart_time, arrive_date, arrive_time, notes, price, currency, image_data, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-      [flight.id, flight.kind, flight.title, flight.city || null, flight.status, flight.departDate, flight.departTime || null,
+      'INSERT INTO flights (id, kind, title, city, flight_number, status, depart_date, depart_time, arrive_date, arrive_time, notes, price, currency, image_data, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      [flight.id, flight.kind, flight.title, flight.city || null, flight.flightNumber || null, flight.status, flight.departDate, flight.departTime || null,
        flight.arriveDate || null, flight.arriveTime || null, flight.notes, flight.price || null, flight.currency, flight.imageData || null, flight.createdAt]
     );
     for (const tid of flight.travelerIds) {
       await db.runAsync('INSERT OR IGNORE INTO flight_travelers (flight_id, traveler_id) VALUES (?,?)', [flight.id, tid]);
     }
     if (flight.kind === 'flight') {
-      scheduleFlightReminder(flight.id, flight.title, flight.departDate, flight.departTime);
+      const label = flight.flightNumber ? `${flight.title} (${flight.flightNumber})` : flight.title;
+      scheduleFlightReminder(flight.id, label, flight.departDate, flight.departTime);
     }
   },
 
@@ -104,7 +107,7 @@ export const useFlightStore = create<FlightState>()((set, get) => ({
     const sets: string[] = [];
     const vals: any[] = [];
     const map: Record<string, string> = {
-      kind: 'kind', title: 'title', city: 'city', status: 'status', departDate: 'depart_date', departTime: 'depart_time',
+      kind: 'kind', title: 'title', city: 'city', flightNumber: 'flight_number', status: 'status', departDate: 'depart_date', departTime: 'depart_time',
       arriveDate: 'arrive_date', arriveTime: 'arrive_time', notes: 'notes', price: 'price', currency: 'currency',
     };
     for (const [k, col] of Object.entries(map)) {
@@ -125,7 +128,8 @@ export const useFlightStore = create<FlightState>()((set, get) => ({
       if (updated) {
         await cancelFlightReminder(id);
         if (updated.kind === 'flight') {
-          scheduleFlightReminder(id, updated.title, updated.departDate, updated.departTime);
+          const label = updated.flightNumber ? `${updated.title} (${updated.flightNumber})` : updated.title;
+          scheduleFlightReminder(id, label, updated.departDate, updated.departTime);
         }
       }
     }

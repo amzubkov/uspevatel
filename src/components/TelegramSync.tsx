@@ -130,9 +130,9 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
             const id = Crypto.randomUUID();
             const now = new Date().toISOString();
             await tx.runAsync(
-              `INSERT INTO flights (id, kind, title, city, status, depart_date, depart_time, arrive_date, arrive_time, notes, price, currency, image_data, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-              [id, item.kind, item.title, item.city || null, 'planned', item.departDate, item.departTime || null,
+              `INSERT INTO flights (id, kind, title, city, flight_number, status, depart_date, depart_time, arrive_date, arrive_time, notes, price, currency, image_data, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              [id, item.kind, item.title, item.city || null, item.flightNumber || null, 'planned', item.departDate, item.departTime || null,
                item.arriveDate || null, item.arriveTime || null, item.notes || '', item.price || null, item.currency || 'EUR', null, now]
             );
             flightCount++;

@@ -303,6 +303,7 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
   const [kind, setKind] = useState<FlightKind>('flight');
   const [title, setTitle] = useState('');
   const [city, setCity] = useState('');
+  const [flightNumber, setFlightNumber] = useState('');
   const [status, setStatus] = useState<FlightStatus>('planned');
   const [departDate, setDepartDate] = useState('');
   const [departTime, setDepartTime] = useState('');
@@ -329,12 +330,12 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
   }, [flights, travelerId, statusFilter, dateFilter]);
 
   const resetForm = () => {
-    setKind('flight'); setTitle(''); setCity(''); setStatus('planned'); setDepartDate(''); setDepartTime('');
+    setKind('flight'); setTitle(''); setCity(''); setFlightNumber(''); setStatus('planned'); setDepartDate(''); setDepartTime('');
     setArriveDate(''); setArriveTime(''); setNotes(''); setPrice(''); setCurrency('EUR'); setFormTravelerIds([]); setShowForm(false); setEditingId(null);
   };
 
   const startEdit = (f: Flight) => {
-    setEditingId(f.id); setKind(f.kind); setTitle(f.title); setCity(f.city || ''); setStatus(f.status);
+    setEditingId(f.id); setKind(f.kind); setTitle(f.title); setCity(f.city || ''); setFlightNumber(f.flightNumber || ''); setStatus(f.status);
     setDepartDate(f.departDate); setDepartTime(f.departTime || '');
     setArriveDate(f.arriveDate || ''); setArriveTime(f.arriveTime || '');
     setNotes(f.notes); setPrice(f.price ? String(f.price) : ''); setCurrency(f.currency || 'EUR'); setFormTravelerIds([...f.travelerIds]); setShowForm(true);
@@ -349,7 +350,7 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
     const priceNum = parseFloat(price.replace(',', '.')) || undefined;
     if (editingId) {
       await updateFlight(editingId, {
-        kind, title: title.trim(), city: city.trim() || undefined, status, departDate: departDate.trim(),
+        kind, title: title.trim(), city: city.trim() || undefined, flightNumber: flightNumber.trim() || undefined, status, departDate: departDate.trim(),
         departTime: departTime.trim() || undefined,
         arriveDate: arriveDate.trim() || undefined,
         arriveTime: arriveTime.trim() || undefined,
@@ -358,7 +359,7 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
       });
     } else {
       await addFlight({
-        kind, title: title.trim(), city: city.trim() || undefined, status, departDate: departDate.trim(),
+        kind, title: title.trim(), city: city.trim() || undefined, flightNumber: flightNumber.trim() || undefined, status, departDate: departDate.trim(),
         departTime: departTime.trim() || undefined,
         arriveDate: arriveDate.trim() || undefined,
         arriveTime: arriveTime.trim() || undefined,
@@ -407,7 +408,7 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
               <Text style={[s.cardTitle, { color: c.text, flex: 1 }]} numberOfLines={1}>
-                {item.title}{itemTravelers.length > 0 ? ` (${itemTravelers.map((t) => t.icon).join('')})` : ''}
+                {item.title}{item.flightNumber ? ` ${item.flightNumber}` : ''}{itemTravelers.length > 0 ? ` (${itemTravelers.map((t) => t.icon).join('')})` : ''}
               </Text>
               <TouchableOpacity onPress={() => handleStatusChange(item)}>
                 <Text style={[s.statusBadge, { color: sc, borderColor: sc }]}>{STATUS_LABELS[item.status]}</Text>
@@ -509,6 +510,17 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
             value={title} onChangeText={setTitle}
             placeholder={kind === 'flight' ? 'SVO → IST' : kind === 'event' ? 'Экскурсия, концерт...' : 'Hilton Istanbul'}
             placeholderTextColor={c.textSecondary} />
+
+          {kind === 'flight' && (
+            <>
+              <Text style={[s.formLabel, { color: c.textSecondary }]}>Номер рейса</Text>
+              <TextInput style={[s.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
+                value={flightNumber} onChangeText={setFlightNumber}
+                placeholder="SU1234"
+                placeholderTextColor={c.textSecondary}
+                autoCapitalize="characters" />
+            </>
+          )}
 
           {(kind === 'hotel' || kind === 'event') && (
             <>
@@ -704,7 +716,7 @@ function HistoryContent({ travelerId }: { travelerId: string }) {
         <TouchableOpacity style={s.cardHeader} onPress={() => setExpanded(isExpanded ? null : item.id)}>
           <Text style={{ fontSize: 20 }}>{KIND_EMOJI[item.kind]}</Text>
           <View style={{ flex: 1 }}>
-            <Text style={[s.cardTitle, { color: c.text }]}>{item.title}</Text>
+            <Text style={[s.cardTitle, { color: c.text }]}>{item.title}{item.flightNumber ? ` ${item.flightNumber}` : ''}</Text>
             {item.city ? <Text style={{ color: c.textSecondary, fontSize: 12 }}>{item.city}</Text> : null}
             <Text style={[s.cardDate, { color: c.textSecondary }]}>
               {item.kind === 'flight' ? fmtFlightDate(item) : item.kind === 'event' ? fmtEventDate(item) : fmtHotelDate(item)}

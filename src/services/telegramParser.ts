@@ -12,6 +12,7 @@ export interface ParsedFlight {
   kind: 'flight' | 'hotel' | 'event';
   title: string;       // SVO-KUF or hotel name
   city?: string;       // city for hotels
+  flightNumber?: string; // SU1234
   departDate: string;  // YYYY-MM-DD (check-in for hotel)
   departTime?: string; // HH:MM
   arriveDate?: string; // (check-out for hotel)
@@ -135,13 +136,19 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
     const depart = parseDatetime(parts[dateIdx]);
     if (!depart || !title) return null;
     const arrive = parts[dateIdx + 1] ? parseDatetime(parts[dateIdx + 1]) : undefined;
-    // Everything after dates: check for price (e.g. "150€", "5000₽", "200 EUR", "3000 RUB"), rest goes to notes
+    // Everything after dates: check for fn:XXX (flight number), price, rest goes to notes
     const notesStartIdx = dateIdx + (arrive ? 2 : 1);
     const tail = parts.slice(notesStartIdx);
     let price: number | undefined;
     let currency: string | undefined;
+    let flightNumber: string | undefined;
     const notesParts: string[] = [];
     for (const p of tail) {
+      const fnMatch = p.match(/^fn:(.+)$/i);
+      if (fnMatch && !flightNumber) {
+        flightNumber = fnMatch[1].trim().toUpperCase();
+        continue;
+      }
       const priceMatch = p.match(/^(\d+(?:[.,]\d+)?)\s*([€₽]|EUR|RUB)?$/i);
       if (priceMatch && !price) {
         price = parseFloat(priceMatch[1].replace(',', '.'));
@@ -152,7 +159,7 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
       }
     }
     const notes = notesParts.join(', ').trim() || undefined;
-    return { type: 'flight', kind: isEvent ? 'event' : isHotel ? 'hotel' : 'flight', title, city, departDate: depart.date, departTime: depart.time, arriveDate: arrive?.date, arriveTime: arrive?.time, notes, price, currency, photoFileId, msgDate };
+    return { type: 'flight', kind: isEvent ? 'event' : isHotel ? 'hotel' : 'flight', title, city, flightNumber, departDate: depart.date, departTime: depart.time, arriveDate: arrive?.date, arriveTime: arrive?.time, notes, price, currency, photoFileId, msgDate };
   }
 
   // /doc <name> (with optional photo or document attached)
