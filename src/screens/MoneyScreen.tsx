@@ -4,7 +4,7 @@ import { useMoneyStore, Account, Transaction, BankType } from '../store/moneySto
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
 import { DatePickerField } from '../components/DatePickerField';
-import { parseXlsx, BANK_LABELS, ParsedTransaction } from '../services/bankParsers';
+import { parseBankFile, BANK_LABELS, ParsedTransaction } from '../services/bankParsers';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Crypto from 'expo-crypto';
 import { File } from 'expo-file-system';
@@ -531,23 +531,34 @@ export function MoneyScreen() {
     );
   }
 
-  const handleImportXlsx = async () => {
+  const handleImportFile = async () => {
     if (!selectedAccountId || !selectedAccount?.bank) return;
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'],
+        type: [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+          'text/csv',
+          'text/comma-separated-values',
+          '*/*',
+        ],
         copyToCacheDirectory: true,
       });
       if (result.canceled || !result.assets?.[0]) return;
       const uri = result.assets[0].uri;
+      const fileName = result.assets[0].name || '';
+      const isXlsx = fileName.toLowerCase().endsWith('.xlsx') || fileName.toLowerCase().endsWith('.xls');
       const file = new File(uri);
-      const raw = file.text();
-      // expo-file-system File.text() returns UTF-8; we need base64 for xlsx
-      const bytes = file.bytes();
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const base64 = btoa(binary);
-      const parsed = parseXlsx(base64, selectedAccount.bank);
+      let content: string;
+      if (isXlsx) {
+        const bytes = file.bytes();
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        content = btoa(binary);
+      } else {
+        content = file.text();
+      }
+      const parsed = parseBankFile(content, selectedAccount.bank, isXlsx);
       if (parsed.length === 0) {
         Alert.alert('Импорт', 'Не удалось найти транзакции в файле');
         return;
@@ -746,7 +757,7 @@ export function MoneyScreen() {
             <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>+ Транзакция</Text>
           </TouchableOpacity>
           {selectedAccount?.bank && (
-            <TouchableOpacity style={[st.btn, { backgroundColor: '#8B5CF6', paddingVertical: 8, paddingHorizontal: 12 }]} onPress={handleImportXlsx}>
+            <TouchableOpacity style={[st.btn, { backgroundColor: '#8B5CF6', paddingVertical: 8, paddingHorizontal: 12 }]} onPress={handleImportFile}>
               <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>Импорт</Text>
             </TouchableOpacity>
           )}

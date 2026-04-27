@@ -53,14 +53,25 @@ function parseAmount(val: any): number | null {
   return isNaN(n) ? null : n;
 }
 
-/** Revolut XLSX: Type, Product, Started Date, Completed Date, Description, Amount, Fee, Currency, State, Balance */
+/**
+ * Revolut CSV/XLSX (Russian locale)
+ * Headers: Тип, Продукт, Дата начала, Дата выполнения, Описание, Сумма, Комиссия, Валюта, State, Остаток средств
+ * English: Type, Product, Started Date, Completed Date, Description, Amount, Fee, Currency, State, Balance
+ */
 function parseRevolut(rows: any[][]): ParsedTransaction[] {
   const header = rows[0]?.map((h: any) => String(h || '').toLowerCase().trim()) || [];
-  const dateIdx = header.findIndex((h) => h.includes('started') || h.includes('completed') || h === 'date');
-  const amountIdx = header.findIndex((h) => h === 'amount');
-  const descIdx = header.findIndex((h) => h === 'description' || h === 'desc');
-  const typeIdx = header.findIndex((h) => h === 'type');
-  const stateIdx = header.findIndex((h) => h === 'state');
+
+  // Support both Russian and English headers
+  const dateIdx = header.findIndex((h) =>
+    h.includes('дата начала') || h.includes('started') || h === 'date');
+  const amountIdx = header.findIndex((h) =>
+    h === 'сумма' || h === 'amount');
+  const descIdx = header.findIndex((h) =>
+    h === 'описание' || h === 'description');
+  const typeIdx = header.findIndex((h) =>
+    h === 'тип' || h === 'type');
+  const stateIdx = header.findIndex((h) =>
+    h === 'state' || h === 'статус');
 
   if (dateIdx === -1 || amountIdx === -1) return [];
 
@@ -71,7 +82,8 @@ function parseRevolut(rows: any[][]): ParsedTransaction[] {
     // Skip failed/reverted
     if (stateIdx >= 0) {
       const state = String(row[stateIdx] || '').toLowerCase();
-      if (state === 'failed' || state === 'reverted' || state === 'declined') continue;
+      if (state === 'failed' || state === 'reverted' || state === 'declined'
+        || state === 'отменено' || state === 'неудачно') continue;
     }
     const dt = parseDate(row[dateIdx]);
     const amount = parseAmount(row[amountIdx]);
@@ -94,12 +106,10 @@ function parseRevolut(rows: any[][]): ParsedTransaction[] {
 function parseEurobank(rows: any[][]): ParsedTransaction[] {
   const header = rows[0]?.map((h: any) => String(h || '').toLowerCase().trim()) || [];
 
-  // Try to find columns by common Greek/English Eurobank headers
   const dateIdx = header.findIndex((h) =>
     h.includes('date') || h.includes('ημερομηνία') || h.includes('ημ/νία') || h.includes('trans'));
   const amountIdx = header.findIndex((h) =>
     h.includes('amount') || h.includes('ποσό') || h.includes('ποσον'));
-  // Sometimes debit/credit separate columns
   const debitIdx = header.findIndex((h) => h.includes('debit') || h.includes('χρέωση'));
   const creditIdx = header.findIndex((h) => h.includes('credit') || h.includes('πίστωση'));
   const descIdx = header.findIndex((h) =>
@@ -138,10 +148,55 @@ function parseEurobank(rows: any[][]): ParsedTransaction[] {
   return results;
 }
 
-export function parseXlsx(base64: string, bank: BankType): ParsedTransaction[] {
-  const wb = XLSX.read(base64, { type: 'base64' });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+function csvToRows(text: string): any[][] {
+  const lines: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (inQuotes && text[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === '\n' && !inQuotes) {
+      lines.push(current);
+      current = '';
+    } else if (ch === '\r' && !inQuotes) {
+      // skip
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) lines.push(current);
+  return lines.map((line) => {
+    const cells: string[] = [];
+    let cell = '';
+    let q = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (q && line[i + 1] === '"') { cell += '"'; i++; }
+        else q = !q;
+      } else if (ch === ',' && !q) {
+        cells.push(cell);
+        cell = '';
+      } else {
+        cell += ch;
+      }
+    }
+    cells.push(cell);
+    return cells;
+  });
+}
+
+export function parseBankFile(content: string, bank: BankType, isXlsx: boolean): ParsedTransaction[] {
+  let rows: any[][];
+  if (isXlsx) {
+    const wb = XLSX.read(content, { type: 'base64' });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+  } else {
+    rows = csvToRows(content);
+  }
   if (!rows.length) return [];
 
   switch (bank) {
