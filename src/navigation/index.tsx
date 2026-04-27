@@ -23,6 +23,7 @@ import { ProjectsScreen } from "../screens/ProjectsScreen";
 import { ProjectDetailScreen } from "../screens/ProjectDetailScreen";
 import { DailyRoutineScreen } from "../screens/DailyRoutineScreen";
 import { WeeklyRoutineScreen } from "../screens/WeeklyRoutineScreen";
+import { MoneyScreen, triggerAddAccount } from "../screens/MoneyScreen";
 import { StatsScreen } from "../screens/StatsScreen";
 import { SettingsScreen } from "../screens/SettingsScreen";
 import { SubjectTasksScreen } from "../screens/SubjectTasksScreen";
@@ -56,9 +57,9 @@ const HeaderButtons = React.memo(function HeaderButtons() {
       </TouchableOpacity>
       <TouchableOpacity
         style={hStyles.btn}
-        onPress={() => navigation.navigate("WeeklyRoutine")}
+        onPress={() => navigation.navigate("Money")}
       >
-        <Text style={hStyles.emoji}>📊</Text>
+        <Text style={hStyles.emoji}>💰</Text>
       </TouchableOpacity>
       <TouchableOpacity
         style={hStyles.btn}
@@ -299,6 +300,18 @@ export function AppNavigator() {
           name="WeeklyRoutine"
           component={WeeklyRoutineScreen}
           options={{ title: "Еженедельный обзор" }}
+        />
+        <Stack.Screen
+          name="Money"
+          component={MoneyScreen}
+          options={{
+            title: "Деньги",
+            headerRight: () => (
+              <TouchableOpacity style={{ marginRight: 16, paddingHorizontal: 8, paddingVertical: 4 }} onPress={triggerAddAccount}>
+                <Text style={{ fontSize: 20, fontWeight: '600' }}>+</Text>
+              </TouchableOpacity>
+            ),
+          }}
         />
         <Stack.Screen
           name="Sport"

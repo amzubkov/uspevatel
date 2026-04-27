@@ -42,7 +42,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 21;
+const SCHEMA_VERSION = 26;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS checklist (
 
 CREATE TABLE IF NOT EXISTS flights (
   id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL DEFAULT 'flight' CHECK(kind IN ('flight','hotel')),
+  kind TEXT NOT NULL DEFAULT 'flight' CHECK(kind IN ('flight','hotel','event')),
   title TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'planned',
   city TEXT,
@@ -359,6 +359,31 @@ CREATE TABLE IF NOT EXISTS car_services (
 CREATE INDEX IF NOT EXISTS idx_car_documents_car ON car_documents(car_id);
 CREATE INDEX IF NOT EXISTS idx_car_document_images_doc ON car_document_images(car_document_id);
 CREATE INDEX IF NOT EXISTS idx_car_services_car ON car_services(car_id);
+
+CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'RUB',
+  color TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS transactions (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  amount REAL NOT NULL,
+  date TEXT NOT NULL,
+  timestamp TEXT,
+  category TEXT NOT NULL DEFAULT '',
+  tag TEXT NOT NULL DEFAULT '',
+  comment TEXT NOT NULL DEFAULT '',
+  is_correction INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
 `;
 
 export async function getDb(): Promise<SQLite.SQLiteDatabase> {
@@ -401,7 +426,7 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
     try {
       await db.execAsync(`CREATE TABLE IF NOT EXISTS flights (
         id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL DEFAULT 'flight' CHECK(kind IN ('flight','hotel')),
+        kind TEXT NOT NULL DEFAULT 'flight' CHECK(kind IN ('flight','hotel','event')),
         title TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'planned',
         depart_date TEXT NOT NULL,
@@ -656,6 +681,108 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
       );`);
       await db.execAsync("INSERT OR IGNORE INTO checklists (id, name, sort_order) VALUES ('default', 'Чеклист', 0);");
       try { await db.execAsync("ALTER TABLE checklist ADD COLUMN list_id TEXT NOT NULL DEFAULT 'default' REFERENCES checklists(id) ON DELETE CASCADE;"); } catch {}
+    } catch {}
+  }
+
+  if (currentVer < 22) {
+    // Recreate flights table to relax CHECK constraint on kind (add 'event')
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS flights_new (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL DEFAULT 'flight' CHECK(kind IN ('flight','hotel','event')),
+        title TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'planned',
+        city TEXT,
+        depart_date TEXT NOT NULL,
+        depart_time TEXT,
+        arrive_date TEXT,
+        arrive_time TEXT,
+        notes TEXT NOT NULL DEFAULT '',
+        image_data TEXT,
+        traveler_id TEXT,
+        price REAL,
+        currency TEXT DEFAULT 'EUR',
+        created_at TEXT NOT NULL
+      );`);
+      await db.execAsync(`INSERT INTO flights_new SELECT id, kind, title, status, city, depart_date, depart_time, arrive_date, arrive_time, notes, image_data, traveler_id, price, currency, created_at FROM flights;`);
+      await db.execAsync(`DROP TABLE flights;`);
+      await db.execAsync(`ALTER TABLE flights_new RENAME TO flights;`);
+      await db.execAsync(`CREATE INDEX IF NOT EXISTS idx_flights_depart ON flights(depart_date);`);
+    } catch {}
+  }
+
+  if (currentVer < 23) {
+    // Recreate checklist table to ensure list_id column exists
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS checklists (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      );`);
+      await db.execAsync("INSERT OR IGNORE INTO checklists (id, name, sort_order) VALUES ('default', 'Чеклист', 0);");
+      // Check if list_id exists
+      const cols = await db.getAllAsync<{ name: string }>("PRAGMA table_info(checklist)");
+      const hasListId = cols.some((c) => c.name === 'list_id');
+      if (!hasListId) {
+        await db.execAsync(`CREATE TABLE IF NOT EXISTS checklist_new (
+          id TEXT PRIMARY KEY,
+          list_id TEXT NOT NULL DEFAULT 'default',
+          title TEXT NOT NULL,
+          done INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        );`);
+        await db.execAsync(`INSERT INTO checklist_new (id, list_id, title, done, created_at) SELECT id, 'default', title, done, created_at FROM checklist;`);
+        await db.execAsync(`DROP TABLE checklist;`);
+        await db.execAsync(`ALTER TABLE checklist_new RENAME TO checklist;`);
+      }
+    } catch {}
+  }
+
+  if (currentVer < 24) {
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS accounts (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'RUB',
+        color TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );`);
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS transactions (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        amount REAL NOT NULL,
+        date TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT '',
+        tag TEXT NOT NULL DEFAULT '',
+        comment TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );`);
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);');
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);');
+    } catch {}
+  }
+
+  if (currentVer < 25) {
+    // Ensure accounts.color column exists (was added to schema but not migrated)
+    try {
+      const cols = await db.getAllAsync<{ name: string }>("PRAGMA table_info(accounts)");
+      if (!cols.some((c) => c.name === 'color')) {
+        await db.execAsync("ALTER TABLE accounts ADD COLUMN color TEXT;");
+      }
+    } catch {}
+  }
+
+  if (currentVer < 26) {
+    try {
+      const cols = await db.getAllAsync<{ name: string }>("PRAGMA table_info(transactions)");
+      if (!cols.some((c) => c.name === 'is_correction')) {
+        await db.execAsync("ALTER TABLE transactions ADD COLUMN is_correction INTEGER NOT NULL DEFAULT 0;");
+      }
+      if (!cols.some((c) => c.name === 'timestamp')) {
+        await db.execAsync("ALTER TABLE transactions ADD COLUMN timestamp TEXT;");
+        await db.execAsync("UPDATE transactions SET timestamp = date || 'T00:00:00' WHERE timestamp IS NULL;");
+      }
     } catch {}
   }
 

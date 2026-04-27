@@ -3,6 +3,7 @@ import { Alert } from 'react-native';
 import * as Crypto from 'expo-crypto';
 import { File, Paths, Directory } from 'expo-file-system';
 import { getDb, getImageBaseDir } from '../db/database';
+import { scheduleFlightReminder, cancelFlightReminder } from '../utils/notifications';
 
 export type FlightStatus = 'not_planned' | 'planned' | 'reserved' | 'booked' | 'completed' | 'cancelled';
 export type FlightKind = 'flight' | 'hotel' | 'event';
@@ -92,6 +93,9 @@ export const useFlightStore = create<FlightState>()((set, get) => ({
     for (const tid of flight.travelerIds) {
       await db.runAsync('INSERT OR IGNORE INTO flight_travelers (flight_id, traveler_id) VALUES (?,?)', [flight.id, tid]);
     }
+    if (flight.kind === 'flight') {
+      scheduleFlightReminder(flight.id, flight.title, flight.departDate, flight.departTime);
+    }
   },
 
   updateFlight: async (id, fields) => {
@@ -116,10 +120,20 @@ export const useFlightStore = create<FlightState>()((set, get) => ({
         await db.runAsync('INSERT OR IGNORE INTO flight_travelers (flight_id, traveler_id) VALUES (?,?)', [id, tid]);
       }
     }
+    if ('departDate' in fields || 'departTime' in fields || 'title' in fields || 'kind' in fields) {
+      const updated = get().flights.find((f) => f.id === id);
+      if (updated) {
+        await cancelFlightReminder(id);
+        if (updated.kind === 'flight') {
+          scheduleFlightReminder(id, updated.title, updated.departDate, updated.departTime);
+        }
+      }
+    }
   },
 
   removeFlight: async (id) => {
     set((s) => ({ flights: s.flights.filter((f) => f.id !== id) }));
+    cancelFlightReminder(id);
     const db = await getDb();
     await db.runAsync('DELETE FROM flights WHERE id = ?', [id]);
   },

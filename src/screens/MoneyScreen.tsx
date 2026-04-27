@@ -1,0 +1,652 @@
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { View, Text, TextInput, TouchableOpacity, FlatList, ScrollView, KeyboardAvoidingView, Platform, StyleSheet, Alert } from 'react-native';
+import { useMoneyStore, Account, Transaction } from '../store/moneyStore';
+import { useSettingsStore } from '../store/settingsStore';
+import { colors } from '../utils/theme';
+import { DatePickerField } from '../components/DatePickerField';
+
+const CURRENCIES = ['RUB', 'EUR', 'USDT'];
+const ACC_COLORS = ['#EF4444', '#F59E0B', '#22C55E', '#3B82F6', '#8B5CF6', '#EC4899', '#06B6D4', '#6B7280'];
+const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+function dayOffset(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().substring(0, 10);
+}
+const DATE_QUICK = [
+  { key: 'today', label: 'Сегодня', date: dayOffset(0) },
+  { key: 'yesterday', label: 'Вчера', date: dayOffset(1) },
+  { key: 'before', label: 'Пзвчера', date: dayOffset(2) },
+];
+
+function fmtDate(d: string): string {
+  const [y, m, day] = d.split('-').map(Number);
+  return `${day} ${MONTHS[m - 1]} ${y}`;
+}
+function fmtDateNum(d: string): string {
+  const [y, m, day] = d.split('-');
+  return `${day}.${m}.${y}`;
+}
+const CUR_SYMBOL: Record<string, string> = { RUB: '₽', EUR: '€', USDT: '$' };
+function curSym(c: string) { return CUR_SYMBOL[c] || c; }
+
+function fmtAmount(n: number, currency: string): string {
+  const abs = Math.abs(n);
+  const s = abs % 1 === 0 ? abs.toFixed(0) : abs.toFixed(2);
+  const parts = s.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return `${n < 0 ? '−' : n > 0 ? '+' : ''}${parts} ${curSym(currency)}`;
+}
+
+function fmtBalance(n: number, currency: string): string {
+  const abs = Math.abs(n);
+  const s = abs % 1 === 0 ? abs.toFixed(0) : abs.toFixed(2);
+  const parts = s.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return `${n < 0 ? '−' : ''}${parts} ${curSym(currency)}`;
+}
+
+// Global ref to trigger add account from navigation header
+let _showAddAccount: (() => void) | null = null;
+export function triggerAddAccount() { _showAddAccount?.(); }
+
+export function MoneyScreen() {
+  const theme = useSettingsStore((s) => s.theme);
+  const c = colors[theme];
+  const { accounts, addAccount, updateAccount, removeAccount, addTransaction, updateTransaction, removeTransaction, addCorrection, getCorrection, getCorrectionDate, getBalance, getTransactionsForAccount, getLastTxDate, getAllCategories, getAllTags } = useMoneyStore();
+
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [showAccountForm, setShowAccountForm] = useState(false);
+
+  useEffect(() => {
+    _showAddAccount = () => setShowAccountForm(true);
+    return () => { _showAddAccount = null; };
+  }, []);
+  const [showTxForm, setShowTxForm] = useState(false);
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+  const [editingTxId, setEditingTxId] = useState<string | null>(null);
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set());
+  const [periodFilter, setPeriodFilter] = useState<string | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+
+  const [showCorrectionForm, setShowCorrectionForm] = useState(false);
+  const [correctionBalance, setCorrectionBalance] = useState('');
+
+  // Account form
+  const [accName, setAccName] = useState('');
+  const [accCurrency, setAccCurrency] = useState('RUB');
+  const [accColor, setAccColor] = useState<string | undefined>(undefined);
+
+  // Transaction form
+  const [txAmount, setTxAmount] = useState('');
+  const [txMode, setTxMode] = useState<'expense' | 'income' | 'transfer'>('expense');
+  const [txTargetAccountId, setTxTargetAccountId] = useState<string | null>(null);
+  const [txTargetAmount, setTxTargetAmount] = useState('');
+  const [txDate, setTxDate] = useState(new Date().toISOString().substring(0, 10));
+  const [showCustomDate, setShowCustomDate] = useState(false);
+  const [txCategory, setTxCategory] = useState('');
+  const [txTag, setTxTag] = useState('');
+  const [txComment, setTxComment] = useState('');
+
+  const selectedAccount = useMemo(() => accounts.find((a) => a.id === selectedAccountId), [accounts, selectedAccountId]);
+  const accountTxs = useMemo(() => selectedAccountId ? getTransactionsForAccount(selectedAccountId) : [], [selectedAccountId, useMoneyStore((s) => s.transactions)]);
+
+  const duplicateIds = useMemo(() => {
+    const ids = new Set<string>();
+    const seen = new Map<string, string>();
+    for (const tx of accountTxs) {
+      const key = `${tx.accountId}|${tx.date}|${tx.amount}|${tx.category}|${tx.tag}|${tx.comment}`;
+      const prev = seen.get(key);
+      if (prev) { ids.add(prev); ids.add(tx.id); }
+      else seen.set(key, tx.id);
+    }
+    return ids;
+  }, [accountTxs]);
+
+  const filteredTxs = useMemo(() => {
+    let txs = accountTxs;
+    if (periodFilter) {
+      const now = new Date();
+      let cutoff: string;
+      if (periodFilter === 'today') cutoff = now.toISOString().substring(0, 10);
+      else if (periodFilter === 'week') { const d = new Date(now); d.setDate(d.getDate() - 7); cutoff = d.toISOString().substring(0, 10); }
+      else if (periodFilter === 'month') { const d = new Date(now); d.setMonth(d.getMonth() - 1); cutoff = d.toISOString().substring(0, 10); }
+      else if (periodFilter === 'year') { const d = new Date(now); d.setFullYear(d.getFullYear() - 1); cutoff = d.toISOString().substring(0, 10); }
+      else cutoff = '0000';
+      txs = txs.filter((t) => t.date >= cutoff);
+    }
+    if (categoryFilter) txs = txs.filter((t) => t.category === categoryFilter);
+    return txs;
+  }, [accountTxs, periodFilter, categoryFilter]);
+
+  const accountCategories = useMemo(() => {
+    const cats = new Set<string>();
+    for (const t of accountTxs) if (t.category && t.category !== 'Коррекция') cats.add(t.category);
+    return [...cats].sort();
+  }, [accountTxs]);
+
+  const existingCategories = useMemo(() => getAllCategories(), [useMoneyStore((s) => s.transactions)]);
+  const existingTags = useMemo(() => getAllTags(), [useMoneyStore((s) => s.transactions)]);
+
+  const resetAccountForm = () => {
+    setAccName(''); setAccCurrency('RUB'); setAccColor(undefined); setShowAccountForm(false); setEditingAccountId(null);
+  };
+
+  const handleSaveAccount = async () => {
+    if (!accName.trim()) { Alert.alert('Введите название счёта'); return; }
+    if (editingAccountId) {
+      await updateAccount(editingAccountId, { name: accName.trim(), currency: accCurrency, color: accColor });
+    } else {
+      await addAccount(accName.trim(), accCurrency, accColor);
+    }
+    resetAccountForm();
+  };
+
+  const handleEditAccount = (acc: Account) => {
+    setEditingAccountId(acc.id);
+    setAccName(acc.name);
+    setAccCurrency(acc.currency);
+    setAccColor(acc.color);
+    setShowAccountForm(true);
+  };
+
+  const handleDeleteAccount = (acc: Account) => {
+    Alert.alert('Удалить счёт?', `"${acc.name}" и все транзакции будут удалены`, [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: () => {
+        if (selectedAccountId === acc.id) setSelectedAccountId(null);
+        removeAccount(acc.id);
+      }},
+    ]);
+  };
+
+  const handleAccountLongPress = (acc: Account) => {
+    Alert.alert(acc.name, '', [
+      { text: 'Редактировать', onPress: () => handleEditAccount(acc) },
+      { text: 'Удалить', style: 'destructive', onPress: () => handleDeleteAccount(acc) },
+      { text: 'Отмена', style: 'cancel' },
+    ]);
+  };
+
+  const resetTxForm = () => {
+    setTxAmount(''); setTxMode('expense'); setTxTargetAccountId(null); setTxTargetAmount('');
+    setTxDate(new Date().toISOString().substring(0, 10)); setShowCustomDate(false);
+    setTxCategory(''); setTxTag(''); setTxComment(''); setShowTxForm(false); setEditingTxId(null);
+  };
+
+  const startEditTx = (tx: Transaction) => {
+    setEditingTxId(tx.id);
+    setTxAmount(String(Math.abs(tx.amount)));
+    setTxMode(tx.amount >= 0 ? 'income' : 'expense');
+    setTxDate(tx.date);
+    setTxCategory(tx.category);
+    setTxTag(tx.tag);
+    setTxComment(tx.comment);
+    setTxTargetAccountId(null);
+    setTxTargetAmount('');
+    setShowTxForm(true);
+  };
+
+  const targetAccount = useMemo(() => accounts.find((a) => a.id === txTargetAccountId), [accounts, txTargetAccountId]);
+  const needsConversion = txMode === 'transfer' && selectedAccount && targetAccount && selectedAccount.currency !== targetAccount.currency;
+
+  const handleSaveTx = async () => {
+    const num = parseFloat(txAmount.replace(',', '.'));
+    if (!num || !selectedAccountId) { Alert.alert('Введите сумму'); return; }
+
+    if (editingTxId) {
+      await updateTransaction(editingTxId, {
+        amount: txMode === 'expense' ? -Math.abs(num) : Math.abs(num),
+        date: txDate,
+        category: txCategory.trim(),
+        tag: txTag.trim(),
+        comment: txComment.trim(),
+      });
+      resetTxForm();
+      return;
+    }
+
+    if (txMode === 'transfer') {
+      if (!txTargetAccountId) { Alert.alert('Выберите счёт назначения'); return; }
+      if (txTargetAccountId === selectedAccountId) { Alert.alert('Нельзя перевести на тот же счёт'); return; }
+      const targetNum = needsConversion ? parseFloat(txTargetAmount.replace(',', '.')) : num;
+      if (!targetNum) { Alert.alert('Введите сумму в валюте получателя'); return; }
+      const comment = txComment.trim() || `→ ${targetAccount?.name}`;
+      const commentBack = txComment.trim() || `← ${selectedAccount?.name}`;
+      await addTransaction({ accountId: selectedAccountId, amount: -Math.abs(num), date: txDate, category: 'Перевод', tag: txTag.trim(), comment });
+      await addTransaction({ accountId: txTargetAccountId, amount: Math.abs(targetNum), date: txDate, category: 'Перевод', tag: txTag.trim(), comment: commentBack });
+    } else {
+      await addTransaction({
+        accountId: selectedAccountId,
+        amount: txMode === 'expense' ? -Math.abs(num) : Math.abs(num),
+        date: txDate,
+        category: txCategory.trim(),
+        tag: txTag.trim(),
+        comment: txComment.trim(),
+      });
+    }
+    resetTxForm();
+  };
+
+  const handleCopyTx = (tx: Transaction) => {
+    setTxAmount(String(Math.abs(tx.amount)));
+    setTxMode(tx.amount >= 0 ? 'income' : 'expense');
+    setTxDate(new Date().toISOString().substring(0, 10));
+    setTxCategory(tx.category);
+    setTxTag(tx.tag);
+    setTxComment(tx.comment);
+    setTxTargetAccountId(null);
+    setTxTargetAmount('');
+    setEditingTxId(null);
+    setShowCustomDate(false);
+    setShowTxForm(true);
+  };
+
+  const toggleDeleteSelect = (id: string) => {
+    setSelectedForDelete((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const enterDeleteMode = (firstId: string) => {
+    setDeleteMode(true);
+    setSelectedForDelete(new Set([firstId]));
+  };
+
+  const confirmDeleteSelected = () => {
+    const count = selectedForDelete.size;
+    Alert.alert(`Удалить ${count} транзакций?`, '', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: () => {
+        for (const id of selectedForDelete) removeTransaction(id);
+        setDeleteMode(false);
+        setSelectedForDelete(new Set());
+      }},
+    ]);
+  };
+
+  const cancelDeleteMode = () => {
+    setDeleteMode(false);
+    setSelectedForDelete(new Set());
+  };
+
+  const handleTxLongPress = (tx: Transaction) => {
+    if (deleteMode) return;
+    Alert.alert('Транзакция', `${fmtAmount(tx.amount, selectedAccount?.currency || '')} ${tx.comment}`, [
+      { text: 'Копировать', onPress: () => handleCopyTx(tx) },
+      { text: 'Выбрать для удаления', style: 'destructive', onPress: () => enterDeleteMode(tx.id) },
+      { text: 'Отмена', style: 'cancel' },
+    ]);
+  };
+
+  // ── Account form ──
+  if (showAccountForm) {
+    return (
+      <View style={[st.container, { backgroundColor: c.background }]}>
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <Text style={[st.formTitle, { color: c.text }]}>{editingAccountId ? 'Редактировать счёт' : 'Новый счёт'}</Text>
+          <Text style={[st.label, { color: c.textSecondary }]}>Название</Text>
+          <TextInput style={[st.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
+            value={accName} onChangeText={setAccName} placeholder="Tinkoff, Наличные..." placeholderTextColor={c.textSecondary} autoFocus />
+          <Text style={[st.label, { color: c.textSecondary }]}>Валюта</Text>
+          <View style={st.chipRow}>
+            {CURRENCIES.map((cur) => (
+              <TouchableOpacity key={cur}
+                style={[st.chip, { backgroundColor: accCurrency === cur ? c.primary : c.card, borderColor: accCurrency === cur ? c.primary : c.border }]}
+                onPress={() => setAccCurrency(cur)}>
+                <Text style={{ color: accCurrency === cur ? '#FFF' : c.text, fontSize: 12, fontWeight: '600' }}>{curSym(cur)} {cur}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={[st.label, { color: c.textSecondary }]}>Цвет</Text>
+          <View style={st.chipRow}>
+            <TouchableOpacity
+              style={[st.colorDot, { backgroundColor: c.card, borderColor: c.border, borderWidth: !accColor ? 2 : 1 }]}
+              onPress={() => setAccColor(undefined)}>
+              <Text style={{ fontSize: 10, color: c.textSecondary }}>—</Text>
+            </TouchableOpacity>
+            {ACC_COLORS.map((clr) => (
+              <TouchableOpacity key={clr}
+                style={[st.colorDot, { backgroundColor: clr, borderColor: accColor === clr ? '#FFF' : clr, borderWidth: accColor === clr ? 3 : 1 }]}
+                onPress={() => setAccColor(clr)} />
+            ))}
+          </View>
+          <View style={st.formBtns}>
+            <TouchableOpacity style={[st.btn, { backgroundColor: c.primary, flex: 1 }]} onPress={handleSaveAccount}>
+              <Text style={{ color: '#FFF', fontWeight: '700' }}>{editingAccountId ? 'Сохранить' : 'Добавить'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[st.btn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border, flex: 1 }]} onPress={resetAccountForm}>
+              <Text style={{ color: c.text, fontWeight: '600' }}>Отмена</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // ── Transaction form ──
+  if (showTxForm && selectedAccountId) {
+    return (
+      <KeyboardAvoidingView style={[st.container, { backgroundColor: c.background }]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+          <Text style={[st.formTitle, { color: c.text }]}>{editingTxId ? 'Редактировать' : 'Новая транзакция'}</Text>
+          <Text style={[st.formSubtitle, { color: c.textSecondary }]}>{selectedAccount?.name} ({curSym(selectedAccount?.currency || '')})</Text>
+
+          <View style={st.chipRow}>
+            <TouchableOpacity style={[st.chip, { flex: 1, backgroundColor: txMode === 'expense' ? '#EF4444' : c.card, borderColor: txMode === 'expense' ? '#EF4444' : c.border }]}
+              onPress={() => setTxMode('expense')}>
+              <Text style={{ color: txMode === 'expense' ? '#FFF' : c.text, fontWeight: '700', fontSize: 12 }}>− Расход</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[st.chip, { flex: 1, backgroundColor: txMode === 'income' ? '#22C55E' : c.card, borderColor: txMode === 'income' ? '#22C55E' : c.border }]}
+              onPress={() => setTxMode('income')}>
+              <Text style={{ color: txMode === 'income' ? '#FFF' : c.text, fontWeight: '700', fontSize: 12 }}>+ Доход</Text>
+            </TouchableOpacity>
+            {!editingTxId && (
+              <TouchableOpacity style={[st.chip, { flex: 1, backgroundColor: txMode === 'transfer' ? '#3B82F6' : c.card, borderColor: txMode === 'transfer' ? '#3B82F6' : c.border }]}
+                onPress={() => setTxMode('transfer')}>
+                <Text style={{ color: txMode === 'transfer' ? '#FFF' : c.text, fontWeight: '700', fontSize: 12 }}>↔ Перевод</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {txMode === 'transfer' && (
+            <>
+              <Text style={[st.label, { color: c.textSecondary }]}>На счёт</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+                {accounts.filter((a) => a.id !== selectedAccountId).map((a) => (
+                  <TouchableOpacity key={a.id}
+                    style={[st.chip, { marginRight: 6, backgroundColor: txTargetAccountId === a.id ? '#3B82F6' : c.card, borderColor: txTargetAccountId === a.id ? '#3B82F6' : c.border }]}
+                    onPress={() => setTxTargetAccountId(a.id)}>
+                    <Text style={{ color: txTargetAccountId === a.id ? '#FFF' : c.text, fontSize: 12, fontWeight: '600' }}>{a.name} ({curSym(a.currency)})</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </>
+          )}
+
+          <Text style={[st.label, { color: c.textSecondary }]}>Сумма</Text>
+          <TextInput style={[st.input, { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 24, fontWeight: '700' }]}
+            value={txAmount} onChangeText={setTxAmount} placeholder="0" placeholderTextColor={c.textSecondary}
+            keyboardType="decimal-pad" autoFocus />
+
+          {needsConversion && (
+            <>
+              <Text style={[st.label, { color: c.textSecondary }]}>Сумма в {curSym(targetAccount?.currency || '')}</Text>
+              <TextInput style={[st.input, { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 24, fontWeight: '700' }]}
+                value={txTargetAmount} onChangeText={setTxTargetAmount} placeholder="0" placeholderTextColor={c.textSecondary}
+                keyboardType="decimal-pad" />
+            </>
+          )}
+
+          <Text style={[st.label, { color: c.textSecondary }]}>Дата</Text>
+          <View style={st.chipRow}>
+            {DATE_QUICK.map((dq) => {
+              const active = txDate === dq.date;
+              return (
+                <TouchableOpacity key={dq.key}
+                  style={[st.chip, { flex: 1, backgroundColor: active ? c.primary : c.card, borderColor: active ? c.primary : c.border }]}
+                  onPress={() => { setTxDate(dq.date); setShowCustomDate(false); }}>
+                  <Text style={{ color: active ? '#FFF' : c.text, fontSize: 11, fontWeight: '600' }}>{dq.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity
+              style={[st.chip, { flex: 1, backgroundColor: showCustomDate ? c.primary : c.card, borderColor: showCustomDate ? c.primary : c.border }]}
+              onPress={() => setShowCustomDate(true)}>
+              <Text style={{ color: showCustomDate ? '#FFF' : c.text, fontSize: 11, fontWeight: '600' }}>Другая</Text>
+            </TouchableOpacity>
+          </View>
+          {showCustomDate && (
+            <DatePickerField value={txDate} onChange={setTxDate} label=""
+              textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
+          )}
+
+          {txMode !== 'transfer' && (
+            <>
+              <Text style={[st.label, { color: c.textSecondary }]}>Категория</Text>
+              <TextInput style={[st.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
+                value={txCategory} onChangeText={setTxCategory} placeholder="Еда, Транспорт..." placeholderTextColor={c.textSecondary} />
+              {existingCategories.length > 0 && !txCategory && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+                  {existingCategories.map((cat) => (
+                    <TouchableOpacity key={cat} style={[st.chip, { backgroundColor: c.card, borderColor: c.border, marginRight: 4 }]}
+                      onPress={() => setTxCategory(cat)}>
+                      <Text style={{ color: c.text, fontSize: 11 }}>{cat}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+            </>
+          )}
+
+          <Text style={[st.label, { color: c.textSecondary }]}>Тег</Text>
+          <TextInput style={[st.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
+            value={txTag} onChangeText={setTxTag} placeholder="Необязательно" placeholderTextColor={c.textSecondary} />
+          {existingTags.length > 0 && !txTag && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+              {existingTags.map((tag) => (
+                <TouchableOpacity key={tag} style={[st.chip, { backgroundColor: c.card, borderColor: c.border, marginRight: 4 }]}
+                  onPress={() => setTxTag(tag)}>
+                  <Text style={{ color: c.text, fontSize: 11 }}>{tag}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+
+          <Text style={[st.label, { color: c.textSecondary }]}>Комментарий</Text>
+          <TextInput style={[st.input, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
+            value={txComment} onChangeText={setTxComment} placeholder="Описание" placeholderTextColor={c.textSecondary} />
+
+          <View style={st.formBtns}>
+            <TouchableOpacity style={[st.btn, { backgroundColor: c.primary, flex: 1 }]} onPress={handleSaveTx}>
+              <Text style={{ color: '#FFF', fontWeight: '700' }}>{editingTxId ? 'Сохранить' : 'Добавить'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[st.btn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border, flex: 1 }]} onPress={resetTxForm}>
+              <Text style={{ color: c.text, fontWeight: '600' }}>Отмена</Text>
+            </TouchableOpacity>
+          </View>
+          {editingTxId && (
+            <TouchableOpacity style={[st.btn, { marginTop: 8 }]} onPress={() => {
+              Alert.alert('Удалить транзакцию?', '', [
+                { text: 'Отмена', style: 'cancel' },
+                { text: 'Удалить', style: 'destructive', onPress: () => { removeTransaction(editingTxId); resetTxForm(); } },
+              ]);
+            }}>
+              <Text style={{ color: c.danger, fontWeight: '600', fontSize: 14 }}>Удалить транзакцию</Text>
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    );
+  }
+
+  // ── Main screen ──
+  return (
+    <View style={[st.container, { backgroundColor: c.background }]}>
+      {/* Accounts list */}
+      <ScrollView style={{ maxHeight: 220 }} contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8, gap: 6 }}>
+        {accounts.map((acc) => {
+          const bal = getBalance(acc.id);
+          const isSelected = selectedAccountId === acc.id;
+          const lastDate = getLastTxDate(acc.id);
+          return (
+            <TouchableOpacity key={acc.id}
+              style={[st.accCard, {
+                backgroundColor: isSelected ? (acc.color || c.primary) : c.card,
+                borderColor: isSelected ? (acc.color || c.primary) : acc.color || c.border,
+                borderLeftWidth: acc.color ? 4 : 1,
+                borderLeftColor: acc.color || c.border,
+              }]}
+              onPress={() => setSelectedAccountId(isSelected ? null : acc.id)}
+              onLongPress={() => handleAccountLongPress(acc)}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[st.accName, { color: isSelected ? '#FFF' : c.text }]}>{acc.name}</Text>
+                  {lastDate && <Text style={{ color: isSelected ? 'rgba(255,255,255,0.7)' : c.textSecondary, fontSize: 10 }}>{fmtDateNum(lastDate)}</Text>}
+                  {(() => { const corr = getCorrection(acc.id); return corr ? <Text style={{ color: isSelected ? 'rgba(255,255,255,0.5)' : '#F59E0B', fontSize: 9 }}>✓{fmtDateNum(corr.date)} ({corr.amount >= 0 ? '+' : ''}{corr.amount % 1 === 0 ? corr.amount : corr.amount.toFixed(2)})</Text> : null; })()}
+                </View>
+              </View>
+              <Text style={[st.accBalance, { color: isSelected ? '#FFF' : bal >= 0 ? c.success : c.danger }]}>
+                {fmtBalance(bal, acc.currency)}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+      {/* Buttons */}
+      {selectedAccountId && !deleteMode && !showCorrectionForm && (
+        <View style={{ flexDirection: 'row', gap: 6, marginHorizontal: 12, marginBottom: 4 }}>
+          <TouchableOpacity style={[st.btn, { backgroundColor: c.primary, flex: 1, paddingVertical: 8 }]} onPress={() => setShowTxForm(true)}>
+            <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>+ Транзакция</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[st.btn, { backgroundColor: '#F59E0B', paddingVertical: 8, paddingHorizontal: 12 }]} onPress={() => { setShowCorrectionForm(true); setCorrectionBalance(''); }}>
+            <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>✓</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      {showCorrectionForm && selectedAccountId && (
+        <View style={{ marginHorizontal: 12, marginBottom: 4, padding: 12, backgroundColor: c.card, borderRadius: 10, borderWidth: 1, borderColor: '#F59E0B' }}>
+          <Text style={{ color: c.text, fontWeight: '700', fontSize: 14, marginBottom: 4 }}>Реальный баланс</Text>
+          <Text style={{ color: c.textSecondary, fontSize: 11, marginBottom: 8 }}>Введите фактический баланс {selectedAccount?.name}</Text>
+          <TextInput
+            style={[st.input, { color: c.text, backgroundColor: c.background, borderColor: c.border, fontSize: 22, fontWeight: '700' }]}
+            value={correctionBalance} onChangeText={setCorrectionBalance}
+            placeholder={String(Math.round(getBalance(selectedAccountId)))}
+            placeholderTextColor={c.textSecondary}
+            keyboardType="decimal-pad" autoFocus />
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+            <TouchableOpacity style={[st.btn, { backgroundColor: '#F59E0B', flex: 1 }]} onPress={async () => {
+              const num = parseFloat(correctionBalance.replace(',', '.'));
+              if (isNaN(num)) { Alert.alert('Введите баланс'); return; }
+              await addCorrection(selectedAccountId, num);
+              setShowCorrectionForm(false);
+            }}>
+              <Text style={{ color: '#FFF', fontWeight: '700' }}>Применить</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[st.btn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border, flex: 1 }]} onPress={() => setShowCorrectionForm(false)}>
+              <Text style={{ color: c.text, fontWeight: '600' }}>Отмена</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+      {deleteMode && (
+        <View style={{ flexDirection: 'row', gap: 8, marginHorizontal: 12, marginBottom: 4 }}>
+          <TouchableOpacity style={[st.btn, { backgroundColor: '#EF4444', flex: 1 }]} onPress={confirmDeleteSelected}>
+            <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>Удалить ({selectedForDelete.size})</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[st.btn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border, flex: 1 }]} onPress={cancelDeleteMode}>
+            <Text style={{ color: c.text, fontWeight: '600', fontSize: 13 }}>Отмена</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Filters */}
+      {selectedAccountId && !deleteMode && !showCorrectionForm && (
+        <>
+          <View style={{ flexDirection: 'row', gap: 4, marginHorizontal: 12, marginVertical: 2, height: 24 }}>
+            {[{ key: null, label: 'Все' }, { key: 'today', label: 'День' }, { key: 'week', label: 'Неделя' }, { key: 'month', label: 'Месяц' }, { key: 'year', label: 'Год' }].map((p) => (
+              <TouchableOpacity key={p.key ?? 'all'}
+                style={[st.filterChip, { backgroundColor: periodFilter === p.key ? c.primary : c.card, borderColor: periodFilter === p.key ? c.primary : c.border }]}
+                onPress={() => setPeriodFilter(p.key)}>
+                <Text style={{ color: periodFilter === p.key ? '#FFF' : c.text, fontSize: 10, fontWeight: '600' }}>{p.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {accountCategories.length > 0 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, height: 28, marginVertical: 2 }}
+              contentContainerStyle={{ gap: 4, paddingHorizontal: 12, alignItems: 'center' }}>
+              <TouchableOpacity
+                style={[st.chip, { backgroundColor: !categoryFilter ? c.primary : c.card, borderColor: !categoryFilter ? c.primary : c.border }]}
+                onPress={() => setCategoryFilter(null)}>
+                <Text style={{ color: !categoryFilter ? '#FFF' : c.text, fontSize: 10, fontWeight: '600' }}>Все</Text>
+              </TouchableOpacity>
+              {accountCategories.map((cat) => (
+                <TouchableOpacity key={cat}
+                  style={[st.chip, { backgroundColor: categoryFilter === cat ? c.primary : c.card, borderColor: categoryFilter === cat ? c.primary : c.border }]}
+                  onPress={() => setCategoryFilter(categoryFilter === cat ? null : cat)}>
+                  <Text style={{ color: categoryFilter === cat ? '#FFF' : c.text, fontSize: 10, fontWeight: '600' }}>{cat}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+        </>
+      )}
+
+      {/* Transactions */}
+      {selectedAccountId ? (
+        <FlatList
+          data={filteredTxs}
+          keyExtractor={(t) => t.id}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
+          renderItem={({ item }) => {
+            const isMarked = selectedForDelete.has(item.id);
+            return (
+              <TouchableOpacity
+                style={[st.txRow, { borderColor: c.border, backgroundColor: isMarked ? (theme === 'dark' ? '#3B1818' : '#FEE2E2') : 'transparent' }]}
+                onPress={() => deleteMode ? toggleDeleteSelect(item.id) : startEditTx(item)}
+                onLongPress={() => handleTxLongPress(item)}>
+                {deleteMode && (
+                  <Text style={{ fontSize: 16, marginRight: 8 }}>{isMarked ? '☑' : '☐'}</Text>
+                )}
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    {item.isCorrection && <Text style={{ color: '#F59E0B', fontSize: 11, fontWeight: '700' }}>✓ Коррекция</Text>}
+                    {!item.isCorrection && item.category ? <Text style={[st.txCat, { color: c.primary }]}>{item.category}</Text> : null}
+                    {item.tag ? <Text style={[st.txTag, { color: c.textSecondary }]}>#{item.tag}</Text> : null}
+                  </View>
+                  {item.comment ? <Text style={{ color: c.text, fontSize: 13 }} numberOfLines={1}>{item.comment}</Text> : null}
+                  <Text style={{ color: c.textSecondary, fontSize: 11 }}>
+                  {fmtDate(item.date)}{item.timestamp && !item.timestamp.endsWith('T00:00:00') ? ` ${item.timestamp.substring(11, 16)}` : ''}
+                </Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  {duplicateIds.has(item.id) && <Text style={{ color: '#F59E0B', fontSize: 9, fontWeight: '600' }}>дубль?</Text>}
+                  <Text style={[st.txAmount, { color: item.amount >= 0 ? c.success : c.danger }]}>
+                    {fmtAmount(item.amount, selectedAccount?.currency || '')}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          }}
+          ListEmptyComponent={
+            <View style={st.empty}>
+              <Text style={{ color: c.textSecondary, fontSize: 14 }}>Нет транзакций</Text>
+            </View>
+          }
+        />
+      ) : (
+        <View style={st.empty}>
+          <Text style={{ fontSize: 48 }}>💰</Text>
+          <Text style={{ color: c.textSecondary, fontSize: 14, marginTop: 8 }}>
+            {accounts.length === 0 ? 'Добавьте первый счёт' : 'Выберите счёт'}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const st = StyleSheet.create({
+  container: { flex: 1 },
+  accCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderRadius: 10, borderWidth: 1 },
+  accName: { fontSize: 15, fontWeight: '600' },
+  accBalance: { fontSize: 15, fontWeight: '700' },
+  addAccBtn: { borderWidth: 1, borderStyle: 'dashed', borderRadius: 10, padding: 10, alignItems: 'center' },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
+  chip: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, alignItems: 'center' },
+  filterChip: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 4, borderRadius: 8, borderWidth: 1 },
+  colorDot: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  label: { fontSize: 11, fontWeight: '600', marginTop: 10, marginBottom: 4, textTransform: 'uppercase' },
+  input: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 15, marginBottom: 6 },
+  formTitle: { fontSize: 18, fontWeight: '700', marginBottom: 4 },
+  formSubtitle: { fontSize: 13, marginBottom: 10 },
+  formBtns: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  btn: { borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
+  txRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 0.5, gap: 8 },
+  txCat: { fontSize: 12, fontWeight: '600' },
+  txTag: { fontSize: 11 },
+  txAmount: { fontSize: 15, fontWeight: '700' },
+  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 40 },
+});

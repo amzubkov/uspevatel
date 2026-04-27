@@ -10,8 +10,9 @@ import { useDocumentStore } from '../store/documentStore';
 import { useHealthStore } from '../store/healthStore';
 import { colors } from '../utils/theme';
 import { useAttachmentStore } from '../store/attachmentStore';
+import { useMoneyStore } from '../store/moneyStore';
 import { fetchUpdates, getFileUrl } from '../services/telegramService';
-import { parseMessage, ParsedItem } from '../services/telegramParser';
+import { parseMessages, ParsedItem } from '../services/telegramParser';
 
 interface SelectableItem {
   item: ParsedItem;
@@ -76,8 +77,8 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
         const docFileId = msg.document?.file_id;
         const docFileName = msg.document?.file_name;
         const docMimeType = msg.document?.mime_type;
-        const p = parseMessage(text, msg.date, photoFileId, docFileId, docFileName, docMimeType);
-        if (p) parsed.push({ item: p, updateId: u.update_id, selected: true });
+        const items = parseMessages(text, msg.date, photoFileId, docFileId, docFileName, docMimeType);
+        for (const p of items) parsed.push({ item: p, updateId: u.update_id, selected: true });
       }
 
       setItems(parsed);
@@ -107,6 +108,8 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
       let flightCount = 0;
       let docCount = 0;
       let healthCount = 0;
+      let txCount = 0;
+      const txSkipped: string[] = [];
 
       // Track saved IDs for post-transaction photo downloads
       const photoJobs: { type: string; id: string; fileId: string; subdir: string }[] = [];
@@ -119,7 +122,7 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
             await tx.runAsync(
               `INSERT INTO tasks (id, subject, action, category, context_category, project, notes, start_date, deadline, reminder_at, priority, is_recurring, recur_days, completed, completed_at, created_at, updated_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,?,?)`,
-              [id, item.subject, '', 'IN', null, item.project || null, '', null, item.deadline || null, null, 'normal', 0, null, now, now]
+              [id, '', item.subject, 'IN', null, item.project || null, '', null, item.deadline || null, null, 'normal', 0, null, now, now]
             );
             taskCount++;
             if (item.photoFileId) photoJobs.push({ type: 'task', id, fileId: item.photoFileId, subdir: 'task_images' });
@@ -146,6 +149,24 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
             docCount++;
             if (item.photoFileId) photoJobs.push({ type: 'doc', id: docId, fileId: item.photoFileId, subdir: 'document_images' });
             if (item.docFileId) (item as any)._savedDocId = docId;
+          } else if (item.type === 'tx') {
+            // Find account by name (case-insensitive)
+            const accounts = useMoneyStore.getState().accounts;
+            const acc = accounts.find((a) => a.name.toLowerCase() === item.account.toLowerCase());
+            if (acc) {
+              const id = Crypto.randomUUID();
+              const now = new Date().toISOString();
+              const date = item.date || new Date(item.msgDate * 1000).toISOString().substring(0, 10);
+              const time = item.time || '00:00:00';
+              const timestamp = `${date}T${time}`;
+              await tx.runAsync(
+                'INSERT INTO transactions (id, account_id, amount, date, timestamp, category, tag, comment, is_correction, created_at) VALUES (?,?,?,?,?,?,?,?,0,?)',
+                [id, acc.id, item.amount, date, timestamp, item.category, item.tag, item.comment, now]
+              );
+              txCount++;
+            } else {
+              txSkipped.push(`${item.account}: ${item.amount} (счёт не найден)`);
+            }
           } else if (item.type === 'health') {
             healthCount += item.results.length + item.metrics.length;
           } else if (item.type === 'ref') {
@@ -246,29 +267,42 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
               reader.readAsDataURL(blob);
             });
             dest.write(base64.split(',')[1], { encoding: 'base64' });
-            // Save as attachment linked to document
-            await useAttachmentStore.getState().addAttachment('document', docId, dest.uri, fileName, item.docMimeType, undefined);
+            if (!dest.exists) throw new Error('Файл не записался');
+            // Insert directly into attachments table (file already at target location)
+            const now = new Date().toISOString();
+            await db.runAsync(
+              'INSERT INTO attachments (id, entity_type, entity_id, name, file_path, mime_type, size, created_at) VALUES (?,?,?,?,?,?,?,?)',
+              [attId, 'document', docId, fileName, relPath, item.docMimeType || null, null, now],
+            );
           } catch (e: any) {
-            console.warn('Failed to download doc file:', e?.message);
+            Alert.alert('Ошибка загрузки PDF', String(e?.message || e));
           }
         }
       }
+
+      // Reload attachments store to reflect newly added files
+      useAttachmentStore.setState({ loaded: false });
+      await useAttachmentStore.getState().load();
 
       // Reload stores
       useTaskStore.setState({ loaded: false });
       useFlightStore.setState({ loaded: false });
       useDocumentStore.setState({ loaded: false });
       if (healthCount) useHealthStore.setState({ loaded: false });
+      if (txCount) useMoneyStore.setState({ loaded: false });
       await useTaskStore.getState().load();
       await useFlightStore.getState().load();
       await useDocumentStore.getState().load();
       if (healthCount) await useHealthStore.getState().load();
+      if (txCount) await useMoneyStore.getState().load();
 
       const parts = [];
       if (taskCount) parts.push(`задач: ${taskCount}`);
       if (flightCount) parts.push(`перелётов: ${flightCount}`);
       if (docCount) parts.push(`документов: ${docCount}`);
       if (healthCount) parts.push(`анализов: ${healthCount}`);
+      if (txCount) parts.push(`транзакций: ${txCount}`);
+      if (txSkipped.length) parts.push(`\nПропущено (${txSkipped.length}):\n${txSkipped.join('\n')}`);
       Alert.alert('Сохранено', parts.join(', '));
       onClose();
     } catch (e: any) {
@@ -281,8 +315,8 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
 
   const renderItem = ({ item: si, index }: { item: SelectableItem; index: number }) => {
     const { item, selected } = si;
-    const typeColor = item.type === 'task' ? '#3B82F6' : item.type === 'flight' ? '#F59E0B' : item.type === 'health' ? '#22C55E' : item.type === 'ref' ? '#F59E0B' : '#8B5CF6';
-    const typeLabel = item.type === 'task' ? 'ЗАДАЧА' : item.type === 'flight' ? (item.kind === 'hotel' ? 'ОТЕЛЬ' : 'ПЕРЕЛЁТ') : item.type === 'health' ? 'АНАЛИЗЫ' : item.type === 'ref' ? 'РЕФЫ' : 'ДОКУМЕНТ';
+    const typeColor = item.type === 'task' ? '#3B82F6' : item.type === 'flight' ? '#F59E0B' : item.type === 'health' ? '#22C55E' : item.type === 'ref' ? '#F59E0B' : item.type === 'tx' ? '#10B981' : '#8B5CF6';
+    const typeLabel = item.type === 'task' ? 'ЗАДАЧА' : item.type === 'flight' ? (item.kind === 'hotel' ? 'ОТЕЛЬ' : item.kind === 'event' ? 'СОБЫТИЕ' : 'ПЕРЕЛЁТ') : item.type === 'health' ? 'АНАЛИЗЫ' : item.type === 'ref' ? 'РЕФЫ' : item.type === 'tx' ? 'ТРАНЗАКЦИЯ' : 'ДОКУМЕНТ';
     return (
       <TouchableOpacity
         style={[st.row, { backgroundColor: selected ? c.card : 'transparent', borderColor: c.border }]}
@@ -292,7 +326,7 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
         <View style={{ flex: 1 }}>
           <Text style={{ color: typeColor, fontSize: 11, fontWeight: '700' }}>{typeLabel}</Text>
           <Text style={{ color: c.text, fontSize: 14 }} numberOfLines={2}>
-            {item.type === 'task' ? item.subject : item.type === 'flight' ? item.title : item.type === 'health' ? `${item.results.length} рез. ${item.metrics.length} показ.` : item.type === 'ref' ? `${item.source}: ${item.refs.length} рефов` : item.name}
+            {item.type === 'task' ? item.subject : item.type === 'flight' ? item.title : item.type === 'health' ? `${item.results.length} рез. ${item.metrics.length} показ.` : item.type === 'ref' ? `${item.source}: ${item.refs.length} рефов` : item.type === 'tx' ? `${item.account}: ${item.amount > 0 ? '+' : ''}${item.amount}` : item.name}
           </Text>
           {item.type === 'task' && item.project && (
             <Text style={{ color: c.textSecondary, fontSize: 11 }}>Проект: {item.project}</Text>
@@ -310,6 +344,11 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
               {item.price ? <Text style={{ color: c.textSecondary, fontSize: 11 }}>{item.price} {item.currency === 'RUB' ? '₽' : '€'}</Text> : null}
               {item.notes ? <Text style={{ color: c.textSecondary, fontSize: 11 }}>{item.notes}</Text> : null}
             </>
+          )}
+          {item.type === 'tx' && (
+            <Text style={{ color: c.textSecondary, fontSize: 11 }}>
+              {item.category ? `${item.category} ` : ''}{item.tag ? `#${item.tag} ` : ''}{item.comment || ''}{item.date ? ` (${item.date})` : ''}
+            </Text>
           )}
           {'photoFileId' in item && item.photoFileId && (
             <Text style={{ color: c.textSecondary, fontSize: 11 }}>+ фото</Text>

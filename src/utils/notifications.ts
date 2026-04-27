@@ -73,3 +73,41 @@ export async function cancelTaskReminder(taskId: string) {
     await Notifications.cancelScheduledNotificationAsync(`task-${taskId}`);
   } catch {}
 }
+
+export async function scheduleFlightReminder(
+  flightId: string,
+  title: string,
+  departDate: string,
+  departTime?: string,
+): Promise<string | null> {
+  if (!departTime) return null;
+
+  const departure = new Date(`${departDate}T${departTime}`);
+  if (isNaN(departure.getTime())) return null;
+
+  const reminderDate = new Date(departure.getTime() - 3 * 60 * 60 * 1000);
+  if (reminderDate.getTime() <= Date.now()) return null;
+
+  const granted = await requestPermissions();
+  if (!granted) return null;
+
+  const id = await Notifications.scheduleNotificationAsync({
+    identifier: `flight-${flightId}`,
+    content: {
+      title: '✈️ Вылет через 3 часа',
+      body: title,
+      sound: true,
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: reminderDate,
+    },
+  });
+  return id;
+}
+
+export async function cancelFlightReminder(flightId: string) {
+  try {
+    await Notifications.cancelScheduledNotificationAsync(`flight-${flightId}`);
+  } catch {}
+}

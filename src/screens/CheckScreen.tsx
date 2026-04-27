@@ -181,7 +181,7 @@ export function CheckScreen() {
                 value={newListName}
                 onChangeText={setNewListName}
                 onSubmitEditing={saveNewList}
-                onBlur={cancelNewList}
+                onBlur={saveNewList}
                 placeholder="Название..."
                 placeholderTextColor={c.textSecondary}
                 autoFocus

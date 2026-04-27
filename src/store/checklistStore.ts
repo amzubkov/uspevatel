@@ -70,8 +70,12 @@ export const useChecklistStore = create<ChecklistState>()((set, get) => ({
     const sortOrder = get().lists.length;
     const list: Checklist = { id, name, sortOrder };
     set((s) => ({ lists: [...s.lists, list], activeListId: id }));
-    const db = await getDb();
-    await db.runAsync('INSERT INTO checklists (id, name, sort_order) VALUES (?, ?, ?)', [id, name, sortOrder]);
+    try {
+      const db = await getDb();
+      await db.runAsync('INSERT INTO checklists (id, name, sort_order) VALUES (?, ?, ?)', [id, name, sortOrder]);
+    } catch (e: any) {
+      console.warn('addList DB error:', e?.message);
+    }
   },
 
   removeList: async (id) => {
@@ -101,8 +105,12 @@ export const useChecklistStore = create<ChecklistState>()((set, get) => ({
     const listId = get().activeListId;
     const item: CheckItem = { id: Crypto.randomUUID(), listId, title, done: false, createdAt: new Date().toISOString() };
     set((s) => ({ items: [item, ...s.items] }));
-    const db = await getDb();
-    await db.runAsync('INSERT INTO checklist (id, list_id, title, done, created_at) VALUES (?, ?, ?, 0, ?)', [item.id, listId, title, item.createdAt]);
+    try {
+      const db = await getDb();
+      await db.runAsync('INSERT INTO checklist (id, list_id, title, done, created_at) VALUES (?, ?, ?, 0, ?)', [item.id, listId, title, item.createdAt]);
+    } catch (e: any) {
+      console.warn('addItem DB error:', e?.message);
+    }
   },
 
   removeItem: async (id) => {

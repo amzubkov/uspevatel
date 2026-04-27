@@ -38,7 +38,7 @@ export function TaskDetailScreen() {
   const [action, setAction] = useState(task?.action || '');
   const [notes, setNotes] = useState(task?.notes || '');
   const [category, setCategory] = useState<Category>(task?.category || 'IN');
-  const [priority, setPriority] = useState<'high' | 'normal' | 'low'>(task?.priority || 'normal');
+  const [priority, setPriority] = useState<'super' | 'high' | 'normal' | 'low'>(task?.priority || 'normal');
   const [project, setProject] = useState<string | undefined>(task?.project);
   const [contextCategory, setContextCategory] = useState<string | undefined>(task?.contextCategory);
   const [deadline, setDeadline] = useState<string | undefined>(task?.deadline);

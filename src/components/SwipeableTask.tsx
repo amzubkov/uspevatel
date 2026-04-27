@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Pressable } from 'react-native';
+import { useSettingsStore } from '../store/settingsStore';
 
 interface SwipeAction {
   label: string;
@@ -15,6 +16,7 @@ interface Props {
 
 export function SwipeableTask({ children, leftActions = [], rightActions = [] }: Props) {
   const [showActions, setShowActions] = useState(false);
+  const fontSize = useSettingsStore((s) => s.fontSize) ?? 15;
   const allActions = [...leftActions, ...rightActions];
 
   if (allActions.length === 0) {
@@ -26,11 +28,11 @@ export function SwipeableTask({ children, leftActions = [], rightActions = [] }:
       <View style={styles.wrapper}>
         <View style={styles.childWrap}>{children}</View>
         <TouchableOpacity
-          style={styles.moreBtn}
+          style={[styles.moreBtn, { paddingVertical: Math.max(4, fontSize - 3) }]}
           onPress={() => setShowActions((v) => !v)}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Text style={styles.moreDots}>⋯</Text>
+          <Text style={[styles.moreDots, { fontSize: fontSize + 2 }]}>⋯</Text>
         </TouchableOpacity>
       </View>
       {showActions && (
@@ -38,13 +40,13 @@ export function SwipeableTask({ children, leftActions = [], rightActions = [] }:
           {allActions.map((action, idx) => (
             <TouchableOpacity
               key={idx}
-              style={[styles.actionBtn, { backgroundColor: action.color }]}
+              style={[styles.actionBtn, { backgroundColor: action.color, paddingVertical: Math.max(4, fontSize - 7), paddingHorizontal: Math.max(8, fontSize) }]}
               onPress={() => {
                 setShowActions(false);
                 action.onPress();
               }}
             >
-              <Text style={styles.actionText}>{action.label}</Text>
+              <Text style={[styles.actionText, { fontSize: fontSize - 3 }]}>{action.label}</Text>
             </TouchableOpacity>
           ))}
         </View>

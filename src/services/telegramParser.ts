@@ -48,7 +48,19 @@ export interface ParsedRef {
   msgDate: number;
 }
 
-export type ParsedItem = ParsedTask | ParsedFlight | ParsedDoc | ParsedHealth | ParsedRef;
+export interface ParsedTx {
+  type: 'tx';
+  account: string;   // account name (must match existing)
+  amount: number;     // negative = expense, positive = income
+  category: string;
+  tag: string;
+  comment: string;
+  date?: string;      // YYYY-MM-DD, defaults to today
+  time?: string;      // HH:MM
+  msgDate: number;
+}
+
+export type ParsedItem = ParsedTask | ParsedFlight | ParsedDoc | ParsedHealth | ParsedRef | ParsedTx;
 
 // Normalise date: "14.04.2026" → "2026-04-14", "2026-04-14" stays as is
 function normaliseDate(s: string): string | null {
@@ -149,6 +161,28 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
     return { type: 'doc', name: docMatch[1].trim(), photoFileId, docFileId, docFileName, docMimeType, msgDate };
   }
 
+  // /tx <account>, <amount>[, <category>[, <tag>[, <comment>[, <date>]]]]
+  // amount: "150" or "-150" or "+150", negative = expense by default
+  const txMatch = trimmed.match(/^\/tx\s+(.+)/i);
+  if (txMatch) {
+    const parts = txMatch[1].split(',').map((p) => p.trim());
+    if (parts.length >= 2) {
+      const account = parts[0];
+      const amountStr = parts[1].replace(/\s/g, '');
+      const num = parseFloat(amountStr.replace(',', '.'));
+      if (!isNaN(num) && account) {
+        // -amount = expense, +amount or no sign = income
+        const amount = amountStr.startsWith('-') ? -Math.abs(num) : Math.abs(num);
+        const category = parts[2]?.trim() || '';
+        const tag = parts[3]?.trim() || '';
+        const comment = parts[4]?.trim() || '';
+        const dateStr = parts[5]?.trim();
+        const dt = dateStr ? parseDatetime(dateStr) : undefined;
+        return { type: 'tx', account, amount, category, tag, comment, date: dt?.date, time: dt?.time, msgDate };
+      }
+    }
+  }
+
   // /health - multi-line: each line "name, value[, unit, refMin, refMax]"
   // optional last line with date (YYYY-MM-DD or DD.MM.YYYY)
   const healthMatch = trimmed.match(/^\/health\s+([\s\S]+)/i);
@@ -204,4 +238,20 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
   }
 
   return null;
+}
+
+/** Parse a message that may contain multiple /tx lines. Returns array of items. */
+export function parseMessages(text: string, msgDate: number, photoFileId?: string, docFileId?: string, docFileName?: string, docMimeType?: string): ParsedItem[] {
+  const lines = text.trim().split('\n');
+  const txLines = lines.filter((l) => /^\/tx\s+/i.test(l.trim()));
+  if (txLines.length > 1) {
+    const results: ParsedItem[] = [];
+    for (const line of txLines) {
+      const item = parseMessage(line, msgDate);
+      if (item) results.push(item);
+    }
+    return results;
+  }
+  const item = parseMessage(text, msgDate, photoFileId, docFileId, docFileName, docMimeType);
+  return item ? [item] : [];
 }

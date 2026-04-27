@@ -598,34 +598,32 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
           </View>
         </ScrollView>
       ) : (
-        <>
-          <View style={{ flexDirection: 'row', gap: 8, marginHorizontal: 12, marginTop: 12, marginBottom: 4 }}>
-            <TouchableOpacity style={[s.addBtn, { backgroundColor: c.primary, flex: 1 }]} onPress={() => setShowForm(true)}>
-              <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>+ Добавить</Text>
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: 'row', gap: 8, marginHorizontal: 12, marginTop: 6, marginBottom: 2 }}>
+            <TouchableOpacity style={[s.addBtn, { backgroundColor: c.primary, flex: 1, paddingVertical: 6 }]} onPress={() => setShowForm(true)}>
+              <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>+ Добавить</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[s.addBtn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border }]} onPress={() => setShowImport(true)}>
-              <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }}>Импорт</Text>
+            <TouchableOpacity style={[s.addBtn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border, paddingVertical: 6 }]} onPress={() => setShowImport(true)}>
+              <Text style={{ color: c.text, fontWeight: '700', fontSize: 12 }}>Импорт</Text>
             </TouchableOpacity>
           </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 4, paddingHorizontal: 12, paddingVertical: 4 }}>
+          <View style={{ flexDirection: 'row', gap: 4, marginHorizontal: 12, marginVertical: 2, height: 24 }}>
             <TouchableOpacity
-              style={[s.statusChip, { backgroundColor: !statusFilter ? c.primary : c.card, borderColor: c.border }]}
+              style={[s.filterChip, { backgroundColor: !statusFilter ? c.primary : c.card, borderColor: !statusFilter ? c.primary : c.border }]}
               onPress={() => setStatusFilter(null)}>
-              <Text style={{ color: !statusFilter ? '#FFF' : c.text, fontSize: 11, fontWeight: '600' }}>Все</Text>
+              <Text numberOfLines={1} style={{ color: !statusFilter ? '#FFF' : c.text, fontSize: 10, fontWeight: '600' }}>Все</Text>
             </TouchableOpacity>
             {(['not_planned', 'reserved', 'planned', 'booked'] as FlightStatus[]).map((st) => (
               <TouchableOpacity key={st}
-                style={[s.statusChip, { backgroundColor: statusFilter === st ? STATUS_COLORS[st] : c.card, borderColor: STATUS_COLORS[st] }]}
+                style={[s.filterChip, { backgroundColor: statusFilter === st ? STATUS_COLORS[st] : c.card, borderColor: statusFilter === st ? STATUS_COLORS[st] : c.border }]}
                 onPress={() => setStatusFilter(statusFilter === st ? null : st)}>
-                <Text style={{ color: statusFilter === st ? '#FFF' : STATUS_COLORS[st], fontSize: 11, fontWeight: '600' }}>{STATUS_LABELS[st]}</Text>
+                <Text numberOfLines={1} style={{ color: statusFilter === st ? '#FFF' : STATUS_COLORS[st], fontSize: 10, fontWeight: '600' }}>{STATUS_LABELS[st]}</Text>
               </TouchableOpacity>
             ))}
-          </ScrollView>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 4, paddingHorizontal: 12, paddingVertical: 4 }}>
+          </View>
+          <View style={{ flexDirection: 'row', gap: 4, marginHorizontal: 12, marginVertical: 2 }}>
             <TouchableOpacity
-              style={[s.dateChip, { backgroundColor: !dateFilter ? c.primary : c.card, borderColor: !dateFilter ? c.primary : c.border }]}
+              style={[s.filterChip, { backgroundColor: !dateFilter ? c.primary : c.card, borderColor: !dateFilter ? c.primary : c.border }]}
               onPress={() => setDateFilter(null)}>
               <Text style={[s.dateChipLabel, { color: !dateFilter ? '#FFF' : c.text }]}>Все</Text>
             </TouchableOpacity>
@@ -633,22 +631,23 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
               const active = dateFilter === db.date;
               return (
                 <TouchableOpacity key={db.date}
-                  style={[s.dateChip, { backgroundColor: active ? c.primary : c.card, borderColor: active ? c.primary : c.border }]}
+                  style={[s.filterChip, { backgroundColor: active ? c.primary : c.card, borderColor: active ? c.primary : c.border }]}
                   onPress={() => setDateFilter(active ? null : db.date)}>
                   <Text style={[s.dateChipLabel, { color: active ? '#FFF' : c.text }]}>{db.label}</Text>
                   <Text style={[s.dateChipDow, { color: active ? 'rgba(255,255,255,0.7)' : c.textSecondary }]}>{db.dow}</Text>
                 </TouchableOpacity>
               );
             })}
-          </ScrollView>
+          </View>
           <FlatList
+            style={{ flex: 1 }}
             data={sorted}
             keyExtractor={(f) => f.id}
             renderItem={renderFlight}
             contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
             ListEmptyComponent={<Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Нет записей</Text>}
           />
-        </>
+        </View>
       )}
     </View>
   );
@@ -1350,7 +1349,7 @@ const s = StyleSheet.create({
   formLabel: { fontSize: 12, fontWeight: '600', marginTop: 10, marginBottom: 4, textTransform: 'uppercase' },
   input: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 15 },
   statusRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
-  statusChip: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 3 },
+  statusChip: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 },
   formBtn: { borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
   // Calendar
   calHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 8 },
@@ -1369,9 +1368,9 @@ const s = StyleSheet.create({
   eventTitle: { fontSize: 14, fontWeight: '600' },
   // Traveler
   travelerRow: {},
-  dateChip: { alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, borderWidth: 1 },
-  dateChipLabel: { fontSize: 12, fontWeight: '700' },
-  dateChipDow: { fontSize: 9, fontWeight: '500', marginTop: 1 },
+  filterChip: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 4, borderRadius: 8, borderWidth: 1 },
+  dateChipLabel: { fontSize: 11, fontWeight: '700' },
+  dateChipDow: { fontSize: 9, fontWeight: '500' },
   travelerChip: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1 },
   travelerForm: { marginHorizontal: 12, marginBottom: 4, padding: 12, borderWidth: 1, borderRadius: 10 },
   travelerInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 15, marginBottom: 8 },

@@ -6,6 +6,7 @@ import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
 import { TaskCard } from '../components/TaskCard';
 import { QuickAddBar } from '../components/QuickAddBar';
+import { sortByPriorityDeadline } from '../components/FilterBar';
 import { useNavigation, useRoute } from '@react-navigation/native';
 
 export function ProjectDetailScreen() {
@@ -36,7 +37,7 @@ export function ProjectDetailScreen() {
     );
   }
 
-  const activeTasks = tasks.filter((t) => !t.completed);
+  const activeTasks = sortByPriorityDeadline(tasks.filter((t) => !t.completed));
   const completedTasks = tasks.filter((t) => t.completed);
 
   const startEdit = () => {

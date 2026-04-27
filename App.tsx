@@ -1,9 +1,10 @@
 import 'react-native-gesture-handler';
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Linking } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { AppNavigator } from './src/navigation';
+import { QuickAddModal, QuickAddMode } from './src/components/QuickAddModal';
 import { useSettingsStore } from './src/store/settingsStore';
 import { useTaskStore } from './src/store/taskStore';
 import { useProjectStore } from './src/store/projectStore';
@@ -19,6 +20,7 @@ import { useTravelerStore } from './src/store/travelerStore';
 import { useDocumentStore } from './src/store/documentStore';
 import { useCarStore } from './src/store/carStore';
 import { useNoteStore } from './src/store/noteStore';
+import { useMoneyStore } from './src/store/moneyStore';
 import { loadSyncFolder } from './src/db/database';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -56,6 +58,7 @@ function AppLoader() {
   const loadDocuments = useDocumentStore((s) => s.load);
   const loadCars = useCarStore((s) => s.load);
   const loadNotes = useNoteStore((s) => s.load);
+  const loadMoney = useMoneyStore((s) => s.load);
 
   useEffect(() => {
     (async () => {
@@ -78,6 +81,7 @@ function AppLoader() {
         loadDocuments(),
         loadCars(),
         loadNotes(),
+        loadMoney(),
       ]);
       setReady(true);
     })();
@@ -95,7 +99,34 @@ function AppLoader() {
     <>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <AppNavigator />
+      <QuickAddHandler />
     </>
+  );
+}
+
+function QuickAddHandler() {
+  const [mode, setMode] = useState<QuickAddMode | null>(null);
+
+  const handleUrl = (url: string | null) => {
+    if (!url) return;
+    if (url.includes('voice')) setMode('voice');
+    else if (url.includes('text')) setMode('text');
+  };
+
+  useEffect(() => {
+    // Handle cold start from deeplink
+    Linking.getInitialURL().then(handleUrl);
+    // Handle while app is open
+    const sub = Linking.addEventListener('url', ({ url }) => handleUrl(url));
+    return () => sub.remove();
+  }, []);
+
+  return (
+    <QuickAddModal
+      visible={mode !== null}
+      mode={mode || 'text'}
+      onClose={() => setMode(null)}
+    />
   );
 }
 
