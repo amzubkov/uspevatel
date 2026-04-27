@@ -214,10 +214,26 @@ export function MoneyScreen() {
     ]);
   };
 
+  const { clearTransactions } = useMoneyStore();
+
+  const handleClearTransactions = (acc: Account) => {
+    const count = getTransactionsForAccount(acc.id).length;
+    Alert.alert('Удалить все транзакции?', `Счёт «${acc.name}»: ${count} транзакций`, [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить все', style: 'destructive', onPress: () => {
+        Alert.alert('Точно удалить?', `Все ${count} транзакций будут удалены безвозвратно`, [
+          { text: 'Отмена', style: 'cancel' },
+          { text: 'Да, удалить всё', style: 'destructive', onPress: () => clearTransactions(acc.id) },
+        ]);
+      }},
+    ]);
+  };
+
   const handleAccountLongPress = (acc: Account) => {
     Alert.alert(acc.name, '', [
       { text: 'Редактировать', onPress: () => handleEditAccount(acc) },
-      { text: 'Удалить', style: 'destructive', onPress: () => handleDeleteAccount(acc) },
+      { text: 'Удалить все транзакции', style: 'destructive', onPress: () => handleClearTransactions(acc) },
+      { text: 'Удалить счёт', style: 'destructive', onPress: () => handleDeleteAccount(acc) },
       { text: 'Отмена', style: 'cancel' },
     ]);
   };

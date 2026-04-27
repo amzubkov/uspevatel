@@ -42,6 +42,7 @@ interface MoneyState {
   addTransaction: (t: Omit<Transaction, 'id' | 'createdAt' | 'isCorrection'>) => Promise<void>;
   updateTransaction: (id: string, fields: Partial<Omit<Transaction, 'id' | 'createdAt'>>) => Promise<void>;
   removeTransaction: (id: string) => Promise<void>;
+  clearTransactions: (accountId: string) => Promise<void>;
   addCorrection: (accountId: string, actualBalance: number) => Promise<void>;
   getCorrection: (accountId: string) => Transaction | undefined;
   getCorrectionDate: (accountId: string) => string | undefined;
@@ -150,6 +151,12 @@ export const useMoneyStore = create<MoneyState>()((set, get) => ({
     set((s) => ({ transactions: s.transactions.filter((t) => t.id !== id) }));
     const db = await getDb();
     await db.runAsync('DELETE FROM transactions WHERE id = ?', [id]);
+  },
+
+  clearTransactions: async (accountId) => {
+    set((s) => ({ transactions: s.transactions.filter((t) => t.accountId !== accountId) }));
+    const db = await getDb();
+    await db.runAsync('DELETE FROM transactions WHERE account_id = ?', [accountId]);
   },
 
   addCorrection: async (accountId, actualBalance) => {
