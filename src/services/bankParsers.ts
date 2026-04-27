@@ -1,4 +1,3 @@
-import * as XLSX from 'xlsx';
 import { BankType } from '../store/moneyStore';
 
 export interface ParsedTransaction {
@@ -201,15 +200,8 @@ function csvToRows(text: string): any[][] {
   });
 }
 
-export function parseBankFile(content: string, bank: BankType, isXlsx: boolean): ParsedTransaction[] {
-  let rows: any[][];
-  if (isXlsx) {
-    const wb = XLSX.read(content, { type: 'base64' });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-  } else {
-    rows = csvToRows(content);
-  }
+export function parseBankFile(content: string, bank: BankType): ParsedTransaction[] {
+  const rows = csvToRows(content);
   if (!rows.length) return [];
 
   switch (bank) {
