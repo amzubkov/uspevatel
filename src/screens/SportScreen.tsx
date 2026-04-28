@@ -110,13 +110,14 @@ const DAILY_MODES = [
   { key: 'pullups' as const, label: 'Подтяг.', icon: '🏋️', unit: 'подт.', quickCounts: [1, 2, 3, 5, 10] },
   { key: 'abs' as const, label: 'Пресс', icon: '🔥', unit: 'раз', quickCounts: [1, 5, 10, 20] },
   { key: 'triceps' as const, label: 'Трицепс', icon: '💪', unit: 'раз', quickCounts: [1, 5, 10, 20] },
+  { key: 'squats' as const, label: 'Присед', icon: '🦵', unit: 'раз', quickCounts: [5, 10, 20, 30] },
   { key: 'run' as const, label: 'Бег', icon: '🏃', unit: '', quickCounts: [] },
 ];
 
 function DailyTab() {
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
-  const [mode, setMode] = useState<'pullups' | 'abs' | 'triceps' | 'run'>('pullups');
+  const [mode, setMode] = useState<'pullups' | 'abs' | 'triceps' | 'squats' | 'run'>('pullups');
   const current = DAILY_MODES.find((m) => m.key === mode)!;
 
   return (

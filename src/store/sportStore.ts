@@ -4,7 +4,7 @@ import { getDb } from '../db/database';
 
 export interface SportEntry {
   id: string;
-  type: 'pullups' | 'abs' | 'triceps' | 'run' | 'weight';
+  type: 'pullups' | 'abs' | 'triceps' | 'squats' | 'run' | 'weight';
   label?: string;
   count: number;
   date: string;
