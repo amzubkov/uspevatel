@@ -21,9 +21,37 @@ function RatingDots({ value, onChange, color }: { value: number | undefined; onC
   return (
     <View style={{ flexDirection: 'row', gap: 6 }}>
       {[1, 2, 3, 4, 5].map((n) => (
-        <TouchableOpacity key={n} onPress={() => onChange(n)}
+        <TouchableOpacity key={n} onPress={() => onChange(value === n ? 0 : n)}
           style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: value && value >= n ? color : '#444', alignItems: 'center', justifyContent: 'center' }}>
           <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700' }}>{n}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
+function SleepHoursPicker({ value, onChange, c }: { value: number | undefined; onChange: (v: number) => void; c: any }) {
+  const hours = [4, 5, 6, 7, 8, 9, 10];
+  return (
+    <View style={{ flexDirection: 'row', gap: 4 }}>
+      {hours.map((h) => (
+        <TouchableOpacity key={h} onPress={() => onChange(h)}
+          style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: value === h ? '#3B82F6' : '#444' }}>
+          <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>{h}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
+function PercentPicker({ value, onChange, color }: { value: number | undefined; onChange: (v: number) => void; color: string }) {
+  const steps = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+  return (
+    <View style={{ flexDirection: 'row', gap: 2, flexWrap: 'wrap' }}>
+      {steps.map((p) => (
+        <TouchableOpacity key={p} onPress={() => onChange(p)}
+          style={{ paddingHorizontal: 5, paddingVertical: 3, borderRadius: 6, backgroundColor: value != null && value >= p ? color : '#444' }}>
+          <Text style={{ color: '#FFF', fontSize: 9, fontWeight: '600' }}>{p}</Text>
         </TouchableOpacity>
       ))}
     </View>
@@ -120,17 +148,17 @@ export function DayReviewScreen() {
         <TouchableOpacity onPress={() => changeDate(1)}><Text style={[s.dateArrow, { color: c.primary }]}>{'>'}</Text></TouchableOpacity>
       </View>
 
+      {/* Sleep */}
+      <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
+        <Text style={[s.sectionTitle, { color: c.textSecondary }]}>Сон</Text>
+        <Text style={{ color: c.text, fontSize: 12, marginBottom: 4 }}>Часов</Text>
+        <SleepHoursPicker value={sleepHours ? parseFloat(sleepHours) : undefined} onChange={(h) => setSleepHours(String(h))} c={c} />
+        <Text style={{ color: c.text, fontSize: 12, marginTop: 8, marginBottom: 4 }}>Качество %</Text>
+        <PercentPicker value={sleepQuality} onChange={setSleepQuality} color="#3B82F6" />
+      </View>
+
       {/* Ratings */}
       <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
-        <View style={s.ratingRow}>
-          <Text style={[s.label, { color: c.text }]}>Сон</Text>
-          <TextInput style={[s.smallInput, { color: c.text, borderColor: c.border }]}
-            value={sleepHours} onChangeText={setSleepHours}
-            placeholder="ч" placeholderTextColor={c.textSecondary}
-            keyboardType="decimal-pad" />
-          <Text style={{ color: c.textSecondary, fontSize: 12, marginRight: 8 }}>ч</Text>
-          <RatingDots value={sleepQuality} onChange={setSleepQuality} color="#3B82F6" />
-        </View>
         <View style={s.ratingRow}>
           <Text style={[s.label, { color: c.text }]}>Работоспособность</Text>
           <RatingDots value={productivity} onChange={setProductivity} color="#22C55E" />
@@ -148,27 +176,27 @@ export function DayReviewScreen() {
       {/* Sport */}
       <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
         <Text style={[s.sectionTitle, { color: c.textSecondary }]}>Спорт</Text>
-        {hasSport && (
+        {(sportData.pullups > 0 || sportData.abs > 0 || sportData.triceps > 0 || sportData.squats > 0) && (
           <View style={s.sportAutoRow}>
-            {sportData.pullups > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏋️ {sportData.pullups}</Text>}
-            {sportData.abs > 0 && <Text style={[s.sportChip, { color: c.text }]}>🔥 {sportData.abs}</Text>}
-            {sportData.triceps > 0 && <Text style={[s.sportChip, { color: c.text }]}>💪 {sportData.triceps}</Text>}
-            {sportData.squats > 0 && <Text style={[s.sportChip, { color: c.text }]}>🦵 {sportData.squats}</Text>}
+            {sportData.pullups > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏋️ Подтяг. {sportData.pullups}</Text>}
+            {sportData.abs > 0 && <Text style={[s.sportChip, { color: c.text }]}>🔥 Пресс {sportData.abs}</Text>}
+            {sportData.triceps > 0 && <Text style={[s.sportChip, { color: c.text }]}>💪 Трицепс {sportData.triceps}</Text>}
+            {sportData.squats > 0 && <Text style={[s.sportChip, { color: c.text }]}>🦵 Присед. {sportData.squats}</Text>}
           </View>
         )}
-        <View style={s.sportInputRow}>
-          <Text style={{ color: c.text, fontSize: 13 }}>⚽ Футбол</Text>
-          <TextInput style={[s.smallInput, { color: c.text, borderColor: c.border }]}
-            value={sportFootball} onChangeText={setSportFootball}
-            placeholder="мин" placeholderTextColor={c.textSecondary} keyboardType="number-pad" />
-          <Text style={{ color: c.textSecondary, fontSize: 12 }}>мин</Text>
-        </View>
-        <View style={s.sportInputRow}>
-          <Text style={{ color: c.text, fontSize: 13 }}>🏃 Бег</Text>
-          <TextInput style={[s.smallInput, { color: c.text, borderColor: c.border }]}
-            value={sportRun} onChangeText={setSportRun}
-            placeholder="мин" placeholderTextColor={c.textSecondary} keyboardType="number-pad" />
-          <Text style={{ color: c.textSecondary, fontSize: 12 }}>мин</Text>
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 6 }}>
+          <TouchableOpacity onPress={() => setSportFootball(sportFootball === '1' ? '' : '1')}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text style={{ fontSize: 16 }}>{sportFootball === '1' ? '☑' : '☐'}</Text>
+            <Text style={{ color: c.text, fontSize: 13 }}>⚽ Футбол</Text>
+          </TouchableOpacity>
+          <Text style={{ color: c.textSecondary, fontSize: 13 }}>🏃 Бег</Text>
+          {[5, 10, 15, 20].map((m) => (
+            <TouchableOpacity key={m} onPress={() => setSportRun(sportRun === String(m) ? '' : String(m))}
+              style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: sportRun === String(m) ? '#22C55E' : '#444' }}>
+              <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>{m}</Text>
+            </TouchableOpacity>
+          ))}
         </View>
       </View>
 
