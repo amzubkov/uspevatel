@@ -1,5 +1,5 @@
 import React, { useMemo, useCallback, useState, useEffect } from "react";
-import { TouchableOpacity, Text, View, StyleSheet, Alert } from "react-native";
+import { TouchableOpacity, Text, View, ScrollView, StyleSheet, Alert } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import {
   NavigationContainer,
@@ -48,76 +48,35 @@ function TabEmoji({ emoji, color }: { emoji: string; color: string }) {
 const HeaderButtons = React.memo(function HeaderButtons() {
   const navigation = useNavigation<any>();
 
+  const items: { emoji: string; screen: string }[] = [
+    { emoji: '📅', screen: 'DailyRoutine' },
+    { emoji: '📊', screen: 'DayReview' },
+    { emoji: '💰', screen: 'Money' },
+    { emoji: '💪', screen: 'Sport' },
+    { emoji: '🏥', screen: 'Health' },
+    { emoji: '✈️', screen: 'Planner' },
+    { emoji: '📄', screen: 'Documents' },
+    { emoji: '📂', screen: 'Projects' },
+    { emoji: '🤖', screen: 'TelegramSync' },
+    { emoji: '⚙️', screen: 'Settings' },
+  ];
+
   return (
-    <View style={hStyles.row}>
-      <TouchableOpacity
-        style={hStyles.btn}
-        onPress={() => navigation.navigate("DailyRoutine")}
-      >
-        <Text style={hStyles.emoji}>📅</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={hStyles.btn}
-        onPress={() => navigation.navigate("DayReview")}
-      >
-        <Text style={hStyles.emoji}>📊</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={hStyles.btn}
-        onPress={() => navigation.navigate("Money")}
-      >
-        <Text style={hStyles.emoji}>💰</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={hStyles.btn}
-        onPress={() => navigation.navigate("Sport")}
-      >
-        <Text style={hStyles.emoji}>💪</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={hStyles.btn}
-        onPress={() => navigation.navigate("Health")}
-      >
-        <Text style={hStyles.emoji}>🏥</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={hStyles.btn}
-        onPress={() => navigation.navigate("Planner")}
-      >
-        <Text style={hStyles.emoji}>✈️</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={hStyles.btn}
-        onPress={() => navigation.navigate("Documents")}
-      >
-        <Text style={hStyles.emoji}>📄</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={hStyles.btn}
-        onPress={() => navigation.navigate("Projects")}
-      >
-        <Text style={hStyles.emoji}>📂</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={hStyles.btn}
-        onPress={() => navigation.navigate("TelegramSync")}
-      >
-        <Text style={hStyles.emoji}>🤖</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={hStyles.btn}
-        onPress={() => navigation.navigate("Settings")}
-      >
-        <Text style={hStyles.emoji}>⚙️</Text>
-      </TouchableOpacity>
-    </View>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={hStyles.scroll} contentContainerStyle={hStyles.row}>
+      {items.map((item) => (
+        <TouchableOpacity key={item.screen} style={hStyles.btn} onPress={() => navigation.navigate(item.screen)}>
+          <Text style={hStyles.emoji}>{item.emoji}</Text>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
   );
 });
 
 const hStyles = StyleSheet.create({
-  row: { flexDirection: "row", alignItems: "center", gap: 0, marginRight: 4 },
-  btn: { padding: 2 },
-  emoji: { fontSize: 16 },
+  scroll: { maxHeight: 36 },
+  row: { flexDirection: "row", alignItems: "center", paddingRight: 8 },
+  btn: { paddingHorizontal: 4, paddingVertical: 2 },
+  emoji: { fontSize: 18 },
 });
 
 const renderHeaderRight = () => <HeaderButtons />;
