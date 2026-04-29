@@ -121,47 +121,86 @@ function parseRevolut(rows: any[][]): ParsedTransaction[] {
   return results;
 }
 
-/** Eurobank XLSX: tries common column names */
-function parseEurobank(rows: any[][]): ParsedTransaction[] {
-  const header = rows[0]?.map((h: any) => String(h || '').toLowerCase().trim()) || [];
+/**
+ * Hellenic Bank (Eurobank) text parser.
+ * Parses text copied from PDF bank statement.
+ * Format: DD/MM  Description  Debit  Credit  ValueDate  Balance
+ * Numbers: 10.983,88 (dot=thousands, comma=decimal)
+ * Skips: BALANCE B/F, CARRIED FORWARD, T O T A L S
+ */
+function parseEurobankAmount(s: string): number | null {
+  if (!s) return null;
+  const cleaned = s.trim().replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? null : n;
+}
 
-  const dateIdx = header.findIndex((h) =>
-    h.includes('date') || h.includes('ημερομηνία') || h.includes('ημ/νία') || h.includes('trans'));
-  const amountIdx = header.findIndex((h) =>
-    h.includes('amount') || h.includes('ποσό') || h.includes('ποσον'));
-  const debitIdx = header.findIndex((h) => h.includes('debit') || h.includes('χρέωση'));
-  const creditIdx = header.findIndex((h) => h.includes('credit') || h.includes('πίστωση'));
-  const descIdx = header.findIndex((h) =>
-    h.includes('description') || h.includes('περιγραφή') || h.includes('αιτιολογία'));
-
-  const hasDebitCredit = debitIdx >= 0 && creditIdx >= 0;
-  if (dateIdx === -1 || (amountIdx === -1 && !hasDebitCredit)) return [];
-
+function parseEurobankLines(lines: string[]): ParsedTransaction[] {
   const results: ParsedTransaction[] = [];
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row || !row[dateIdx]) continue;
-    const dt = parseDate(row[dateIdx]);
-    if (!dt) continue;
-    let amount: number | null;
-    if (hasDebitCredit) {
-      const debit = parseAmount(row[debitIdx]);
-      const credit = parseAmount(row[creditIdx]);
-      if (debit) amount = -Math.abs(debit);
-      else if (credit) amount = Math.abs(credit);
-      else continue;
-    } else {
-      amount = parseAmount(row[amountIdx]);
+
+  // Try to find statement year from header (e.g. "31/01/2025")
+  let year = new Date().getFullYear().toString();
+  for (const l of lines.slice(0, 20)) {
+    const ym = l.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    if (ym) { year = ym[3]; break; }
+  }
+
+  // Track previous balance to determine debit vs credit
+  let prevBalance: number | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lower = line.toLowerCase();
+
+    // Skip non-transaction lines
+    if (lower.includes('balance b/f') || lower.includes('μεταφορα')) {
+      // Extract opening balance
+      const amts = [...line.matchAll(/(\d{1,3}(?:\.\d{3})*,\d{2})/g)];
+      if (amts.length > 0) prevBalance = parseEurobankAmount(amts[amts.length - 1][1]);
+      continue;
     }
-    if (amount == null) continue;
-    const desc = descIdx >= 0 ? String(row[descIdx] || '') : '';
+    if (lower.includes('carried forward')) continue;
+    if (lower.includes('t o t a l')) continue;
+    if (lower.includes('totals')) continue;
+
+    // Match: DD/MM followed by content
+    const m = line.match(/^(\d{2})\/(\d{2})\s+(.+)/);
+    if (!m) continue;
+
+    const dd = m[1], mm = m[2];
+    const rest = m[3];
+
+    // Find all amounts in the line
+    const amts = [...rest.matchAll(/(\d{1,3}(?:\.\d{3})*,\d{2})/g)].map((am) => parseEurobankAmount(am[1])!);
+    if (amts.length < 2) continue; // need at least transaction amount + balance
+
+    const desc = rest.substring(0, rest.search(/\d{1,3}(?:\.\d{3})*,\d{2}/)).trim();
+    const txAmount = amts[0];
+    const balance = amts[amts.length - 1]; // last amount is always balance
+
+    // Determine debit vs credit: compare with previous balance
+    let amount: number;
+    if (prevBalance != null) {
+      // If balance went up → credit, if down → debit
+      if (balance > prevBalance) {
+        amount = txAmount; // credit (positive)
+      } else {
+        amount = -txAmount; // debit (negative)
+      }
+    } else {
+      // No previous balance - check if description is empty (credits like ATM)
+      amount = desc ? -txAmount : txAmount;
+    }
+    prevBalance = balance;
+
+    const date = `${year}-${mm}-${dd}`;
     results.push({
-      date: dt.date,
-      timestamp: dt.timestamp,
+      date,
+      timestamp: `${date}T00:00:00`,
       amount,
       category: '',
       tag: '',
-      comment: desc,
+      comment: desc || '(без описания)',
     });
   }
   return results;
@@ -302,13 +341,17 @@ function parseRevolutCrypto(rows: any[][]): ParsedTransaction[] {
 }
 
 export function parseBankFile(content: string, bank: BankType): ParsedTransaction[] {
+  if (bank === 'eurobank') {
+    const lines = content.split('\n').map((l) => l.trim()).filter(Boolean);
+    return parseEurobankLines(lines);
+  }
+
   const rows = csvToRows(content);
   if (!rows.length) return [];
 
   switch (bank) {
     case 'revolut': return parseRevolut(rows);
     case 'revolut_crypto': return parseRevolutCrypto(rows);
-    case 'eurobank': return parseEurobank(rows);
     default: return [];
   }
 }
