@@ -36,6 +36,7 @@ import { PlannerTab } from "../screens/PlannerTab";
 import { HealthScreen } from "../screens/HealthScreen";
 import { DocumentsScreen } from "../screens/DocumentsScreen";
 import { TelegramSyncScreen } from "../screens/TelegramSyncScreen";
+import { DayReviewScreen } from "../screens/DayReviewScreen";
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -54,6 +55,12 @@ const HeaderButtons = React.memo(function HeaderButtons() {
         onPress={() => navigation.navigate("DailyRoutine")}
       >
         <Text style={hStyles.emoji}>📅</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={hStyles.btn}
+        onPress={() => navigation.navigate("DayReview")}
+      >
+        <Text style={hStyles.emoji}>📊</Text>
       </TouchableOpacity>
       <TouchableOpacity
         style={hStyles.btn}
@@ -300,6 +307,11 @@ export function AppNavigator() {
           name="WeeklyRoutine"
           component={WeeklyRoutineScreen}
           options={{ title: "Еженедельный обзор" }}
+        />
+        <Stack.Screen
+          name="DayReview"
+          component={DayReviewScreen}
+          options={{ title: "Обзор дня" }}
         />
         <Stack.Screen
           name="Money"

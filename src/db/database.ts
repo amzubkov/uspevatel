@@ -42,7 +42,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 29;
+const SCHEMA_VERSION = 30;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -810,6 +810,24 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
       if (!cols.some((c) => c.name === 'bank')) {
         await db.execAsync("ALTER TABLE accounts ADD COLUMN bank TEXT;");
       }
+    } catch {}
+  }
+
+  if (currentVer < 30) {
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS daily_logs (
+        id TEXT PRIMARY KEY,
+        date TEXT UNIQUE NOT NULL,
+        sleep_hours REAL,
+        sleep_quality INTEGER,
+        productivity INTEGER,
+        motivation INTEGER,
+        day_rating INTEGER,
+        sport_football INTEGER NOT NULL DEFAULT 0,
+        sport_run INTEGER NOT NULL DEFAULT 0,
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );`);
     } catch {}
   }
 
