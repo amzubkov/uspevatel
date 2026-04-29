@@ -73,10 +73,10 @@ const HeaderButtons = React.memo(function HeaderButtons() {
 });
 
 const hStyles = StyleSheet.create({
-  scroll: { maxHeight: 36 },
-  row: { flexDirection: "row", alignItems: "center", paddingRight: 8 },
-  btn: { paddingHorizontal: 4, paddingVertical: 2 },
-  emoji: { fontSize: 18 },
+  scroll: { flexGrow: 0 },
+  row: { flexDirection: "row", alignItems: "center" },
+  btn: { paddingHorizontal: 3, paddingVertical: 2 },
+  emoji: { fontSize: 17 },
 });
 
 const renderHeaderRight = () => <HeaderButtons />;
