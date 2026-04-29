@@ -153,18 +153,18 @@ function parseEurobankLines(lines: string[]): ParsedTransaction[] {
     const line = lines[i];
     const lower = line.toLowerCase();
 
-    // Skip headers, balance b/f, carried forward, totals
-    if (lower.includes('balance b/f') || lower.includes('μεταφορα')) continue;
-    if (lower.includes('carried forward')) continue;
-    if (lower.includes('t o t a l')) continue;
-    if (lower.includes('totals')) continue;
-    if (lower.includes('statement') || lower.includes('κατασταση')) continue;
-    if (lower.includes('date') || lower.includes('ημερ')) continue;
-    if (lower.includes('debit') || lower.includes('credit') || lower.includes('χρεωση') || lower.includes('πιστωση')) continue;
-    if (lower.includes('penalty') || lower.includes('επιβαρυνση')) continue;
-    if (lower.includes('interest') || lower.includes('τοκο')) continue;
-    if (lower.includes('hellenic') || lower.includes('ελληνικ')) continue;
-    if (lower.includes('service line') || lower.includes('εξυπηρετ')) continue;
+    // Skip only lines that can't be transactions (no DD/MM prefix)
+    const hasDate = /^\d{2}\/\d{2}\s/.test(line);
+    if (!hasDate) {
+      if (lower.includes('balance b/f') || lower.includes('μεταφορα')) continue;
+      if (lower.includes('carried forward')) continue;
+      if (lower.includes('t o t a l')) continue;
+      if (lower.includes('totals')) continue;
+      if (lower.includes('statement of account') || lower.includes('κατασταση λογαριασμου')) continue;
+      if (lower.includes('interest statement') || lower.includes('κατασταση τοκων')) continue;
+      if (lower.includes('hellenic') || lower.includes('ελληνικ')) continue;
+      if (lower.includes('service line') || lower.includes('εξυπηρετ')) continue;
+    }
 
     // DD/MM line with amounts = transaction
     const m = line.match(/^(\d{2})\/(\d{2})\s+(.*)/);
