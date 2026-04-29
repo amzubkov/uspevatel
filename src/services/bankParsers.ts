@@ -153,10 +153,12 @@ function parseEurobankLines(lines: string[]): ParsedTransaction[] {
     const line = lines[i];
     const lower = line.toLowerCase();
 
+    // Skip balance b/f even with date prefix
+    if (lower.includes('balance b/f') || lower.includes('μεταφορα')) continue;
+
     // Skip only lines that can't be transactions (no DD/MM prefix)
     const hasDate = /^\d{2}\/\d{2}\s/.test(line);
     if (!hasDate) {
-      if (lower.includes('balance b/f') || lower.includes('μεταφορα')) continue;
       if (lower.includes('carried forward')) continue;
       if (lower.includes('t o t a l')) continue;
       if (lower.includes('totals')) continue;
