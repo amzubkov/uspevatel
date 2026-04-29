@@ -115,9 +115,9 @@ const HeaderButtons = React.memo(function HeaderButtons() {
 });
 
 const hStyles = StyleSheet.create({
-  row: { flexDirection: "row", alignItems: "center", gap: 2, marginRight: 8 },
-  btn: { padding: 4 },
-  emoji: { fontSize: 18 },
+  row: { flexDirection: "row", alignItems: "center", gap: 0, marginRight: 4 },
+  btn: { padding: 2 },
+  emoji: { fontSize: 16 },
 });
 
 const renderHeaderRight = () => <HeaderButtons />;
