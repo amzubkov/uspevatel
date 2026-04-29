@@ -138,69 +138,94 @@ function parseEurobankAmount(s: string): number | null {
 function parseEurobankLines(lines: string[]): ParsedTransaction[] {
   const results: ParsedTransaction[] = [];
 
-  // Try to find statement year from header (e.g. "31/01/2025")
+  // Find statement year from header (e.g. "31/08/2023")
   let year = new Date().getFullYear().toString();
-  for (const l of lines.slice(0, 20)) {
+  for (const l of lines.slice(0, 30)) {
     const ym = l.match(/(\d{2})\/(\d{2})\/(\d{4})/);
     if (ym) { year = ym[3]; break; }
   }
 
-  // Track previous balance to determine debit vs credit
-  let prevBalance: number | null = null;
+  // First pass: build transaction entries with multi-line descriptions
+  interface RawTx { dd: string; mm: string; desc: string; amounts: number[] }
+  const rawTxs: RawTx[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const lower = line.toLowerCase();
 
-    // Skip non-transaction lines
-    if (lower.includes('balance b/f') || lower.includes('μεταφορα')) {
-      // Extract opening balance
-      const amts = [...line.matchAll(/(\d{1,3}(?:\.\d{3})*,\d{2})/g)];
-      if (amts.length > 0) prevBalance = parseEurobankAmount(amts[amts.length - 1][1]);
-      continue;
-    }
+    // Skip headers, balance b/f, carried forward, totals
+    if (lower.includes('balance b/f') || lower.includes('μεταφορα')) continue;
     if (lower.includes('carried forward')) continue;
     if (lower.includes('t o t a l')) continue;
     if (lower.includes('totals')) continue;
+    if (lower.includes('statement') || lower.includes('κατασταση')) continue;
+    if (lower.includes('date') || lower.includes('ημερ')) continue;
+    if (lower.includes('debit') || lower.includes('credit') || lower.includes('χρεωση') || lower.includes('πιστωση')) continue;
+    if (lower.includes('penalty') || lower.includes('επιβαρυνση')) continue;
+    if (lower.includes('interest') || lower.includes('τοκο')) continue;
+    if (lower.includes('hellenic') || lower.includes('ελληνικ')) continue;
+    if (lower.includes('service line') || lower.includes('εξυπηρετ')) continue;
 
-    // Match: DD/MM followed by content
-    const m = line.match(/^(\d{2})\/(\d{2})\s+(.+)/);
-    if (!m) continue;
+    // DD/MM line with amounts = transaction
+    const m = line.match(/^(\d{2})\/(\d{2})\s+(.*)/);
+    if (m) {
+      const rest = m[3];
+      const amounts = [...rest.matchAll(/(\d{1,3}(?:\.\d{3})*,\d{2})/g)].map((am) => parseEurobankAmount(am[1])!);
+      const desc = rest.substring(0, rest.search(/\d{1,3}(?:\.\d{3})*,\d{2}/) >= 0 ? rest.search(/\d{1,3}(?:\.\d{3})*,\d{2}/) : rest.length).trim();
+      if (amounts.length >= 2) {
+        rawTxs.push({ dd: m[1], mm: m[2], desc, amounts });
+      } else if (amounts.length === 0 && desc) {
+        // Date line with description only (no amounts) — description continues on next line
+        // or this is a description-only line before amounts come on next DD/MM line
+        rawTxs.push({ dd: m[1], mm: m[2], desc, amounts: [] });
+      }
+      continue;
+    }
 
-    const dd = m[1], mm = m[2];
-    const rest = m[3];
+    // Non-date line: append as description to last transaction
+    const trimmed = line.trim();
+    if (trimmed && rawTxs.length > 0) {
+      const last = rawTxs[rawTxs.length - 1];
+      // Check if this line has amounts (continuation with amounts)
+      const amounts = [...trimmed.matchAll(/(\d{1,3}(?:\.\d{3})*,\d{2})/g)].map((am) => parseEurobankAmount(am[1])!);
+      const textPart = trimmed.substring(0, trimmed.search(/\d{1,3}(?:\.\d{3})*,\d{2}/) >= 0 ? trimmed.search(/\d{1,3}(?:\.\d{3})*,\d{2}/) : trimmed.length).trim();
+      if (textPart) last.desc = last.desc ? last.desc + ' ' + textPart : textPart;
+      if (amounts.length > 0 && last.amounts.length === 0) last.amounts = amounts;
+    }
+  }
 
-    // Find all amounts in the line
-    const amts = [...rest.matchAll(/(\d{1,3}(?:\.\d{3})*,\d{2})/g)].map((am) => parseEurobankAmount(am[1])!);
-    if (amts.length < 2) continue; // need at least transaction amount + balance
+  // Second pass: convert to transactions using balance comparison
+  let prevBalance: number | null = null;
 
-    const desc = rest.substring(0, rest.search(/\d{1,3}(?:\.\d{3})*,\d{2}/)).trim();
-    const txAmount = amts[0];
-    const balance = amts[amts.length - 1]; // last amount is always balance
+  // Find opening balance from BALANCE B/F line
+  for (const l of lines) {
+    if (l.toLowerCase().includes('balance b/f') || l.toLowerCase().includes('μεταφορα')) {
+      const amts = [...l.matchAll(/(\d{1,3}(?:\.\d{3})*,\d{2})/g)];
+      if (amts.length > 0) { prevBalance = parseEurobankAmount(amts[amts.length - 1][1]); break; }
+    }
+  }
 
-    // Determine debit vs credit: compare with previous balance
+  for (const tx of rawTxs) {
+    if (tx.amounts.length < 2) continue; // need amount + balance
+    const txAmount = tx.amounts[0];
+    const balance = tx.amounts[tx.amounts.length - 1];
+
     let amount: number;
     if (prevBalance != null) {
-      // If balance went up → credit, if down → debit
-      if (balance > prevBalance) {
-        amount = txAmount; // credit (positive)
-      } else {
-        amount = -txAmount; // debit (negative)
-      }
+      amount = balance > prevBalance ? txAmount : -txAmount;
     } else {
-      // No previous balance - check if description is empty (credits like ATM)
-      amount = desc ? -txAmount : txAmount;
+      amount = -txAmount; // default debit
     }
     prevBalance = balance;
 
-    const date = `${year}-${mm}-${dd}`;
+    const date = `${year}-${tx.mm}-${tx.dd}`;
     results.push({
       date,
       timestamp: `${date}T00:00:00`,
       amount,
       category: '',
       tag: '',
-      comment: desc || '(без описания)',
+      comment: tx.desc || '(без описания)',
     });
   }
   return results;
