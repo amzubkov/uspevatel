@@ -7,6 +7,7 @@ import { DatePickerField } from '../components/DatePickerField';
 import { parseBankFile, BANK_LABELS, ParsedTransaction } from '../services/bankParsers';
 import * as DocumentPicker from 'expo-document-picker';
 import * as LegacyFS from 'expo-file-system/legacy';
+import * as PdfTextExtract from 'expo-pdf-text-extract';
 
 const CURRENCIES = ['RUB', 'EUR', 'USDT'];
 const ACC_COLORS = ['#EF4444', '#F59E0B', '#22C55E', '#3B82F6', '#8B5CF6', '#EC4899', '#06B6D4', '#6B7280'];
@@ -546,25 +547,25 @@ export function MoneyScreen() {
     );
   }
 
-  const [showPasteImport, setShowPasteImport] = useState(false);
-  const [pasteText, setPasteText] = useState('');
-
   const handleImportFile = async () => {
     if (!selectedAccountId || !selectedAccount?.bank) return;
-    if (selectedAccount.bank === 'eurobank') {
-      setShowPasteImport(true);
-      setPasteText('');
-      return;
-    }
     try {
+      const isPdf = selectedAccount.bank === 'eurobank';
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv', 'text/comma-separated-values', '*/*'],
+        type: isPdf ? ['application/pdf', '*/*'] : ['text/csv', 'text/comma-separated-values', '*/*'],
         copyToCacheDirectory: true,
       });
       if (result.canceled || !result.assets?.[0]) return;
       const uri = result.assets[0].uri;
-      const content = await LegacyFS.readAsStringAsync(uri, { encoding: LegacyFS.EncodingType.UTF8 });
-      const parsed = parseBankFile(content, selectedAccount.bank);
+      let parsed: ParsedTransaction[];
+      if (isPdf) {
+        const extracted = await PdfTextExtract.extractText(uri);
+        const text = Array.isArray(extracted) ? extracted.join('\n') : String(extracted);
+        parsed = parseBankFile(text, selectedAccount.bank);
+      } else {
+        const content = await LegacyFS.readAsStringAsync(uri, { encoding: LegacyFS.EncodingType.UTF8 });
+        parsed = parseBankFile(content, selectedAccount.bank);
+      }
       if (parsed.length === 0) {
         Alert.alert('Импорт', 'Не удалось найти транзакции в файле');
         return;
@@ -603,54 +604,6 @@ export function MoneyScreen() {
       Alert.alert('Ошибка импорта', String(e?.message || e));
     }
   };
-
-  // ── Eurobank paste import ──
-  if (showPasteImport && selectedAccountId && selectedAccount) {
-    const handlePasteImport = () => {
-      if (!pasteText.trim()) { Alert.alert('Вставьте текст выписки'); return; }
-      const parsed = parseBankFile(pasteText, selectedAccount.bank);
-      if (parsed.length === 0) { Alert.alert('Не найдено транзакций', 'Проверьте текст'); return; }
-      const existingKeys = new Set(
-        getTransactionsForAccount(selectedAccountId).map((t) => `${t.date}|${t.amount}|${t.comment}`)
-      );
-      const newTxs = parsed.filter((t) => !existingKeys.has(`${t.date}|${t.amount}|${t.comment}`));
-      if (newTxs.length === 0) { Alert.alert('Импорт', `Найдено ${parsed.length}, все уже импортированы`); return; }
-      Alert.alert('Импорт', `Найдено ${parsed.length}, новых: ${newTxs.length}`, [
-        { text: 'Отмена', style: 'cancel' },
-        { text: `Импорт ${newTxs.length}`, onPress: async () => {
-          for (const t of newTxs) {
-            await addTransaction({ accountId: selectedAccountId, amount: t.amount, date: t.date, timestamp: t.timestamp, category: t.category, tag: t.tag, comment: t.comment });
-          }
-          Alert.alert('Готово', `Импортировано ${newTxs.length}`);
-          setShowPasteImport(false);
-        }},
-      ]);
-    };
-    return (
-      <View style={[st.container, { backgroundColor: c.background }]}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, gap: 8 }}>
-          <TouchableOpacity onPress={() => setShowPasteImport(false)}>
-            <Text style={{ color: c.primary, fontSize: 15, fontWeight: '600' }}>← Назад</Text>
-          </TouchableOpacity>
-          <Text style={{ color: c.text, fontSize: 16, fontWeight: '700', flex: 1 }}>Импорт Eurobank</Text>
-        </View>
-        <Text style={{ color: c.textSecondary, fontSize: 12, paddingHorizontal: 12, marginBottom: 8 }}>
-          Откройте PDF выписки, выделите весь текст и вставьте сюда
-        </Text>
-        <TextInput
-          style={{ flex: 1, color: c.text, backgroundColor: c.card, borderColor: c.border, borderWidth: 1, borderRadius: 8, margin: 12, padding: 12, fontSize: 12, textAlignVertical: 'top' }}
-          value={pasteText} onChangeText={setPasteText}
-          placeholder="Вставьте текст выписки..." placeholderTextColor={c.textSecondary}
-          multiline numberOfLines={20}
-        />
-        <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingBottom: 16 }}>
-          <TouchableOpacity style={[st.btn, { backgroundColor: c.primary, flex: 1 }]} onPress={handlePasteImport}>
-            <Text style={{ color: '#FFF', fontWeight: '700' }}>Импортировать</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
 
   // ── Categorization mode ──
   if (categorizingMode) {
