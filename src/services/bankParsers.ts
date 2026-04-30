@@ -306,21 +306,9 @@ function parseRevolutCrypto(rows: any[][]): ParsedTransaction[] {
   const feeIdx = header.findIndex((h) => h === 'fees' || h === 'комиссия');
   const dateIdx = header.findIndex((h) => h === 'date' || h === 'дата');
 
-  // Debug info as first transaction
-  const firstRow = rows[1];
-  const debugDate = firstRow ? String(firstRow[dateIdx] ?? 'UNDEF') : 'NO_ROW';
-  const debugQty = firstRow ? String(firstRow[qtyIdx] ?? 'UNDEF') : 'NO_ROW';
-  const testDate = firstRow ? parseRuDate(debugDate) : null;
-  const testQty = firstRow ? parseRuAmount(debugQty) : null;
-  const debugTx: ParsedTransaction = {
-    date: '0000-00-00', timestamp: '0000-00-00T00:00:00',
-    amount: 0, category: 'DEBUG', tag: '',
-    comment: `hdr=[${header.join('|')}] di=${dateIdx} qi=${qtyIdx} d="${debugDate.substring(0, 30)}" q="${debugQty.substring(0, 15)}" td=${!!testDate} tq=${testQty} rows=${rows.length} cols=${firstRow?.length}`,
-  };
+  if (dateIdx === -1 || qtyIdx === -1) return [];
 
-  if (dateIdx === -1 || qtyIdx === -1) return [debugTx];
-
-  const results: ParsedTransaction[] = [debugTx];
+  const results: ParsedTransaction[] = [];
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row || !row[dateIdx]) continue;
@@ -385,11 +373,7 @@ function parseBog(rows: string[][]): ParsedTransaction[] {
       break;
     }
   }
-  if (headerIdx === -1) {
-    // Debug: return info about first rows
-    const debug = rows.slice(0, 10).map((r, i) => `${i}:[${r.length}]${r.slice(0, 3).join('|').substring(0, 40)}`).join(' ');
-    return [{ date: '0000-00-00', timestamp: '0000-00-00T00:00:00', amount: 0, category: 'DEBUG', tag: '', comment: `hdr=-1 rows=${rows.length} ${debug}` }];
-  }
+  if (headerIdx === -1) return [];
 
   const header = rows[headerIdx].map((h) => h.toLowerCase().trim());
   const dateIdx = header.findIndex((h) => h.includes('tariri') || h.includes('date'));
@@ -397,16 +381,9 @@ function parseBog(rows: string[][]): ParsedTransaction[] {
   const creditIdx = header.findIndex((h) => h.includes('krediti') || h.includes('credit'));
   const descIdx = header.findIndex((h) => h.includes('sinaarsi') || h.includes('description') || h.includes('operaci'));
 
-  if (dateIdx === -1 || (debitIdx === -1 && creditIdx === -1)) {
-    return [{ date: '0000-00-00', timestamp: '0000-00-00T00:00:00', amount: 0, category: 'DEBUG', tag: '', comment: `hi=${headerIdx} hdr=[${header.join('|')}] di=${dateIdx} dbi=${debitIdx} cri=${creditIdx}` }];
-  }
+  if (dateIdx === -1 || (debitIdx === -1 && creditIdx === -1)) return [];
 
-  // Debug: always include first transaction attempt info
-  const firstDataRow = rows[headerIdx + 1];
-  const debugFirst: ParsedTransaction = { date: '0000-00-00', timestamp: '0000-00-00T00:00:00', amount: 0, category: 'DEBUG', tag: '',
-    comment: `hi=${headerIdx} di=${dateIdx} dbi=${debitIdx} row1=[${(firstDataRow||[]).slice(0,5).map(c=>(c||'').substring(0,15)).join('|')}]` };
-
-  const results: ParsedTransaction[] = [debugFirst];
+  const results: ParsedTransaction[] = [];
 
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
@@ -455,9 +432,16 @@ function parseBog(rows: string[][]): ParsedTransaction[] {
       break;
     }
 
+    // Extract auth time from description: "avtorizatsiis tarighi: DD/MM/YYYY HH:MM:SS"
+    let timestamp = `${date}T00:00:00`;
+    const authMatch = desc.match(/avtorizatsiis tarighi:\s*(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}:\d{2}:\d{2})/);
+    if (authMatch) {
+      timestamp = `${authMatch[3]}-${authMatch[2]}-${authMatch[1]}T${authMatch[4]}`;
+    }
+
     results.push({
       date,
-      timestamp: `${date}T00:00:00`,
+      timestamp,
       amount,
       category: '',
       tag: '',
