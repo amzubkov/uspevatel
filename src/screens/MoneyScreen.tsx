@@ -789,7 +789,9 @@ export function MoneyScreen() {
           </TouchableOpacity>
           {selectedAccount?.bank && (
             <TouchableOpacity style={[st.btn, { backgroundColor: '#8B5CF6', paddingVertical: 8, paddingHorizontal: 12 }]} onPress={handleImportFile}>
-              <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>Импорт</Text>
+              <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>
+                {selectedAccount.bank === 'eurobank' ? 'PDF' : 'CSV'}
+              </Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity style={[st.btn, { backgroundColor: '#F59E0B', paddingVertical: 8, paddingHorizontal: 12 }]} onPress={() => { setShowCorrectionForm(true); setCorrectionBalance(''); }}>

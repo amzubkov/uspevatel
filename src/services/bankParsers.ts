@@ -378,14 +378,18 @@ function parseRevolutCrypto(rows: any[][]): ParsedTransaction[] {
 function parseBog(rows: string[][]): ParsedTransaction[] {
   // Find header row
   let headerIdx = -1;
-  for (let i = 0; i < Math.min(10, rows.length); i++) {
+  for (let i = 0; i < Math.min(15, rows.length); i++) {
     const joined = rows[i].join('').toLowerCase();
-    if (joined.includes('tariri') || joined.includes('debeti') || joined.includes('krediti')) {
+    if (joined.includes('debeti') && joined.includes('krediti')) {
       headerIdx = i;
       break;
     }
   }
-  if (headerIdx === -1) return [];
+  if (headerIdx === -1) {
+    // Debug: return info about first rows
+    const debug = rows.slice(0, 10).map((r, i) => `${i}:[${r.length}]${r.slice(0, 3).join('|').substring(0, 40)}`).join(' ');
+    return [{ date: '0000-00-00', timestamp: '0000-00-00T00:00:00', amount: 0, category: 'DEBUG', tag: '', comment: `hdr=-1 rows=${rows.length} ${debug}` }];
+  }
 
   const header = rows[headerIdx].map((h) => h.toLowerCase().trim());
   const dateIdx = header.findIndex((h) => h.includes('tariri') || h.includes('date'));
@@ -393,9 +397,16 @@ function parseBog(rows: string[][]): ParsedTransaction[] {
   const creditIdx = header.findIndex((h) => h.includes('krediti') || h.includes('credit'));
   const descIdx = header.findIndex((h) => h.includes('sinaarsi') || h.includes('description') || h.includes('operaci'));
 
-  if (dateIdx === -1 || (debitIdx === -1 && creditIdx === -1)) return [];
+  if (dateIdx === -1 || (debitIdx === -1 && creditIdx === -1)) {
+    return [{ date: '0000-00-00', timestamp: '0000-00-00T00:00:00', amount: 0, category: 'DEBUG', tag: '', comment: `hi=${headerIdx} hdr=[${header.join('|')}] di=${dateIdx} dbi=${debitIdx} cri=${creditIdx}` }];
+  }
 
-  const results: ParsedTransaction[] = [];
+  // Debug: always include first transaction attempt info
+  const firstDataRow = rows[headerIdx + 1];
+  const debugFirst: ParsedTransaction = { date: '0000-00-00', timestamp: '0000-00-00T00:00:00', amount: 0, category: 'DEBUG', tag: '',
+    comment: `hi=${headerIdx} di=${dateIdx} dbi=${debitIdx} row1=[${(firstDataRow||[]).slice(0,5).map(c=>(c||'').substring(0,15)).join('|')}]` };
+
+  const results: ParsedTransaction[] = [debugFirst];
 
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
