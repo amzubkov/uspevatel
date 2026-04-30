@@ -13,6 +13,7 @@ export const BANK_LABELS: Record<string, string> = {
   revolut: 'Revolut',
   revolut_crypto: 'Revolut Crypto',
   eurobank: 'Eurobank',
+  bog: 'BOG',
 };
 
 function excelDateToISO(serial: number): string {
@@ -367,6 +368,94 @@ function parseRevolutCrypto(rows: any[][]): ParsedTransaction[] {
   return results;
 }
 
+/**
+ * BOG (Bank of Georgia) CSV parser.
+ * Columns: TariRi, sabuTis #, mokorespondento angariSi, debeti, krediti, kursi, eqv.lari, operaciis Sinaarsi
+ * Dates: DD.MM.YYYY
+ * Skip: brunva (turnover), naSTi (balance), sawyisi naSTi (opening), saboloo naSTi (closing), sul brunva (total)
+ * Multi-line descriptions joined from continuation lines (start with tab)
+ */
+function parseBog(rows: string[][]): ParsedTransaction[] {
+  // Find header row
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(10, rows.length); i++) {
+    const joined = rows[i].join('').toLowerCase();
+    if (joined.includes('tariri') || joined.includes('debeti') || joined.includes('krediti')) {
+      headerIdx = i;
+      break;
+    }
+  }
+  if (headerIdx === -1) return [];
+
+  const header = rows[headerIdx].map((h) => h.toLowerCase().trim());
+  const dateIdx = header.findIndex((h) => h.includes('tariri') || h.includes('date'));
+  const debitIdx = header.findIndex((h) => h.includes('debeti') || h.includes('debit'));
+  const creditIdx = header.findIndex((h) => h.includes('krediti') || h.includes('credit'));
+  const descIdx = header.findIndex((h) => h.includes('sinaarsi') || h.includes('description') || h.includes('operaci'));
+
+  if (dateIdx === -1 || (debitIdx === -1 && creditIdx === -1)) return [];
+
+  const results: ParsedTransaction[] = [];
+
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length < 3) continue;
+
+    const dateStr = (row[dateIdx] || '').trim();
+    // Skip summary lines
+    const dateLower = dateStr.toLowerCase();
+    if (dateLower.includes('brunva') || dateLower.includes('nasti') || dateLower.includes('sul')
+      || dateLower === '' || dateLower.includes('saboloo') || dateLower.includes('sawyisi')) continue;
+
+    // Also check second column for summary markers
+    const col1 = (row[1] || '').trim().toLowerCase();
+    if (col1.includes('brunva') || col1.includes('nasti') || col1.includes('sawyisi') || col1.includes('saboloo')) continue;
+
+    // Parse date DD.MM.YYYY or DD.MM.YY
+    const dm = dateStr.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
+    if (!dm) continue;
+
+    const day = dm[1].padStart(2, '0');
+    const month = dm[2].padStart(2, '0');
+    const year = dm[3].length === 2 ? '20' + dm[3] : dm[3];
+    const date = `${year}-${month}-${day}`;
+
+    const debit = debitIdx >= 0 ? parseAmount(row[debitIdx]) : null;
+    const credit = creditIdx >= 0 ? parseAmount(row[creditIdx]) : null;
+
+    if (!debit && !credit) continue;
+    const amount = credit ? credit : -(debit!);
+
+    // Description - may continue on next lines (start with tab or empty date)
+    let desc = descIdx >= 0 ? (row[descIdx] || '').trim() : '';
+    // Look ahead for continuation lines
+    while (i + 1 < rows.length) {
+      const nextRow = rows[i + 1];
+      const nextDate = (nextRow?.[dateIdx] || '').trim();
+      // Continuation: empty date or starts with whitespace in original
+      if (nextDate === '' && nextRow && nextRow.some((c) => c.trim())) {
+        const extra = nextRow.map((c) => c.trim()).filter(Boolean).join(' ');
+        if (extra && !extra.toLowerCase().includes('brunva') && !extra.toLowerCase().includes('nasti')) {
+          desc = desc ? desc + ' ' + extra : extra;
+          i++;
+          continue;
+        }
+      }
+      break;
+    }
+
+    results.push({
+      date,
+      timestamp: `${date}T00:00:00`,
+      amount,
+      category: '',
+      tag: '',
+      comment: desc,
+    });
+  }
+  return results;
+}
+
 export function parseBankFile(content: string, bank: BankType): ParsedTransaction[] {
   if (bank === 'eurobank') {
     const lines = content.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -379,6 +468,7 @@ export function parseBankFile(content: string, bank: BankType): ParsedTransactio
   switch (bank) {
     case 'revolut': return parseRevolut(rows);
     case 'revolut_crypto': return parseRevolutCrypto(rows);
+    case 'bog': return parseBog(rows);
     default: return [];
   }
 }

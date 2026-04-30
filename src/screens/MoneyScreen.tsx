@@ -390,7 +390,7 @@ export function MoneyScreen() {
               onPress={() => setAccBank(undefined)}>
               <Text style={{ color: !accBank ? '#FFF' : c.text, fontSize: 12, fontWeight: '600' }}>—</Text>
             </TouchableOpacity>
-            {(['revolut', 'revolut_crypto', 'eurobank'] as BankType[]).map((b) => (
+            {(['revolut', 'revolut_crypto', 'eurobank', 'bog'] as BankType[]).map((b) => (
               <TouchableOpacity key={b}
                 style={[st.chip, { backgroundColor: accBank === b ? c.primary : c.card, borderColor: accBank === b ? c.primary : c.border }]}
                 onPress={() => setAccBank(b)}>
