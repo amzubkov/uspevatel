@@ -64,7 +64,15 @@ export interface ParsedTx {
   msgDate: number;
 }
 
-export type ParsedItem = ParsedTask | ParsedFlight | ParsedDoc | ParsedHealth | ParsedRef | ParsedTx;
+export interface ParsedNote {
+  type: 'note';
+  text: string;
+  tags: string[];
+  photoFileId?: string;
+  msgDate: number;
+}
+
+export type ParsedItem = ParsedTask | ParsedFlight | ParsedDoc | ParsedHealth | ParsedRef | ParsedTx | ParsedNote;
 
 // Normalise date: "14.04.2026" → "2026-04-14", "2026-04-14" stays as is
 function normaliseDate(s: string): string | null {
@@ -169,6 +177,17 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
   const docMatch = trimmed.match(/^\/doc\s+(.+)/i);
   if (docMatch) {
     return { type: 'doc', name: docMatch[1].trim(), photoFileId, docFileId, docFileName, docMimeType, msgDate };
+  }
+
+  // /note [#tag1 #tag2 ...] text
+  const noteMatch = trimmed.match(/^\/note\s+(.+)/is);
+  if (noteMatch) {
+    const body = noteMatch[1].trim();
+    const tags: string[] = [];
+    const tagMatches = body.matchAll(/#(\S+)/g);
+    for (const tm of tagMatches) tags.push(tm[1].toLowerCase());
+    const text = body.replace(/#\S+/g, '').trim();
+    return { type: 'note', text, tags, photoFileId, msgDate };
   }
 
   // /tx <account>, <amount>[, <category>[, <tag>[, <comment>[, <date>]]]]

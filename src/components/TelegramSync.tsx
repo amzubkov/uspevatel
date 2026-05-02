@@ -11,6 +11,7 @@ import { useHealthStore } from '../store/healthStore';
 import { colors } from '../utils/theme';
 import { useAttachmentStore } from '../store/attachmentStore';
 import { useMoneyStore } from '../store/moneyStore';
+import { useNoteStore } from '../store/noteStore';
 import { fetchUpdates, getFileUrl } from '../services/telegramService';
 import { parseMessages, ParsedItem } from '../services/telegramParser';
 
@@ -109,6 +110,7 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
       let docCount = 0;
       let healthCount = 0;
       let txCount = 0;
+      let noteCount = 0;
       const txSkipped: string[] = [];
 
       // Track saved IDs for post-transaction photo downloads
@@ -168,6 +170,15 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
             } else {
               txSkipped.push(`${item.account}: ${item.amount} (счёт не найден)`);
             }
+          } else if (item.type === 'note') {
+            const noteId = Crypto.randomUUID();
+            const now = new Date().toISOString();
+            await tx.runAsync(
+              'INSERT INTO notes (id, text, tags, image_path, created_at) VALUES (?,?,?,?,?)',
+              [noteId, item.text, JSON.stringify(item.tags), null, now]
+            );
+            noteCount++;
+            if (item.photoFileId) photoJobs.push({ type: 'note', id: noteId, fileId: item.photoFileId, subdir: 'note_images' });
           } else if (item.type === 'health') {
             healthCount += item.results.length + item.metrics.length;
           } else if (item.type === 'ref') {
@@ -242,6 +253,8 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
             'INSERT INTO document_images (id, document_id, image_path, sort_order, created_at) VALUES (?,?,?,?,?)',
             [imgId, job.id, relPath, 1, now]
           );
+        } else if (job.type === 'note') {
+          await db.runAsync('UPDATE notes SET image_path = ? WHERE id = ?', [relPath, job.id]);
         }
       }
 
@@ -326,16 +339,19 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
       useDocumentStore.setState({ loaded: false });
       if (healthCount) useHealthStore.setState({ loaded: false });
       if (txCount) useMoneyStore.setState({ loaded: false });
+      if (noteCount) useNoteStore.setState({ loaded: false });
       await useTaskStore.getState().load();
       await useFlightStore.getState().load();
       await useDocumentStore.getState().load();
       if (healthCount) await useHealthStore.getState().load();
       if (txCount) await useMoneyStore.getState().load();
+      if (noteCount) await useNoteStore.getState().load();
 
       const parts = [];
       if (taskCount) parts.push(`задач: ${taskCount}`);
       if (flightCount) parts.push(`перелётов: ${flightCount}`);
       if (docCount) parts.push(`документов: ${docCount}`);
+      if (noteCount) parts.push(`заметок: ${noteCount}`);
       if (healthCount) parts.push(`анализов: ${healthCount}`);
       if (txCount) parts.push(`транзакций: ${txCount}`);
       if (txSkipped.length) parts.push(`\nПропущено (${txSkipped.length}):\n${txSkipped.join('\n')}`);
@@ -351,8 +367,8 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
 
   const renderItem = ({ item: si, index }: { item: SelectableItem; index: number }) => {
     const { item, selected } = si;
-    const typeColor = item.type === 'task' ? '#3B82F6' : item.type === 'flight' ? '#F59E0B' : item.type === 'health' ? '#22C55E' : item.type === 'ref' ? '#F59E0B' : item.type === 'tx' ? '#10B981' : '#8B5CF6';
-    const typeLabel = item.type === 'task' ? 'ЗАДАЧА' : item.type === 'flight' ? (item.kind === 'hotel' ? 'ОТЕЛЬ' : item.kind === 'event' ? 'СОБЫТИЕ' : 'ПЕРЕЛЁТ') : item.type === 'health' ? 'АНАЛИЗЫ' : item.type === 'ref' ? 'РЕФЫ' : item.type === 'tx' ? 'ТРАНЗАКЦИЯ' : 'ДОКУМЕНТ';
+    const typeColor = item.type === 'task' ? '#3B82F6' : item.type === 'flight' ? '#F59E0B' : item.type === 'health' ? '#22C55E' : item.type === 'ref' ? '#F59E0B' : item.type === 'tx' ? '#10B981' : item.type === 'note' ? '#A855F7' : '#8B5CF6';
+    const typeLabel = item.type === 'task' ? 'ЗАДАЧА' : item.type === 'flight' ? (item.kind === 'hotel' ? 'ОТЕЛЬ' : item.kind === 'event' ? 'СОБЫТИЕ' : 'ПЕРЕЛЁТ') : item.type === 'health' ? 'АНАЛИЗЫ' : item.type === 'ref' ? 'РЕФЫ' : item.type === 'tx' ? 'ТРАНЗАКЦИЯ' : item.type === 'note' ? 'ЗАМЕТКА' : 'ДОКУМЕНТ';
     return (
       <TouchableOpacity
         style={[st.row, { backgroundColor: selected ? c.card : 'transparent', borderColor: c.border }]}
@@ -362,7 +378,7 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
         <View style={{ flex: 1 }}>
           <Text style={{ color: typeColor, fontSize: 11, fontWeight: '700' }}>{typeLabel}</Text>
           <Text style={{ color: c.text, fontSize: 14 }} numberOfLines={2}>
-            {item.type === 'task' ? item.subject : item.type === 'flight' ? item.title : item.type === 'health' ? `${item.results.length} рез. ${item.metrics.length} показ.` : item.type === 'ref' ? `${item.source}: ${item.refs.length} рефов` : item.type === 'tx' ? `${item.account}: ${item.amount > 0 ? '+' : ''}${item.amount}` : item.name}
+            {item.type === 'task' ? item.subject : item.type === 'flight' ? item.title : item.type === 'health' ? `${item.results.length} рез. ${item.metrics.length} показ.` : item.type === 'ref' ? `${item.source}: ${item.refs.length} рефов` : item.type === 'tx' ? `${item.account}: ${item.amount > 0 ? '+' : ''}${item.amount}` : item.type === 'note' ? `${item.tags.map(t => '#' + t).join(' ')} ${item.text}`.trim() : item.name}
           </Text>
           {item.type === 'task' && item.project && (
             <Text style={{ color: c.textSecondary, fontSize: 11 }}>Проект: {item.project}</Text>

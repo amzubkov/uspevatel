@@ -1185,7 +1185,8 @@ function NotesContent() {
       {/* Tag filter */}
       {allTags.length > 0 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 6, paddingHorizontal: 12, paddingVertical: 8 }}>
+          style={{ flexGrow: 0, maxHeight: 30 }}
+          contentContainerStyle={{ gap: 4, paddingHorizontal: 12, alignItems: 'center' }}>
           <TouchableOpacity onPress={() => setFilterTag(null)}
             style={[s.statusChip, { backgroundColor: !filterTag ? c.primary : c.card, borderColor: c.border }]}>
             <Text style={{ color: !filterTag ? '#FFF' : c.text, fontSize: 12, fontWeight: '600' }}>Все</Text>
