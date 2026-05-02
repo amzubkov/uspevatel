@@ -9,9 +9,17 @@ import { colors } from '../utils/theme';
 import { useNavigation } from '@react-navigation/native';
 
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
 function fmtDate(d: string): string {
   const [y, m, day] = d.split('-').map(Number);
   return `${day} ${MONTHS[m - 1]}`;
+}
+function fmtDateFull(d: string): string {
+  const dt = new Date(d);
+  const day = dt.getDate();
+  const month = MONTHS[dt.getMonth()];
+  const wd = WEEKDAYS[dt.getDay()];
+  return `${day} ${month}, ${wd}`;
 }
 function todayStr(): string {
   const d = new Date();
@@ -161,7 +169,7 @@ export function DayReviewScreen() {
       <View style={s.dateRow}>
         <TouchableOpacity onPress={() => changeDate(-1)}><Text style={[s.dateArrow, { color: c.primary }]}>{'<'}</Text></TouchableOpacity>
         <TouchableOpacity onPress={() => setDate(todayStr())}>
-          <Text style={[s.dateText, { color: c.text }]}>{fmtDate(date)} {date === todayStr() ? '(сегодня)' : date.substring(0, 4)}</Text>
+          <Text style={[s.dateText, { color: c.text }]}>{fmtDateFull(date)} {date === todayStr() ? '(сегодня)' : date.substring(0, 4)}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => changeDate(1)}><Text style={[s.dateArrow, { color: c.primary }]}>{'>'}</Text></TouchableOpacity>
       </View>
