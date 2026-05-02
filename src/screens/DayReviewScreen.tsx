@@ -53,6 +53,7 @@ export function DayReviewScreen() {
   const allTasks = useTaskStore((s) => s.tasks);
 
   const [date, setDate] = useState(todayStr());
+  const [showHistory, setShowHistory] = useState(false);
   const existing = getLog(date);
 
   const [sleepHours, setSleepHours] = useState('');
@@ -144,7 +145,7 @@ export function DayReviewScreen() {
 
   const hasSport = sportData.pullups > 0 || sportData.abs > 0 || sportData.triceps > 0 || sportData.squats > 0;
 
-  return (
+  const mainContent = (
     <ScrollView style={[s.container, { backgroundColor: c.background }]} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
       {/* Date selector */}
       <View style={s.dateRow}>
@@ -153,6 +154,9 @@ export function DayReviewScreen() {
           <Text style={[s.dateText, { color: c.text }]}>{fmtDate(date)} {date === todayStr() ? '(сегодня)' : date.substring(0, 4)}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => changeDate(1)}><Text style={[s.dateArrow, { color: c.primary }]}>{'>'}</Text></TouchableOpacity>
+        <TouchableOpacity onPress={() => setShowHistory(true)} style={{ position: 'absolute', right: 0 }}>
+          <Text style={{ color: c.primary, fontSize: 14, fontWeight: '600' }}>📋</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Notes */}
@@ -251,29 +255,43 @@ export function DayReviewScreen() {
       <TouchableOpacity style={[s.saveBtn, { backgroundColor: c.primary }]} onPress={handleSave}>
         <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 15 }}>Сохранить</Text>
       </TouchableOpacity>
+    </ScrollView>
+  );
 
-      {/* History */}
-      {logs.length > 0 && (
-        <View style={{ marginTop: 20 }}>
-          <Text style={[s.sectionTitle, { color: c.textSecondary }]}>История</Text>
-          {logs.slice(0, 30).map((log) => (
-            <TouchableOpacity key={log.id} style={[s.historyRow, { borderColor: c.border }]}
-              onPress={() => setDate(log.date)}>
+  if (showHistory) {
+    return (
+      <View style={[s.container, { backgroundColor: c.background }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, gap: 8 }}>
+          <TouchableOpacity onPress={() => setShowHistory(false)}>
+            <Text style={{ color: c.primary, fontSize: 15, fontWeight: '600' }}>← Назад</Text>
+          </TouchableOpacity>
+          <Text style={{ color: c.text, fontSize: 16, fontWeight: '700', flex: 1 }}>История ({logs.length})</Text>
+        </View>
+        <FlatList
+          data={logs}
+          keyExtractor={(log) => log.id}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
+          renderItem={({ item: log }) => (
+            <TouchableOpacity style={[s.historyRow, { borderColor: c.border }]}
+              onPress={() => { setDate(log.date); setShowHistory(false); }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={{ color: log.date === date ? c.primary : c.text, fontSize: 13, fontWeight: '600', width: 55 }}>{fmtDate(log.date)}</Text>
+                <Text style={{ color: c.text, fontSize: 13, fontWeight: '600', width: 55 }}>{fmtDate(log.date)}</Text>
                 {log.dayRating != null && <Text style={{ color: '#8B5CF6', fontSize: 13, fontWeight: '700' }}>📊{log.dayRating}</Text>}
                 {log.sleepHours != null && <Text style={{ color: c.textSecondary, fontSize: 12 }}>😴{log.sleepHours}</Text>}
                 {log.sleepQuality != null && <Text style={{ color: '#3B82F6', fontSize: 12 }}>💤{log.sleepQuality}%</Text>}
                 {log.productivity != null && <Text style={{ color: '#22C55E', fontSize: 12 }}>💪{log.productivity}</Text>}
                 {log.motivation != null && <Text style={{ color: '#F59E0B', fontSize: 12 }}>🔥{log.motivation}</Text>}
               </View>
-              {log.notes ? <Text style={{ color: c.textSecondary, fontSize: 11, paddingLeft: 55 }} numberOfLines={1}>{log.notes}</Text> : null}
+              {log.notes ? <Text style={{ color: c.textSecondary, fontSize: 11, paddingLeft: 55 }} numberOfLines={2}>{log.notes}</Text> : null}
             </TouchableOpacity>
-          ))}
-        </View>
-      )}
-    </ScrollView>
-  );
+          )}
+          ListEmptyComponent={<View style={s.empty}><Text style={{ color: c.textSecondary }}>Нет записей</Text></View>}
+        />
+      </View>
+    );
+  }
+
+  return mainContent;
 }
 
 const s = StyleSheet.create({
