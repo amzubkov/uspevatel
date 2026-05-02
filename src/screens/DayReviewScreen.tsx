@@ -30,28 +30,13 @@ function RatingDots({ value, onChange, color }: { value: number | undefined; onC
   );
 }
 
-function SleepHoursPicker({ value, onChange, c }: { value: number | undefined; onChange: (v: number) => void; c: any }) {
-  const hours = [4, 5, 6, 7, 8, 9, 10];
+function ChipPicker({ values, value, onChange, color, suffix }: { values: number[]; value: number | undefined; onChange: (v: number) => void; color: string; suffix?: string }) {
   return (
-    <View style={{ flexDirection: 'row', gap: 4 }}>
-      {hours.map((h) => (
-        <TouchableOpacity key={h} onPress={() => onChange(h)}
-          style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: value === h ? '#3B82F6' : '#444' }}>
-          <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>{h}</Text>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
-}
-
-function PercentPicker({ value, onChange, color }: { value: number | undefined; onChange: (v: number) => void; color: string }) {
-  const steps = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
-  return (
-    <View style={{ flexDirection: 'row', gap: 2, flexWrap: 'wrap' }}>
-      {steps.map((p) => (
-        <TouchableOpacity key={p} onPress={() => onChange(p)}
-          style={{ paddingHorizontal: 5, paddingVertical: 3, borderRadius: 6, backgroundColor: value != null && value >= p ? color : '#444' }}>
-          <Text style={{ color: '#FFF', fontSize: 9, fontWeight: '600' }}>{p}</Text>
+    <View style={{ flexDirection: 'row', gap: 3 }}>
+      {values.map((v) => (
+        <TouchableOpacity key={v} onPress={() => onChange(value === v ? 0 : v)}
+          style={{ paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6, backgroundColor: value === v ? color : '#444' }}>
+          <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '600' }}>{v}{suffix || ''}</Text>
         </TouchableOpacity>
       ))}
     </View>
@@ -150,11 +135,12 @@ export function DayReviewScreen() {
 
       {/* Sleep */}
       <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
-        <Text style={[s.sectionTitle, { color: c.textSecondary }]}>Сон</Text>
-        <Text style={{ color: c.text, fontSize: 12, marginBottom: 4 }}>Часов</Text>
-        <SleepHoursPicker value={sleepHours ? parseFloat(sleepHours) : undefined} onChange={(h) => setSleepHours(String(h))} c={c} />
-        <Text style={{ color: c.text, fontSize: 12, marginTop: 8, marginBottom: 4 }}>Качество %</Text>
-        <PercentPicker value={sleepQuality} onChange={setSleepQuality} color="#3B82F6" />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={{ color: c.textSecondary, fontSize: 12, fontWeight: '600' }}>😴</Text>
+          <ChipPicker values={[5, 5.5, 6, 6.5, 7, 7.5, 8]} value={sleepHours ? parseFloat(sleepHours) : undefined} onChange={(h) => setSleepHours(String(h))} color="#3B82F6" suffix="ч" />
+          <Text style={{ color: c.textSecondary, fontSize: 10 }}>|</Text>
+          <ChipPicker values={[70, 75, 80, 85, 90]} value={sleepQuality} onChange={setSleepQuality} color="#60A5FA" suffix="%" />
+        </View>
       </View>
 
       {/* Ratings */}
