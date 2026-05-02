@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert 
 import { useSettingsStore } from '../store/settingsStore';
 import { useDailyLogStore } from '../store/dailyLogStore';
 import { useSportStore } from '../store/sportStore';
+import { useExerciseStore } from '../store/exerciseStore';
 import { useTaskStore } from '../store/taskStore';
 import { colors } from '../utils/theme';
 import { useNavigation } from '@react-navigation/native';
@@ -82,7 +83,10 @@ export function DayReviewScreen() {
     }
   }, [date]);
 
-  // Auto sport data from sportStore
+  const exercises = useExerciseStore((s) => s.exercises);
+  const workoutLogs = useExerciseStore((s) => s.logs);
+
+  // Auto sport data from sportStore (daily counters)
   const sportData = useMemo(() => {
     const dayEntries = sportEntries.filter((e) => e.date === date);
     return {
@@ -90,8 +94,26 @@ export function DayReviewScreen() {
       abs: dayEntries.filter((e) => e.type === 'abs').reduce((s, e) => s + e.count, 0),
       triceps: dayEntries.filter((e) => e.type === 'triceps').reduce((s, e) => s + e.count, 0),
       squats: dayEntries.filter((e) => e.type === 'squats').reduce((s, e) => s + e.count, 0),
+      run: dayEntries.filter((e) => e.type === 'run').reduce((s, e) => s + e.count, 0),
     };
   }, [sportEntries, date]);
+
+  // Workout logs from exerciseStore (gym exercises)
+  const dayWorkouts = useMemo(() => {
+    const dayLogs = workoutLogs.filter((l) => l.date === date);
+    const grouped = new Map<number, { name: string; sets: number; totalReps: number; maxWeight: number; calories: number }>();
+    for (const log of dayLogs) {
+      const ex = exercises.find((e) => e.id === log.exerciseId);
+      if (!ex) continue;
+      const g = grouped.get(log.exerciseId) || { name: ex.name, sets: 0, totalReps: 0, maxWeight: 0, calories: 0 };
+      g.sets++;
+      g.totalReps += log.reps;
+      if (log.weight > g.maxWeight) g.maxWeight = log.weight;
+      if (ex.caloriesPerRep) g.calories += log.reps * ex.caloriesPerRep;
+      grouped.set(log.exerciseId, g);
+    }
+    return [...grouped.values()];
+  }, [workoutLogs, exercises, date]);
 
   // Goals & tasks
   const goalsData = useMemo(() => {
@@ -133,6 +155,14 @@ export function DayReviewScreen() {
         <TouchableOpacity onPress={() => changeDate(1)}><Text style={[s.dateArrow, { color: c.primary }]}>{'>'}</Text></TouchableOpacity>
       </View>
 
+      {/* Notes */}
+      <TextInput
+        style={[s.notesInput, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
+        value={notes} onChangeText={setNotes}
+        placeholder="Заметки к дню..." placeholderTextColor={c.textSecondary}
+        multiline numberOfLines={2}
+      />
+
       {/* Sleep */}
       <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
@@ -162,27 +192,48 @@ export function DayReviewScreen() {
       </View>
 
       {/* Sport */}
+      {(sportData.pullups > 0 || sportData.abs > 0 || sportData.triceps > 0 || sportData.squats > 0 || sportData.run > 0 || dayWorkouts.length > 0 || sportFootball === '1' || sportRun) && (
+        <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
+          <Text style={[s.sectionTitle, { color: c.textSecondary }]}>Спорт</Text>
+          {/* Daily counters */}
+          {(sportData.pullups > 0 || sportData.abs > 0 || sportData.triceps > 0 || sportData.squats > 0 || sportData.run > 0) && (
+            <View style={s.sportAutoRow}>
+              {sportData.pullups > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏋️ {sportData.pullups}</Text>}
+              {sportData.abs > 0 && <Text style={[s.sportChip, { color: c.text }]}>🔥 {sportData.abs}</Text>}
+              {sportData.triceps > 0 && <Text style={[s.sportChip, { color: c.text }]}>💪 {sportData.triceps}</Text>}
+              {sportData.squats > 0 && <Text style={[s.sportChip, { color: c.text }]}>🦵 {sportData.squats}</Text>}
+              {sportData.run > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏃 {sportData.run}</Text>}
+            </View>
+          )}
+          {/* Gym exercises */}
+          {dayWorkouts.length > 0 && (
+            <View style={{ gap: 2, marginTop: sportData.pullups > 0 || sportData.abs > 0 ? 4 : 0 }}>
+              {dayWorkouts.map((w, i) => (
+                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={{ color: c.text, fontSize: 13, flex: 1 }} numberOfLines={1}>{w.name}</Text>
+                  <Text style={{ color: c.textSecondary, fontSize: 12 }}>{w.sets}×{Math.round(w.totalReps / w.sets)}</Text>
+                  {w.maxWeight > 0 && <Text style={{ color: c.primary, fontSize: 12 }}>{w.maxWeight}кг</Text>}
+                  {w.calories > 0 && <Text style={{ color: '#F59E0B', fontSize: 11 }}>{Math.round(w.calories)}ккал</Text>}
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* Football & Run manual */}
       <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
-        <Text style={[s.sectionTitle, { color: c.textSecondary }]}>Спорт</Text>
-        {(sportData.pullups > 0 || sportData.abs > 0 || sportData.triceps > 0 || sportData.squats > 0) && (
-          <View style={s.sportAutoRow}>
-            {sportData.pullups > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏋️ Подтяг. {sportData.pullups}</Text>}
-            {sportData.abs > 0 && <Text style={[s.sportChip, { color: c.text }]}>🔥 Пресс {sportData.abs}</Text>}
-            {sportData.triceps > 0 && <Text style={[s.sportChip, { color: c.text }]}>💪 Трицепс {sportData.triceps}</Text>}
-            {sportData.squats > 0 && <Text style={[s.sportChip, { color: c.text }]}>🦵 Присед. {sportData.squats}</Text>}
-          </View>
-        )}
-        <View style={{ flexDirection: 'row', gap: 12, marginTop: 6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <TouchableOpacity onPress={() => setSportFootball(sportFootball === '1' ? '' : '1')}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Text style={{ fontSize: 16 }}>{sportFootball === '1' ? '☑' : '☐'}</Text>
-            <Text style={{ color: c.text, fontSize: 13 }}>⚽ Футбол</Text>
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+            <Text style={{ fontSize: 14 }}>{sportFootball === '1' ? '☑' : '☐'}</Text>
+            <Text style={{ color: c.text, fontSize: 12 }}>⚽</Text>
           </TouchableOpacity>
-          <Text style={{ color: c.textSecondary, fontSize: 13 }}>🏃 Бег</Text>
+          <Text style={{ color: c.textSecondary, fontSize: 12 }}>🏃</Text>
           {[5, 10, 15, 20].map((m) => (
             <TouchableOpacity key={m} onPress={() => setSportRun(sportRun === String(m) ? '' : String(m))}
-              style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: sportRun === String(m) ? '#22C55E' : '#444' }}>
-              <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>{m}</Text>
+              style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: sportRun === String(m) ? '#22C55E' : '#444' }}>
+              <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '600' }}>{m}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -195,14 +246,6 @@ export function DayReviewScreen() {
         <Text style={{ color: c.text, fontSize: 14 }}>🎯 Цели недели: {goalsData.weekGoalsDone}/{goalsData.weekGoalsTotal}</Text>
         <Text style={{ color: c.text, fontSize: 14, marginTop: 4 }}>✅ Задач выполнено: {goalsData.tasksDone}</Text>
       </View>
-
-      {/* Notes */}
-      <TextInput
-        style={[s.notesInput, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
-        value={notes} onChangeText={setNotes}
-        placeholder="Заметки к дню..." placeholderTextColor={c.textSecondary}
-        multiline numberOfLines={3}
-      />
 
       {/* Save */}
       <TouchableOpacity style={[s.saveBtn, { backgroundColor: c.primary }]} onPress={handleSave}>
@@ -218,10 +261,11 @@ export function DayReviewScreen() {
               onPress={() => setDate(log.date)}>
               <Text style={{ color: log.date === date ? c.primary : c.text, fontSize: 13, fontWeight: '600', width: 55 }}>{fmtDate(log.date)}</Text>
               {log.sleepHours != null && <Text style={{ color: c.textSecondary, fontSize: 12 }}>😴{log.sleepHours}ч</Text>}
-              {log.sleepQuality != null && <Text style={{ color: '#3B82F6', fontSize: 12 }}>{'●'.repeat(log.sleepQuality)}</Text>}
+              {log.sleepQuality != null && <Text style={{ color: '#3B82F6', fontSize: 12 }}>💤{log.sleepQuality}%</Text>}
               {log.productivity != null && <Text style={{ color: '#22C55E', fontSize: 12 }}>💪{log.productivity}</Text>}
               {log.motivation != null && <Text style={{ color: '#F59E0B', fontSize: 12 }}>🔥{log.motivation}</Text>}
               {log.dayRating != null && <Text style={{ color: '#8B5CF6', fontSize: 12 }}>📊{log.dayRating}</Text>}
+              {log.notes ? <Text style={{ color: c.textSecondary, fontSize: 11, flex: 1 }} numberOfLines={1}>{log.notes}</Text> : null}
             </TouchableOpacity>
           ))}
         </View>
