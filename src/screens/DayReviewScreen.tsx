@@ -267,21 +267,21 @@ export function DayReviewScreen() {
           <Text style={{ color: c.text, fontSize: 16, fontWeight: '700', flex: 1 }}>История ({logs.length})</Text>
         </View>
         <FlatList
-          data={logs}
+          data={[...logs].sort((a, b) => b.date.localeCompare(a.date))}
           keyExtractor={(log) => log.id}
           contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
           renderItem={({ item: log }) => (
             <TouchableOpacity style={[s.historyRow, { borderColor: c.border }]}
               onPress={() => { setDate(log.date); setShowHistory(false); }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={{ color: c.text, fontSize: 13, fontWeight: '600', width: 55 }}>{fmtDate(log.date)}</Text>
+                <Text style={{ color: c.text, fontSize: 13, fontWeight: '600', width: 70 }}>{fmtDate(log.date)}, {WEEKDAYS[new Date(log.date).getDay()]}</Text>
                 {log.dayRating != null && <Text style={{ color: '#8B5CF6', fontSize: 13, fontWeight: '700' }}>📊{log.dayRating}</Text>}
                 {log.sleepHours != null && <Text style={{ color: c.textSecondary, fontSize: 12 }}>😴{log.sleepHours}</Text>}
                 {log.sleepQuality != null && <Text style={{ color: '#3B82F6', fontSize: 12 }}>💤{log.sleepQuality}%</Text>}
                 {log.productivity != null && <Text style={{ color: '#22C55E', fontSize: 12 }}>💪{log.productivity}</Text>}
                 {log.motivation != null && <Text style={{ color: '#F59E0B', fontSize: 12 }}>🔥{log.motivation}</Text>}
               </View>
-              {log.notes ? <Text style={{ color: c.textSecondary, fontSize: 11, paddingLeft: 55 }} numberOfLines={2}>{log.notes}</Text> : null}
+              {log.notes ? <Text style={{ color: c.textSecondary, fontSize: 11, paddingLeft: 70 }} numberOfLines={2}>{log.notes}</Text> : null}
             </TouchableOpacity>
           )}
           ListEmptyComponent={<View style={s.empty}><Text style={{ color: c.textSecondary }}>Нет записей</Text></View>}
