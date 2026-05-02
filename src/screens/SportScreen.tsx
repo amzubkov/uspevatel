@@ -124,15 +124,18 @@ function ExerciseTab({ type, unit, quickCounts }: { type: SportEntry['type']; un
   );
 }
 
-const DAILY_MODES = [
+const DAILY_MODES_ROW1 = [
   { key: 'pullups' as const, label: 'Подтяг.', icon: '🏋️', unit: 'подт.', quickCounts: [1, 2, 3, 5, 10] },
   { key: 'abs' as const, label: 'Пресс', icon: '🔥', unit: 'раз', quickCounts: [1, 5, 10, 20] },
   { key: 'triceps' as const, label: 'Трицепс', icon: '💪', unit: 'раз', quickCounts: [1, 5, 10, 20] },
   { key: 'squats' as const, label: 'Присед', icon: '🦵', unit: 'раз', quickCounts: [5, 10, 20, 30] },
+];
+const DAILY_MODES_ROW2 = [
   { key: 'football' as const, label: 'Футбол', icon: '⚽', unit: 'мин', quickCounts: [30, 45, 60, 90] },
   { key: 'run' as const, label: 'Бег', icon: '🏃', unit: 'мин', quickCounts: [5, 10, 15, 20] },
   { key: 'swim' as const, label: 'Плавание', icon: '🏊', unit: 'мин', quickCounts: [15, 30, 45, 60] },
 ];
+const DAILY_MODES = [...DAILY_MODES_ROW1, ...DAILY_MODES_ROW2];
 
 function DailyTab() {
   const theme = useSettingsStore((s) => s.theme);
@@ -144,16 +147,21 @@ function DailyTab() {
     <View style={[styles.container, { backgroundColor: c.background }]}>
       {/* Mode selector */}
       <View style={styles.modeRow}>
-        {DAILY_MODES.map((m) => (
-          <TouchableOpacity
-            key={m.key}
-            style={[
-              styles.modeBtn,
-              { backgroundColor: mode === m.key ? c.primary : c.card, borderColor: c.border, borderWidth: 1 },
-            ]}
-            onPress={() => setMode(m.key)}
-          >
-            <Text style={{ fontSize: 16 }}>{m.icon}</Text>
+        {DAILY_MODES_ROW1.map((m) => (
+          <TouchableOpacity key={m.key}
+            style={[styles.modeBtn, { flex: 1, backgroundColor: mode === m.key ? c.primary : c.card, borderColor: c.border, borderWidth: 1 }]}
+            onPress={() => setMode(m.key)}>
+            <Text style={{ fontSize: 14 }}>{m.icon}</Text>
+            <Text style={[styles.modeBtnText, { color: mode === m.key ? '#FFF' : c.text }]}>{m.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <View style={styles.modeRow}>
+        {DAILY_MODES_ROW2.map((m) => (
+          <TouchableOpacity key={m.key}
+            style={[styles.modeBtn, { flex: 1, backgroundColor: mode === m.key ? c.primary : c.card, borderColor: c.border, borderWidth: 1 }]}
+            onPress={() => setMode(m.key)}>
+            <Text style={{ fontSize: 14 }}>{m.icon}</Text>
             <Text style={[styles.modeBtnText, { color: mode === m.key ? '#FFF' : c.text }]}>{m.label}</Text>
           </TouchableOpacity>
         ))}
@@ -610,8 +618,8 @@ const styles = StyleSheet.create({
   historyRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 0.5 },
   historyDate: { fontSize: 14 },
   historyTotal: { fontSize: 14, fontWeight: '600' },
-  modeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginHorizontal: 12, marginTop: 10, marginBottom: 4 },
-  modeBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10 },
+  modeRow: { flexDirection: 'row', gap: 6, marginHorizontal: 12, marginTop: 4, marginBottom: 2 },
+  modeBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, paddingVertical: 6, borderRadius: 10 },
   modeBtnText: { fontSize: 11, fontWeight: '700' },
   runBtn: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   runBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
