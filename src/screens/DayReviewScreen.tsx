@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, FlatList, StyleSheet, Alert } from 'react-native';
 import { useSettingsStore } from '../store/settingsStore';
 import { useDailyLogStore } from '../store/dailyLogStore';
 import { useSportStore } from '../store/sportStore';
@@ -265,8 +265,7 @@ export function DayReviewScreen() {
     </ScrollView>
   );
 
-  if (showHistory) {
-    return (
+  if (showHistory) return (
       <View style={[s.container, { backgroundColor: c.background }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, gap: 8 }}>
           <TouchableOpacity onPress={() => setShowHistory(false)}>
@@ -295,8 +294,7 @@ export function DayReviewScreen() {
           ListEmptyComponent={<View style={s.empty}><Text style={{ color: c.textSecondary }}>Нет записей</Text></View>}
         />
       </View>
-    );
-  }
+  );
 
   return mainContent;
 }
