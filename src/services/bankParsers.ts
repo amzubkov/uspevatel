@@ -500,6 +500,42 @@ function parseSolo(rows: string[][], currency: string): ParsedTransaction[] {
 }
 
 /**
+ * Kolo wallet CSV (USDC etc).
+ * Columns: Profile ID, Transaction ID, Transaction Date (UTC), Type, Details, Amount, Balance After
+ */
+function parseKoloWallet(rows: string[][]): ParsedTransaction[] {
+  const header = rows[0].map((h) => h.toLowerCase().trim());
+  const dateIdx = header.findIndex((h) => h.includes('transaction date'));
+  const typeIdx = header.findIndex((h) => h === 'type');
+  const detailsIdx = header.findIndex((h) => h === 'details');
+  const amtIdx = header.findIndex((h) => h === 'amount');
+
+  if (dateIdx === -1 || amtIdx === -1) return [];
+
+  const results: ParsedTransaction[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length < 4) continue;
+
+    const dateStr = (row[dateIdx] || '').trim();
+    const dm = dateStr.match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}:\d{2}:\d{2})$/);
+    if (!dm) continue;
+    const date = `${dm[3]}-${dm[2]}-${dm[1]}`;
+    const timestamp = `${date}T${dm[4]}`;
+
+    const amount = parseAmount(row[amtIdx]);
+    if (amount == null || amount === 0) continue;
+
+    const type = typeIdx >= 0 ? (row[typeIdx] || '').trim() : '';
+    const details = detailsIdx >= 0 ? (row[detailsIdx] || '').trim() : '';
+    const comment = type ? `${type}: ${details}` : details;
+
+    results.push({ date, timestamp, amount, category: type, tag: '', comment });
+  }
+  return results;
+}
+
+/**
  * Kolo bank CSV parser.
  * Columns: Card, Transaction ID, Transaction Date (UTC), Transaction Type, Status,
  *   Merchant Name, MCC, Acquirer Country, Original Amount, Original Currency, Amount, Currency
@@ -509,6 +545,11 @@ function parseSolo(rows: string[][], currency: string): ParsedTransaction[] {
 function parseKolo(rows: string[][], currency: string): ParsedTransaction[] {
   if (rows.length < 2) return [];
   const header = rows[0].map((h) => h.toLowerCase().trim());
+
+  // Detect format: cards (has "merchant name") vs wallet (has "type" + "details")
+  const isWallet = header.includes('type') && header.includes('details') && !header.some((h) => h.includes('merchant'));
+  if (isWallet) return parseKoloWallet(rows);
+
   const dateIdx = header.findIndex((h) => h.includes('transaction date'));
   const statusIdx = header.findIndex((h) => h === 'status');
   const merchantIdx = header.findIndex((h) => h.includes('merchant'));
@@ -517,9 +558,8 @@ function parseKolo(rows: string[][], currency: string): ParsedTransaction[] {
   const amtIdx = header.findIndex((h) => h === 'amount');
   const curIdx = header.findIndex((h) => h === 'currency');
   const countryIdx = header.findIndex((h) => h.includes('country'));
-  const mccIdx = header.findIndex((h) => h === 'mcc');
 
-  if (dateIdx === -1 || (origAmtIdx === -1 && amtIdx === -1)) return [];
+  if (dateIdx === -1 || amtIdx === -1) return [];
 
   const results: ParsedTransaction[] = [];
   const curUpper = currency.toUpperCase();
