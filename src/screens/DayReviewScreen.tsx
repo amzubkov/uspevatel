@@ -186,7 +186,7 @@ export function DayReviewScreen() {
       <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
           <Text style={{ color: c.textSecondary, fontSize: 12, fontWeight: '600' }}>😴</Text>
-          <ChipPicker values={[5, 5.5, 6, 6.5, 7, 7.5, 8]} value={sleepHours ? parseFloat(sleepHours) : undefined} onChange={(h) => setSleepHours(String(h))} color="#3B82F6" suffix="ч" />
+          <ChipPicker values={[5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5]} value={sleepHours ? parseFloat(sleepHours) : undefined} onChange={(h) => setSleepHours(String(h))} color="#3B82F6" suffix="ч" />
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text style={{ color: c.textSecondary, fontSize: 12, fontWeight: '600' }}>💤</Text>
