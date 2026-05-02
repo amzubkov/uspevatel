@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import * as Crypto from 'expo-crypto';
 import { getDb } from '../db/database';
 
-export type BankType = 'revolut' | 'revolut_crypto' | 'eurobank' | 'bog' | 'solo' | undefined;
+export type BankType = 'revolut' | 'revolut_crypto' | 'eurobank' | 'bog' | 'solo' | 'kolo' | undefined;
 
 export interface Account {
   id: string;

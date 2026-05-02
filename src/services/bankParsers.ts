@@ -16,6 +16,7 @@ export const BANK_LABELS: Record<string, string> = {
   eurobank: 'Eurobank',
   bog: 'BOG',
   solo: 'Solo',
+  kolo: 'Kolo',
 };
 
 function excelDateToISO(serial: number): string {
@@ -498,6 +499,70 @@ function parseSolo(rows: string[][], currency: string): ParsedTransaction[] {
   return results;
 }
 
+/**
+ * Kolo bank CSV parser.
+ * Columns: Card, Transaction ID, Transaction Date (UTC), Transaction Type, Status,
+ *   Merchant Name, MCC, Acquirer Country, Original Amount, Original Currency, Amount, Currency
+ * Date: DD-MM-YYYY HH:MM:SS
+ * Skip DECLINED. Use Original Amount/Currency matching account currency, fallback to Amount/Currency.
+ */
+function parseKolo(rows: string[][], currency: string): ParsedTransaction[] {
+  if (rows.length < 2) return [];
+  const header = rows[0].map((h) => h.toLowerCase().trim());
+  const dateIdx = header.findIndex((h) => h.includes('transaction date'));
+  const statusIdx = header.findIndex((h) => h === 'status');
+  const merchantIdx = header.findIndex((h) => h.includes('merchant'));
+  const origAmtIdx = header.findIndex((h) => h === 'original amount');
+  const origCurIdx = header.findIndex((h) => h === 'original currency');
+  const amtIdx = header.findIndex((h) => h === 'amount');
+  const curIdx = header.findIndex((h) => h === 'currency');
+  const countryIdx = header.findIndex((h) => h.includes('country'));
+  const mccIdx = header.findIndex((h) => h === 'mcc');
+
+  if (dateIdx === -1 || (origAmtIdx === -1 && amtIdx === -1)) return [];
+
+  const results: ParsedTransaction[] = [];
+  const curUpper = currency.toUpperCase();
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length < 5) continue;
+
+    // Skip declined
+    const status = (row[statusIdx] || '').trim().toUpperCase();
+    if (status === 'DECLINED') continue;
+
+    // Date: DD-MM-YYYY HH:MM:SS
+    const dateStr = (row[dateIdx] || '').trim();
+    const dm = dateStr.match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}:\d{2}:\d{2})$/);
+    if (!dm) continue;
+    const date = `${dm[3]}-${dm[2]}-${dm[1]}`;
+    const timestamp = `${date}T${dm[4]}`;
+
+    // Pick amount: prefer original if currency matches, else use Amount column
+    let amount: number | null = null;
+    const origCur = (row[origCurIdx] || '').trim().toUpperCase();
+    const mainCur = (row[curIdx] || '').trim().toUpperCase();
+
+    if (origCur === curUpper && origAmtIdx >= 0) {
+      amount = parseAmount(row[origAmtIdx]);
+    } else if (mainCur === curUpper && amtIdx >= 0) {
+      amount = parseAmount(row[amtIdx]);
+    } else if (origAmtIdx >= 0) {
+      amount = parseAmount(row[origAmtIdx]);
+    }
+    if (amount == null || amount === 0) continue;
+
+    const merchant = (row[merchantIdx] || '').trim();
+    const country = countryIdx >= 0 ? (row[countryIdx] || '').trim() : '';
+    const mcc = mccIdx >= 0 ? (row[mccIdx] || '').trim() : '';
+    const comment = merchant + (country ? ` (${country})` : '');
+
+    results.push({ date, timestamp, amount, category: '', tag: '', comment });
+  }
+  return results;
+}
+
 export function parseBankFile(content: string, bank: BankType, currency?: string): ParsedTransaction[] {
   if (bank === 'eurobank') {
     const lines = content.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -511,6 +576,7 @@ export function parseBankFile(content: string, bank: BankType, currency?: string
     case 'revolut': return parseRevolut(rows);
     case 'revolut_crypto': return parseRevolutCrypto(rows);
     case 'bog': return parseBog(rows);
+    case 'kolo': return parseKolo(rows, currency || 'USD');
     default: return [];
   }
 }

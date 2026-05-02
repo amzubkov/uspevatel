@@ -390,7 +390,7 @@ export function MoneyScreen() {
               onPress={() => setAccBank(undefined)}>
               <Text style={{ color: !accBank ? '#FFF' : c.text, fontSize: 12, fontWeight: '600' }}>—</Text>
             </TouchableOpacity>
-            {(['revolut', 'revolut_crypto', 'eurobank', 'bog', 'solo'] as BankType[]).map((b) => (
+            {(['revolut', 'revolut_crypto', 'eurobank', 'bog', 'solo', 'kolo'] as BankType[]).map((b) => (
               <TouchableOpacity key={b}
                 style={[st.chip, { backgroundColor: accBank === b ? c.primary : c.card, borderColor: accBank === b ? c.primary : c.border }]}
                 onPress={() => setAccBank(b)}>
@@ -566,7 +566,7 @@ export function MoneyScreen() {
         parsed = await parseBankFileXlsx(base64, selectedAccount.bank, selectedAccount.currency);
       } else {
         const content = await LegacyFS.readAsStringAsync(uri, { encoding: LegacyFS.EncodingType.UTF8 });
-        parsed = parseBankFile(content, selectedAccount.bank);
+        parsed = parseBankFile(content, selectedAccount.bank, selectedAccount.currency);
       }
       if (parsed.length === 0) {
         Alert.alert('Импорт', 'Не удалось найти транзакции в файле');
