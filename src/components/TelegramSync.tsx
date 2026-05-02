@@ -174,9 +174,12 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
             const noteId = Crypto.randomUUID();
             const now = new Date().toISOString();
             await tx.runAsync(
-              'INSERT INTO notes (id, text, tags, image_path, created_at) VALUES (?,?,?,?,?)',
-              [noteId, item.text, JSON.stringify(item.tags), null, now]
+              'INSERT INTO notes (id, text, image_path, created_at) VALUES (?,?,?,?)',
+              [noteId, item.text, null, now]
             );
+            for (const tag of item.tags) {
+              await tx.runAsync('INSERT OR IGNORE INTO note_tags (note_id, tag) VALUES (?,?)', [noteId, tag]);
+            }
             noteCount++;
             if (item.photoFileId) photoJobs.push({ type: 'note', id: noteId, fileId: item.photoFileId, subdir: 'note_images' });
           } else if (item.type === 'health') {
