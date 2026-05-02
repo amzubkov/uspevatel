@@ -539,24 +539,16 @@ function parseKolo(rows: string[][], currency: string): ParsedTransaction[] {
     const date = `${dm[3]}-${dm[2]}-${dm[1]}`;
     const timestamp = `${date}T${dm[4]}`;
 
-    // Pick amount: prefer original if currency matches, else use Amount column
-    let amount: number | null = null;
-    const origCur = (row[origCurIdx] || '').trim().toUpperCase();
-    const mainCur = (row[curIdx] || '').trim().toUpperCase();
-
-    if (origCur === curUpper && origAmtIdx >= 0) {
-      amount = parseAmount(row[origAmtIdx]);
-    } else if (mainCur === curUpper && amtIdx >= 0) {
-      amount = parseAmount(row[amtIdx]);
-    } else if (origAmtIdx >= 0) {
-      amount = parseAmount(row[origAmtIdx]);
-    }
+    // Use Amount column (account currency)
+    const amount = amtIdx >= 0 ? parseAmount(row[amtIdx]) : null;
     if (amount == null || amount === 0) continue;
 
     const merchant = (row[merchantIdx] || '').trim();
     const country = countryIdx >= 0 ? (row[countryIdx] || '').trim() : '';
-    const mcc = mccIdx >= 0 ? (row[mccIdx] || '').trim() : '';
-    const comment = merchant + (country ? ` (${country})` : '');
+    const origAmt = origAmtIdx >= 0 ? (row[origAmtIdx] || '').trim() : '';
+    const origCur = origCurIdx >= 0 ? (row[origCurIdx] || '').trim() : '';
+    let comment = merchant + (country ? ` (${country})` : '');
+    if (origAmt && origCur) comment += ` [${origAmt} ${origCur}]`;
 
     results.push({ date, timestamp, amount, category: '', tag: '', comment });
   }
