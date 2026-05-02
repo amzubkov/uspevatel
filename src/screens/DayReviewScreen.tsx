@@ -260,11 +260,11 @@ export function DayReviewScreen() {
             <TouchableOpacity key={log.id} style={[s.historyRow, { borderColor: c.border }]}
               onPress={() => setDate(log.date)}>
               <Text style={{ color: log.date === date ? c.primary : c.text, fontSize: 13, fontWeight: '600', width: 55 }}>{fmtDate(log.date)}</Text>
-              {log.sleepHours != null && <Text style={{ color: c.textSecondary, fontSize: 12 }}>😴{log.sleepHours}ч</Text>}
+              {log.dayRating != null && <Text style={{ color: '#8B5CF6', fontSize: 13, fontWeight: '700' }}>📊{log.dayRating}</Text>}
+              {log.sleepHours != null && <Text style={{ color: c.textSecondary, fontSize: 12 }}>😴{log.sleepHours}</Text>}
               {log.sleepQuality != null && <Text style={{ color: '#3B82F6', fontSize: 12 }}>💤{log.sleepQuality}%</Text>}
               {log.productivity != null && <Text style={{ color: '#22C55E', fontSize: 12 }}>💪{log.productivity}</Text>}
               {log.motivation != null && <Text style={{ color: '#F59E0B', fontSize: 12 }}>🔥{log.motivation}</Text>}
-              {log.dayRating != null && <Text style={{ color: '#8B5CF6', fontSize: 12 }}>📊{log.dayRating}</Text>}
               {log.notes ? <Text style={{ color: c.textSecondary, fontSize: 11, flex: 1 }} numberOfLines={1}>{log.notes}</Text> : null}
             </TouchableOpacity>
           ))}
