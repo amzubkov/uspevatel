@@ -54,6 +54,16 @@ export function DayReviewScreen() {
 
   const [date, setDate] = useState(todayStr());
   const [showHistory, setShowHistory] = useState(false);
+
+  useEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity onPress={() => setShowHistory((v) => !v)} style={{ paddingHorizontal: 12 }}>
+          <Text style={{ fontSize: 18 }}>{showHistory ? '📊' : '📋'}</Text>
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation, showHistory]);
   const existing = getLog(date);
 
   const [sleepHours, setSleepHours] = useState('');
@@ -154,9 +164,6 @@ export function DayReviewScreen() {
           <Text style={[s.dateText, { color: c.text }]}>{fmtDate(date)} {date === todayStr() ? '(сегодня)' : date.substring(0, 4)}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => changeDate(1)}><Text style={[s.dateArrow, { color: c.primary }]}>{'>'}</Text></TouchableOpacity>
-        <TouchableOpacity onPress={() => setShowHistory(true)} style={{ position: 'absolute', right: 0 }}>
-          <Text style={{ color: c.primary, fontSize: 14, fontWeight: '600' }}>📋</Text>
-        </TouchableOpacity>
       </View>
 
       {/* Notes */}
