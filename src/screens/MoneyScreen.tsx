@@ -4,7 +4,7 @@ import { useMoneyStore, Account, Transaction, BankType } from '../store/moneySto
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
 import { DatePickerField } from '../components/DatePickerField';
-import { parseBankFile, BANK_LABELS, ParsedTransaction } from '../services/bankParsers';
+import { parseBankFile, parseBankFileXlsx, BANK_LABELS, ParsedTransaction } from '../services/bankParsers';
 import * as DocumentPicker from 'expo-document-picker';
 import * as LegacyFS from 'expo-file-system/legacy';
 import * as PdfTextExtract from 'expo-pdf-text-extract';
@@ -390,7 +390,7 @@ export function MoneyScreen() {
               onPress={() => setAccBank(undefined)}>
               <Text style={{ color: !accBank ? '#FFF' : c.text, fontSize: 12, fontWeight: '600' }}>—</Text>
             </TouchableOpacity>
-            {(['revolut', 'revolut_crypto', 'eurobank', 'bog'] as BankType[]).map((b) => (
+            {(['revolut', 'revolut_crypto', 'eurobank', 'bog', 'solo'] as BankType[]).map((b) => (
               <TouchableOpacity key={b}
                 style={[st.chip, { backgroundColor: accBank === b ? c.primary : c.card, borderColor: accBank === b ? c.primary : c.border }]}
                 onPress={() => setAccBank(b)}>
@@ -551,10 +551,9 @@ export function MoneyScreen() {
     if (!selectedAccountId || !selectedAccount?.bank) return;
     try {
       const isPdf = selectedAccount.bank === 'eurobank';
-      const result = await DocumentPicker.getDocumentAsync({
-        type: isPdf ? ['application/pdf', '*/*'] : ['text/csv', 'text/comma-separated-values', '*/*'],
-        copyToCacheDirectory: true,
-      });
+      const isXlsx = selectedAccount.bank === 'solo';
+      const fileType = isPdf ? ['application/pdf', '*/*'] : isXlsx ? ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '*/*'] : ['text/csv', 'text/comma-separated-values', '*/*'];
+      const result = await DocumentPicker.getDocumentAsync({ type: fileType, copyToCacheDirectory: true });
       if (result.canceled || !result.assets?.[0]) return;
       const uri = result.assets[0].uri;
       let parsed: ParsedTransaction[];
@@ -562,6 +561,9 @@ export function MoneyScreen() {
         const extracted = await PdfTextExtract.extractText(uri);
         const text = Array.isArray(extracted) ? extracted.join('\n') : String(extracted);
         parsed = parseBankFile(text, selectedAccount.bank);
+      } else if (isXlsx) {
+        const base64 = await LegacyFS.readAsStringAsync(uri, { encoding: LegacyFS.EncodingType.Base64 });
+        parsed = await parseBankFileXlsx(base64, selectedAccount.bank, selectedAccount.currency);
       } else {
         const content = await LegacyFS.readAsStringAsync(uri, { encoding: LegacyFS.EncodingType.UTF8 });
         parsed = parseBankFile(content, selectedAccount.bank);
@@ -790,7 +792,7 @@ export function MoneyScreen() {
           {selectedAccount?.bank && (
             <TouchableOpacity style={[st.btn, { backgroundColor: '#8B5CF6', paddingVertical: 8, paddingHorizontal: 12 }]} onPress={handleImportFile}>
               <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>
-                {selectedAccount.bank === 'eurobank' ? 'PDF' : 'CSV'}
+                {selectedAccount.bank === 'eurobank' ? 'PDF' : selectedAccount.bank === 'solo' ? 'XLSX' : 'CSV'}
               </Text>
             </TouchableOpacity>
           )}

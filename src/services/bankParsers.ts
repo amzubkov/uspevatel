@@ -1,4 +1,5 @@
 import { BankType } from '../store/moneyStore';
+import { readXlsx } from './xlsxReader';
 
 export interface ParsedTransaction {
   date: string;       // YYYY-MM-DD
@@ -14,6 +15,7 @@ export const BANK_LABELS: Record<string, string> = {
   revolut_crypto: 'Revolut Crypto',
   eurobank: 'Eurobank',
   bog: 'BOG',
+  solo: 'Solo',
 };
 
 function excelDateToISO(serial: number): string {
@@ -451,7 +453,52 @@ function parseBog(rows: string[][]): ParsedTransaction[] {
   return results;
 }
 
-export function parseBankFile(content: string, bank: BankType): ParsedTransaction[] {
+/**
+ * Solo (BOG personal) XLSX parser.
+ * Sheet "Transactions": Date, Details, (empty), GEL, USD, EUR, GBP
+ * Amounts already signed (negative = expense).
+ * Currency column selected by account currency.
+ */
+function parseSolo(rows: string[][], currency: string): ParsedTransaction[] {
+  if (rows.length < 2) return [];
+
+  const header = rows[0].map((h) => h.toLowerCase().trim());
+  const dateIdx = header.findIndex((h) => h === 'date');
+  const descIdx = header.findIndex((h) => h === 'details');
+  const curCol = header.findIndex((h) => h === currency.toLowerCase());
+
+  if (dateIdx === -1 || curCol === -1) return [];
+
+  const results: ParsedTransaction[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || !row[dateIdx]) continue;
+
+    const dateStr = row[dateIdx].trim();
+    const dm = dateStr.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!dm) continue;
+
+    const date = `${dm[3]}-${dm[2]}-${dm[1]}`;
+    const amountStr = row[curCol]?.trim();
+    if (!amountStr) continue;
+    const amount = parseFloat(amountStr);
+    if (isNaN(amount) || amount === 0) continue;
+
+    let desc = (row[descIdx] || '').trim();
+
+    // Extract payment date/time if present: "Date: DD/MM/YYYY HH:MM"
+    let timestamp = `${date}T00:00:00`;
+    const payDateMatch = desc.match(/Date:\s*(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}:\d{2})/);
+    if (payDateMatch) {
+      timestamp = `${payDateMatch[3]}-${payDateMatch[2]}-${payDateMatch[1]}T${payDateMatch[4]}:00`;
+    }
+
+    results.push({ date, timestamp, amount, category: '', tag: '', comment: desc });
+  }
+  return results;
+}
+
+export function parseBankFile(content: string, bank: BankType, currency?: string): ParsedTransaction[] {
   if (bank === 'eurobank') {
     const lines = content.split('\n').map((l) => l.trim()).filter(Boolean);
     return parseEurobankLines(lines);
@@ -466,4 +513,11 @@ export function parseBankFile(content: string, bank: BankType): ParsedTransactio
     case 'bog': return parseBog(rows);
     default: return [];
   }
+}
+
+export async function parseBankFileXlsx(base64: string, bank: BankType, currency: string): Promise<ParsedTransaction[]> {
+  // Sheet "Transactions" is sheet index 1
+  const rows = await readXlsx(base64, 1);
+  if (bank === 'solo') return parseSolo(rows, currency);
+  return [];
 }
