@@ -624,10 +624,25 @@ export function MoneyScreen() {
         return false;
       })
       .sort((a, b) => b.date.localeCompare(a.date));
+    const handleCatViewReassign = async (tx: Transaction, newCategory: string) => {
+      const comment = tx.comment.trim();
+      const similar = comment ? catTxs.filter((t) => t.comment.trim() === comment) : [tx];
+      if (similar.length > 1) {
+        Alert.alert('Применить ко всем?', `«${comment.substring(0, 40)}» → ${newCategory}\n\n${similar.length} транзакций`, [
+          { text: 'Только эту', onPress: () => updateTransaction(tx.id, { category: newCategory }) },
+          { text: `Все ${similar.length}`, onPress: async () => { for (const t of similar) await updateTransaction(t.id, { category: newCategory }); setExpandedTxId(null); } },
+          { text: 'Отмена', style: 'cancel' },
+        ]);
+      } else {
+        await updateTransaction(tx.id, { category: newCategory });
+        setExpandedTxId(null);
+      }
+    };
+
     return (
       <View style={[st.container, { backgroundColor: c.background }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, gap: 8 }}>
-          <TouchableOpacity onPress={() => setViewingCategory(null)}>
+          <TouchableOpacity onPress={() => { setViewingCategory(null); setExpandedTxId(null); }}>
             <Text style={{ color: c.primary, fontSize: 15, fontWeight: '600' }}>← Назад</Text>
           </TouchableOpacity>
           <Text style={{ color: c.text, fontSize: 16, fontWeight: '700', flex: 1 }}>{viewingCategory} ({catTxs.length})</Text>
@@ -638,21 +653,39 @@ export function MoneyScreen() {
           contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
           renderItem={({ item }) => {
             const acc = accounts.find((a) => a.id === item.accountId);
+            const isExp = expandedTxId === item.id;
             return (
-              <TouchableOpacity style={[st.txRow, { borderColor: c.border }]}
-                onPress={() => { setSelectedAccountId(item.accountId); startEditTx(item); }}>
-                <View style={{ flex: 1 }}>
-                  {item.comment ? <Text style={{ color: c.text, fontSize: 13 }} numberOfLines={1}>{item.comment}</Text> : null}
-                  <Text style={{ color: c.textSecondary, fontSize: 11 }}>
-                    {fmtDate(item.date)}{item.timestamp && !item.timestamp.endsWith('T00:00:00') ? ` ${item.timestamp.substring(11, 16)}` : ''}
-                    {acc ? ` · ${acc.name}` : ''}
-                    {item.tag ? ` #${item.tag}` : ''}
+              <View style={{ borderBottomWidth: 0.5, borderColor: c.border }}>
+                <TouchableOpacity style={[st.txRow, { borderBottomWidth: 0 }]}
+                  onPress={() => { setSelectedAccountId(item.accountId); startEditTx(item); }}
+                  onLongPress={() => setExpandedTxId(isExp ? null : item.id)}>
+                  <View style={{ flex: 1 }}>
+                    {item.comment ? <Text style={{ color: c.text, fontSize: 13 }} numberOfLines={1}>{item.comment}</Text> : null}
+                    <Text style={{ color: c.textSecondary, fontSize: 11 }}>
+                      {fmtDate(item.date)}{item.timestamp && !item.timestamp.endsWith('T00:00:00') ? ` ${item.timestamp.substring(11, 16)}` : ''}
+                      {acc ? ` · ${acc.name}` : ''}
+                      {item.tag ? ` #${item.tag}` : ''}
+                    </Text>
+                  </View>
+                  <Text style={[st.txAmount, { color: item.amount >= 0 ? c.success : c.danger }]}>
+                    {fmtAmount(item.amount, acc?.currency || 'EUR')}
                   </Text>
-                </View>
-                <Text style={[st.txAmount, { color: item.amount >= 0 ? c.success : c.danger }]}>
-                  {fmtAmount(item.amount, acc?.currency || 'EUR')}
-                </Text>
-              </TouchableOpacity>
+                </TouchableOpacity>
+                {isExp && (
+                  <View style={{ paddingBottom: 8 }}>
+                    <Text style={{ color: c.textSecondary, fontSize: 11, fontWeight: '600', marginBottom: 4 }}>КАТЕГОРИЯ</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                      {existingCategories.filter((cat) => cat !== viewingCategory).map((cat) => (
+                        <TouchableOpacity key={cat}
+                          style={[st.chip, { backgroundColor: c.card, borderColor: c.border }]}
+                          onPress={() => handleCatViewReassign(item, cat)}>
+                          <Text style={{ color: c.text, fontSize: 12 }}>{cat}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                )}
+              </View>
             );
           }}
           ListEmptyComponent={
