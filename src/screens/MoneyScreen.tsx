@@ -639,7 +639,8 @@ export function MoneyScreen() {
           renderItem={({ item }) => {
             const acc = accounts.find((a) => a.id === item.accountId);
             return (
-              <View style={[st.txRow, { borderColor: c.border }]}>
+              <TouchableOpacity style={[st.txRow, { borderColor: c.border }]}
+                onPress={() => { setSelectedAccountId(item.accountId); startEditTx(item); }}>
                 <View style={{ flex: 1 }}>
                   {item.comment ? <Text style={{ color: c.text, fontSize: 13 }} numberOfLines={1}>{item.comment}</Text> : null}
                   <Text style={{ color: c.textSecondary, fontSize: 11 }}>
@@ -651,7 +652,7 @@ export function MoneyScreen() {
                 <Text style={[st.txAmount, { color: item.amount >= 0 ? c.success : c.danger }]}>
                   {fmtAmount(item.amount, acc?.currency || 'EUR')}
                 </Text>
-              </View>
+              </TouchableOpacity>
             );
           }}
           ListEmptyComponent={
