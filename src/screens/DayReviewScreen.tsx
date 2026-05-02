@@ -115,6 +115,7 @@ export function DayReviewScreen() {
       squats: dayEntries.filter((e) => e.type === 'squats').reduce((s, e) => s + e.count, 0),
       football: dayEntries.filter((e) => e.type === 'football').reduce((s, e) => s + e.count, 0),
       run: dayEntries.filter((e) => e.type === 'run').reduce((s, e) => s + e.count, 0),
+      swim: dayEntries.filter((e) => e.type === 'swim').reduce((s, e) => s + e.count, 0),
     };
   }, [sportEntries, date]);
 
@@ -223,6 +224,7 @@ export function DayReviewScreen() {
               {sportData.squats > 0 && <Text style={[s.sportChip, { color: c.text }]}>🦵 {sportData.squats}</Text>}
               {sportData.football > 0 && <Text style={[s.sportChip, { color: c.text }]}>⚽ {sportData.football}мин</Text>}
               {sportData.run > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏃 {sportData.run}мин</Text>}
+              {sportData.swim > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏊 {sportData.swim}мин</Text>}
             </View>
           )}
           {/* Gym exercises */}

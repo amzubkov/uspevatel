@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, ScrollView, StyleSheet, Alert } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSportStore, SportEntry } from '../store/sportStore';
@@ -24,9 +24,13 @@ function ExerciseTab({ type, unit, quickCounts }: { type: SportEntry['type']; un
   const addEntry = useSportStore((s) => s.addEntry);
   const removeEntry = useSportStore((s) => s.removeEntry);
   const today = useTodayStr();
+  const [selectedDate, setSelectedDate] = useState(today);
 
-  const todayEntries = useMemo(() => entries.filter((e) => e.type === type && e.date === today), [entries, today, type]);
-  const todayTotal = useMemo(() => todayEntries.reduce((sum, e) => sum + e.count, 0), [todayEntries]);
+  // Reset date when switching types
+  useEffect(() => { setSelectedDate(today); }, [type]);
+
+  const dateEntries = useMemo(() => entries.filter((e) => e.type === type && e.date === selectedDate), [entries, selectedDate, type]);
+  const dateTotal = useMemo(() => dateEntries.reduce((sum, e) => sum + e.count, 0), [dateEntries]);
 
   const groupedByDate = useMemo(() => {
     const filtered = entries.filter((e) => e.type === type);
@@ -46,12 +50,26 @@ function ExerciseTab({ type, unit, quickCounts }: { type: SportEntry['type']; un
     ]);
   };
 
+  const changeDate = (offset: number) => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() + offset);
+    setSelectedDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  };
+  const MONTHS_SHORT = ['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'];
+  const fmtD = (d: string) => { const [,m,day] = d.split('-').map(Number); return `${day} ${MONTHS_SHORT[m-1]}`; };
+
   return (
     <View style={{ flex: 1 }}>
-      {/* Today counter */}
+      {/* Date + counter */}
       <View style={[styles.todayCard, { backgroundColor: c.card, borderColor: c.border }]}>
-        <Text style={[styles.todayLabel, { color: c.textSecondary }]}>Сегодня</Text>
-        <Text style={[styles.todayCount, { color: c.primary }]}>{todayTotal}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <TouchableOpacity onPress={() => changeDate(-1)}><Text style={{ color: c.primary, fontSize: 18, fontWeight: '700' }}>{'<'}</Text></TouchableOpacity>
+          <TouchableOpacity onPress={() => setSelectedDate(today)}>
+            <Text style={{ color: c.text, fontSize: 14, fontWeight: '600' }}>{selectedDate === today ? 'Сегодня' : fmtD(selectedDate)}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => changeDate(1)}><Text style={{ color: c.primary, fontSize: 18, fontWeight: '700' }}>{'>'}</Text></TouchableOpacity>
+        </View>
+        <Text style={[styles.todayCount, { color: c.primary }]}>{dateTotal}</Text>
         <Text style={[styles.todayUnit, { color: c.textSecondary }]}>{unit}</Text>
       </View>
 
@@ -61,19 +79,19 @@ function ExerciseTab({ type, unit, quickCounts }: { type: SportEntry['type']; un
           <TouchableOpacity
             key={n}
             style={[styles.quickBtn, { backgroundColor: c.primary }]}
-            onPress={() => addEntry(type, n)}
+            onPress={() => addEntry(type, n, undefined, selectedDate)}
           >
             <Text style={styles.quickBtnText}>+{n}</Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      {/* Today's entries */}
-      {todayEntries.length > 0 && (
-        <Text style={[styles.sectionTitle, { color: c.textSecondary }]}>Сегодня по подходам</Text>
+      {/* Day entries */}
+      {dateEntries.length > 0 && (
+        <Text style={[styles.sectionTitle, { color: c.textSecondary }]}>{selectedDate === today ? 'Сегодня' : fmtD(selectedDate)} по подходам</Text>
       )}
       <FlatList
-        data={todayEntries}
+        data={dateEntries}
         keyExtractor={(e) => e.id}
         renderItem={({ item, index }) => (
           <TouchableOpacity
@@ -113,12 +131,13 @@ const DAILY_MODES = [
   { key: 'squats' as const, label: 'Присед', icon: '🦵', unit: 'раз', quickCounts: [5, 10, 20, 30] },
   { key: 'football' as const, label: 'Футбол', icon: '⚽', unit: 'мин', quickCounts: [30, 45, 60, 90] },
   { key: 'run' as const, label: 'Бег', icon: '🏃', unit: 'мин', quickCounts: [5, 10, 15, 20] },
+  { key: 'swim' as const, label: 'Плавание', icon: '🏊', unit: 'мин', quickCounts: [15, 30, 45, 60] },
 ];
 
 function DailyTab() {
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
-  const [mode, setMode] = useState<'pullups' | 'abs' | 'triceps' | 'squats' | 'football' | 'run'>('pullups');
+  const [mode, setMode] = useState<'pullups' | 'abs' | 'triceps' | 'squats' | 'football' | 'run' | 'swim'>('pullups');
   const current = DAILY_MODES.find((m) => m.key === mode)!;
 
   return (
@@ -141,11 +160,7 @@ function DailyTab() {
       </View>
 
       {/* Content */}
-      {mode === 'run' ? (
-        <RunContent />
-      ) : (
-        <ExerciseTab type={current.key as 'pullups' | 'abs' | 'triceps'} unit={current.unit} quickCounts={current.quickCounts} />
-      )}
+      <ExerciseTab type={current.key as SportEntry['type']} unit={current.unit} quickCounts={current.quickCounts} />
     </View>
   );
 }
@@ -595,9 +610,9 @@ const styles = StyleSheet.create({
   historyRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 0.5 },
   historyDate: { fontSize: 14 },
   historyTotal: { fontSize: 14, fontWeight: '600' },
-  modeRow: { flexDirection: 'row', gap: 8, marginHorizontal: 12, marginTop: 10, marginBottom: 4 },
-  modeBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10, borderRadius: 10 },
-  modeBtnText: { fontSize: 12, fontWeight: '700' },
+  modeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginHorizontal: 12, marginTop: 10, marginBottom: 4 },
+  modeBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10 },
+  modeBtnText: { fontSize: 11, fontWeight: '700' },
   runBtn: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   runBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
   weightInputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 12, marginTop: 16, marginBottom: 16 },

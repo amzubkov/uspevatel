@@ -4,7 +4,7 @@ import { getDb } from '../db/database';
 
 export interface SportEntry {
   id: string;
-  type: 'pullups' | 'abs' | 'triceps' | 'squats' | 'run' | 'football' | 'weight';
+  type: 'pullups' | 'abs' | 'triceps' | 'squats' | 'run' | 'football' | 'swim' | 'weight';
   label?: string;
   count: number;
   date: string;
@@ -16,7 +16,7 @@ interface SportState {
   loaded: boolean;
 
   load: () => Promise<void>;
-  addEntry: (type: SportEntry['type'], count: number, label?: string) => void;
+  addEntry: (type: SportEntry['type'], count: number, label?: string, date?: string) => void;
   updateEntry: (id: string, fields: Partial<Pick<SportEntry, 'count' | 'label' | 'date' | 'time'>>) => void;
   removeEntry: (id: string) => void;
 }
@@ -47,8 +47,8 @@ export const useSportStore = create<SportState>()((set, get) => ({
     });
   },
 
-  addEntry: async (type, count, label) => {
-    const entry: SportEntry = { id: Crypto.randomUUID(), type, count, date: todayStr(), time: nowTime(), ...(label ? { label } : {}) };
+  addEntry: async (type, count, label, customDate) => {
+    const entry: SportEntry = { id: Crypto.randomUUID(), type, count, date: customDate || todayStr(), time: nowTime(), ...(label ? { label } : {}) };
     set((s) => ({ entries: [entry, ...s.entries] }));
     const db = await getDb();
     await db.runAsync('INSERT INTO sport_entries (id, type, label, count, date, time) VALUES (?, ?, ?, ?, ?, ?)',
