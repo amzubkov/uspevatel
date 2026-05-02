@@ -203,7 +203,6 @@ export function DayReviewScreen() {
       </View>
 
       {/* Sport */}
-      {(sportData.pullups > 0 || sportData.abs > 0 || sportData.triceps > 0 || sportData.squats > 0 || sportData.run > 0 || dayWorkouts.length > 0 || sportFootball === '1' || sportRun) && (
         <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
           <Text style={[s.sectionTitle, { color: c.textSecondary }]}>Спорт</Text>
           {/* Daily counters */}
@@ -230,7 +229,6 @@ export function DayReviewScreen() {
             </View>
           )}
         </View>
-      )}
 
       {/* Football & Run manual */}
       <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -314,5 +312,5 @@ const s = StyleSheet.create({
   sportInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   notesInput: { borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 14, minHeight: 60, textAlignVertical: 'top', marginBottom: 12 },
   saveBtn: { borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
-  historyRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderBottomWidth: 0.5 },
+  historyRow: { paddingVertical: 8, borderBottomWidth: 0.5 },
 });
