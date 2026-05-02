@@ -42,7 +42,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 30;
+const SCHEMA_VERSION = 31;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -828,6 +828,24 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
         notes TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL
       );`);
+    } catch {}
+  }
+
+  if (currentVer < 31) {
+    try {
+      // Recreate sport_entries without CHECK constraint to allow football/squats
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS sport_entries_new (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        label TEXT,
+        count REAL NOT NULL,
+        date TEXT NOT NULL,
+        time TEXT NOT NULL
+      );`);
+      await db.execAsync(`INSERT OR IGNORE INTO sport_entries_new SELECT * FROM sport_entries;`);
+      await db.execAsync(`DROP TABLE sport_entries;`);
+      await db.execAsync(`ALTER TABLE sport_entries_new RENAME TO sport_entries;`);
+      await db.execAsync(`CREATE INDEX IF NOT EXISTS idx_sport_entries_type_date ON sport_entries(type, date);`);
     } catch {}
   }
 

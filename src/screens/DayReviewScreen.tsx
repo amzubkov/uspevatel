@@ -113,6 +113,7 @@ export function DayReviewScreen() {
       abs: dayEntries.filter((e) => e.type === 'abs').reduce((s, e) => s + e.count, 0),
       triceps: dayEntries.filter((e) => e.type === 'triceps').reduce((s, e) => s + e.count, 0),
       squats: dayEntries.filter((e) => e.type === 'squats').reduce((s, e) => s + e.count, 0),
+      football: dayEntries.filter((e) => e.type === 'football').reduce((s, e) => s + e.count, 0),
       run: dayEntries.filter((e) => e.type === 'run').reduce((s, e) => s + e.count, 0),
     };
   }, [sportEntries, date]);
@@ -220,7 +221,8 @@ export function DayReviewScreen() {
               {sportData.abs > 0 && <Text style={[s.sportChip, { color: c.text }]}>🔥 {sportData.abs}</Text>}
               {sportData.triceps > 0 && <Text style={[s.sportChip, { color: c.text }]}>💪 {sportData.triceps}</Text>}
               {sportData.squats > 0 && <Text style={[s.sportChip, { color: c.text }]}>🦵 {sportData.squats}</Text>}
-              {sportData.run > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏃 {sportData.run}</Text>}
+              {sportData.football > 0 && <Text style={[s.sportChip, { color: c.text }]}>⚽ {sportData.football}мин</Text>}
+              {sportData.run > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏃 {sportData.run}мин</Text>}
             </View>
           )}
           {/* Gym exercises */}
@@ -238,23 +240,6 @@ export function DayReviewScreen() {
           )}
         </View>
 
-      {/* Football & Run manual */}
-      <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <TouchableOpacity onPress={() => setSportFootball(sportFootball === '1' ? '' : '1')}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-            <Text style={{ fontSize: 14 }}>{sportFootball === '1' ? '☑' : '☐'}</Text>
-            <Text style={{ color: c.text, fontSize: 12 }}>⚽</Text>
-          </TouchableOpacity>
-          <Text style={{ color: c.textSecondary, fontSize: 12 }}>🏃</Text>
-          {[5, 10, 15, 20].map((m) => (
-            <TouchableOpacity key={m} onPress={() => setSportRun(sportRun === String(m) ? '' : String(m))}
-              style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: sportRun === String(m) ? '#22C55E' : '#444' }}>
-              <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '600' }}>{m}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
 
       {/* Goals & tasks */}
       <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
