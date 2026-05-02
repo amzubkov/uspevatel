@@ -73,6 +73,7 @@ export function MoneyScreen() {
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [overviewPeriod, setOverviewPeriod] = useState<'month' | 'year' | 'all'>('month');
   const [categorizingMode, setCategorizingMode] = useState(false);
+  const [viewingCategory, setViewingCategory] = useState<string | null>(null);
   const [expandedTxId, setExpandedTxId] = useState<string | null>(null);
   const [newCatInput, setNewCatInput] = useState('');
   const [newTagInput, setNewTagInput] = useState('');
@@ -607,6 +608,60 @@ export function MoneyScreen() {
     }
   };
 
+  // ── Category transactions view ──
+  if (viewingCategory) {
+    const isUncategorized = viewingCategory === 'Без категории';
+    const catTxs = allTransactions
+      .filter((t) => {
+        if (!t.isCorrection && t.date >= (() => {
+          const now = new Date();
+          if (overviewPeriod === 'month') return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+          if (overviewPeriod === 'year') return `${now.getFullYear()}-01-01`;
+          return '0000';
+        })()) {
+          return isUncategorized ? !t.category : t.category === viewingCategory;
+        }
+        return false;
+      })
+      .sort((a, b) => b.date.localeCompare(a.date));
+    return (
+      <View style={[st.container, { backgroundColor: c.background }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, gap: 8 }}>
+          <TouchableOpacity onPress={() => setViewingCategory(null)}>
+            <Text style={{ color: c.primary, fontSize: 15, fontWeight: '600' }}>← Назад</Text>
+          </TouchableOpacity>
+          <Text style={{ color: c.text, fontSize: 16, fontWeight: '700', flex: 1 }}>{viewingCategory} ({catTxs.length})</Text>
+        </View>
+        <FlatList
+          data={catTxs}
+          keyExtractor={(t) => t.id}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
+          renderItem={({ item }) => {
+            const acc = accounts.find((a) => a.id === item.accountId);
+            return (
+              <View style={[st.txRow, { borderColor: c.border }]}>
+                <View style={{ flex: 1 }}>
+                  {item.comment ? <Text style={{ color: c.text, fontSize: 13 }} numberOfLines={1}>{item.comment}</Text> : null}
+                  <Text style={{ color: c.textSecondary, fontSize: 11 }}>
+                    {fmtDate(item.date)}{item.timestamp && !item.timestamp.endsWith('T00:00:00') ? ` ${item.timestamp.substring(11, 16)}` : ''}
+                    {acc ? ` · ${acc.name}` : ''}
+                    {item.tag ? ` #${item.tag}` : ''}
+                  </Text>
+                </View>
+                <Text style={[st.txAmount, { color: item.amount >= 0 ? c.success : c.danger }]}>
+                  {fmtAmount(item.amount, acc?.currency || 'EUR')}
+                </Text>
+              </View>
+            );
+          }}
+          ListEmptyComponent={
+            <View style={st.empty}><Text style={{ color: c.textSecondary }}>Нет транзакций</Text></View>
+          }
+        />
+      </View>
+    );
+  }
+
   // ── Categorization mode ──
   if (categorizingMode) {
     const handleSetCategory = async (txId: string, category: string) => {
@@ -984,10 +1039,11 @@ export function MoneyScreen() {
             contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
             renderItem={({ item }) => (
               <TouchableOpacity style={[st.txRow, { borderColor: c.border }]}
-                onPress={item.cat === 'Без категории' ? () => setCategorizingMode(true) : undefined}
-                activeOpacity={item.cat === 'Без категории' ? 0.6 : 1}>
+                onPress={() => setViewingCategory(item.cat)}
+                onLongPress={item.cat === 'Без категории' ? () => setCategorizingMode(true) : undefined}
+                activeOpacity={0.6}>
                 <Text style={{ color: item.cat === 'Без категории' ? c.textSecondary : c.text, fontSize: 14, fontWeight: '600', flex: 1 }}>
-                  {item.cat}{item.cat === 'Без категории' ? ` →` : ''}
+                  {item.cat} →
                 </Text>
                 <View style={{ alignItems: 'flex-end' }}>
                   {item.totals.map((t) => (
