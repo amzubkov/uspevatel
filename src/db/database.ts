@@ -42,7 +42,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 31;
+const SCHEMA_VERSION = 33;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -846,6 +846,31 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
       await db.execAsync(`DROP TABLE sport_entries;`);
       await db.execAsync(`ALTER TABLE sport_entries_new RENAME TO sport_entries;`);
       await db.execAsync(`CREATE INDEX IF NOT EXISTS idx_sport_entries_type_date ON sport_entries(type, date);`);
+    } catch {}
+  }
+
+  if (currentVer < 32) {
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS doctors (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        specialty TEXT NOT NULL DEFAULT '',
+        phone TEXT NOT NULL DEFAULT '',
+        address TEXT NOT NULL DEFAULT '',
+        clinic TEXT NOT NULL DEFAULT '',
+        url TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT ''
+      );`);
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_doctors_name ON doctors(name);');
+    } catch {}
+  }
+
+  if (currentVer < 33) {
+    try {
+      await db.execAsync(`ALTER TABLE doctors ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';`);
+      await db.execAsync(`UPDATE doctors SET updated_at = created_at WHERE updated_at = '';`);
     } catch {}
   }
 
