@@ -4,11 +4,15 @@ import * as Crypto from 'expo-crypto';
 import { File, Directory } from 'expo-file-system';
 import { getDb, getImageBaseDir } from '../db/database';
 
+export type VisitStatus = 'planned' | 'done';
+
 export interface DoctorVisit {
   id: string;
+  personId: string;
   name: string;
   date: string; // YYYY-MM-DD
   notes: string;
+  status: VisitStatus;
   createdAt: string;
 }
 
@@ -38,7 +42,12 @@ function resolveImageUri(val: string): string {
 }
 
 function rowToVisit(r: any): DoctorVisit {
-  return { id: r.id, name: r.name, date: r.date, notes: r.notes || '', createdAt: r.created_at };
+  return {
+    id: r.id, personId: r.person_id || 'me',
+    name: r.name, date: r.date, notes: r.notes || '',
+    status: (r.status === 'planned' ? 'planned' : 'done') as VisitStatus,
+    createdAt: r.created_at,
+  };
 }
 
 function rowToImage(r: any): DoctorVisitImage {
@@ -66,8 +75,8 @@ export const useDoctorStore = create<DoctorState>()((set, get) => ({
     set((s) => ({ visits: [visit, ...s.visits] }));
     const db = await getDb();
     await db.runAsync(
-      'INSERT INTO doctor_visits (id, name, date, notes, created_at) VALUES (?,?,?,?,?)',
-      [visit.id, visit.name, visit.date, visit.notes, visit.createdAt],
+      'INSERT INTO doctor_visits (id, person_id, name, date, notes, status, created_at) VALUES (?,?,?,?,?,?,?)',
+      [visit.id, visit.personId, visit.name, visit.date, visit.notes, visit.status, visit.createdAt],
     );
     return visit.id;
   },
@@ -77,7 +86,7 @@ export const useDoctorStore = create<DoctorState>()((set, get) => ({
     const db = await getDb();
     const sets: string[] = [];
     const vals: any[] = [];
-    const map: Record<string, string> = { name: 'name', date: 'date', notes: 'notes' };
+    const map: Record<string, string> = { personId: 'person_id', name: 'name', date: 'date', notes: 'notes', status: 'status' };
     for (const [k, col] of Object.entries(map)) {
       if ((fields as any)[k] !== undefined) { sets.push(`${col} = ?`); vals.push((fields as any)[k]); }
     }

@@ -115,6 +115,7 @@ export function DayReviewScreen() {
       squats: dayEntries.filter((e) => e.type === 'squats').reduce((s, e) => s + e.count, 0),
       football: dayEntries.filter((e) => e.type === 'football').reduce((s, e) => s + e.count, 0),
       run: dayEntries.filter((e) => e.type === 'run').reduce((s, e) => s + e.count, 0),
+      bike: dayEntries.filter((e) => e.type === 'bike').reduce((s, e) => s + e.count, 0),
       swim: dayEntries.filter((e) => e.type === 'swim').reduce((s, e) => s + e.count, 0),
     };
   }, [sportEntries, date]);
@@ -213,17 +214,18 @@ export function DayReviewScreen() {
       </View>
 
       {/* Sport */}
-        <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
-          <Text style={[s.sectionTitle, { color: c.textSecondary }]}>Спорт</Text>
+        <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.navigate('Sport')} style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
+          <Text style={[s.sectionTitle, { color: c.textSecondary }]}>Спорт ›</Text>
           {/* Daily counters */}
-          {(sportData.pullups > 0 || sportData.abs > 0 || sportData.triceps > 0 || sportData.squats > 0 || sportData.run > 0) && (
+          {(sportData.pullups > 0 || sportData.abs > 0 || sportData.triceps > 0 || sportData.squats > 0 || sportData.run > 0 || sportData.bike > 0 || sportData.football > 0 || sportData.swim > 0) && (
             <View style={s.sportAutoRow}>
               {sportData.pullups > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏋️ {sportData.pullups}</Text>}
               {sportData.abs > 0 && <Text style={[s.sportChip, { color: c.text }]}>🔥 {sportData.abs}</Text>}
               {sportData.triceps > 0 && <Text style={[s.sportChip, { color: c.text }]}>💪 {sportData.triceps}</Text>}
               {sportData.squats > 0 && <Text style={[s.sportChip, { color: c.text }]}>🦵 {sportData.squats}</Text>}
               {sportData.football > 0 && <Text style={[s.sportChip, { color: c.text }]}>⚽ {sportData.football}мин</Text>}
-              {sportData.run > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏃 {sportData.run}мин</Text>}
+              {sportData.run > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏃 {sportData.run}км</Text>}
+              {sportData.bike > 0 && <Text style={[s.sportChip, { color: c.text }]}>🚴 {sportData.bike}км</Text>}
               {sportData.swim > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏊 {sportData.swim}мин</Text>}
             </View>
           )}
@@ -240,7 +242,7 @@ export function DayReviewScreen() {
               ))}
             </View>
           )}
-        </View>
+        </TouchableOpacity>
 
 
       {/* Goals & tasks */}
@@ -274,6 +276,7 @@ export function DayReviewScreen() {
             const daySport = sportEntries.filter((e) => e.date === log.date);
             const hasFootball = daySport.some((e) => e.type === 'football');
             const hasRun = daySport.some((e) => e.type === 'run');
+            const hasBike = daySport.some((e) => e.type === 'bike');
             const hasSwim = daySport.some((e) => e.type === 'swim');
             const hasGym = workoutLogs.some((l) => l.date === log.date);
             return (
@@ -289,6 +292,7 @@ export function DayReviewScreen() {
                 {hasGym && <Text style={{ fontSize: 11 }}>🏋️</Text>}
                 {hasFootball && <Text style={{ fontSize: 11 }}>⚽</Text>}
                 {hasRun && <Text style={{ fontSize: 11 }}>🏃</Text>}
+                {hasBike && <Text style={{ fontSize: 11 }}>🚴</Text>}
                 {hasSwim && <Text style={{ fontSize: 11 }}>🏊</Text>}
               </View>
               {log.notes ? <Text style={{ color: c.textSecondary, fontSize: 11, paddingLeft: 70 }} numberOfLines={2}>{log.notes}</Text> : null}
@@ -305,9 +309,9 @@ export function DayReviewScreen() {
 
 const s = StyleSheet.create({
   container: { flex: 1 },
-  dateRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginBottom: 16 },
-  dateArrow: { fontSize: 24, fontWeight: '700', paddingHorizontal: 8 },
-  dateText: { fontSize: 18, fontWeight: '700' },
+  dateRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginBottom: 11 },
+  dateArrow: { fontSize: 17, fontWeight: '700', paddingHorizontal: 8 },
+  dateText: { fontSize: 13, fontWeight: '700' },
   section: { borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 12, gap: 8 },
   sectionTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', marginBottom: 4 },
   ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },

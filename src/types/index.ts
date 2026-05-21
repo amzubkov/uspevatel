@@ -61,6 +61,7 @@ export interface Settings {
   syncUrl: string;
   lastSyncAt: string | null;
   knownSyncIds: string[];
+  city: string; // prodoctorov slug, e.g. "moskva", "spb"
 }
 
 export const CATEGORY_LABELS: Record<Category, string> = {

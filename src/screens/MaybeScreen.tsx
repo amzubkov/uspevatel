@@ -5,7 +5,6 @@ import { useSettingsStore } from '../store/settingsStore';
 import { useProjectStore } from '../store/projectStore';
 import { colors } from '../utils/theme';
 import { TaskCard } from '../components/TaskCard';
-import { SwipeableTask } from '../components/SwipeableTask';
 import { QuickAddBar } from '../components/QuickAddBar';
 import { SearchBar } from '../components/SearchBar';
 import { FilterBar, applyFilters, sortByPriorityDeadline } from '../components/FilterBar';
@@ -14,8 +13,6 @@ import { useNavigation } from '@react-navigation/native';
 export function MaybeScreen() {
   const allTasks = useTaskStore((s) => s.tasks);
   const addTask = useTaskStore((s) => s.addTask);
-  const moveTask = useTaskStore((s) => s.moveTask);
-  const deleteTask = useTaskStore((s) => s.deleteTask);
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
   const navigation = useNavigation<any>();
@@ -66,22 +63,12 @@ export function MaybeScreen() {
           keyExtractor={(t) => t.id}
           renderItem={({ item, index }) => (
             <View style={{ backgroundColor: index % 2 === 1 ? (theme === 'dark' ? '#252525' : '#F0F0F0') : 'transparent' }}>
-              <SwipeableTask
-                rightActions={[
-                  { label: 'DAY', color: '#F59E0B', onPress: () => moveTask(item.id, 'DAY') },
-                  { label: 'LATER', color: '#3B82F6', onPress: () => moveTask(item.id, 'LATER') },
-                ]}
-                leftActions={[
-                  { label: 'Удалить', color: '#DC2626', onPress: () => deleteTask(item.id) },
-                ]}
-              >
-                <TaskCard
-                  task={item}
-                  onPress={() => navigation.navigate('TaskDetail', { taskId: item.id })}
-                  onSubjectPress={navigateSubject}
-                  onProjectPress={navigateProject}
-                />
-              </SwipeableTask>
+              <TaskCard
+                task={item}
+                onPress={() => navigation.navigate('TaskDetail', { taskId: item.id })}
+                onSubjectPress={navigateSubject}
+                onProjectPress={navigateProject}
+              />
             </View>
           )}
         />

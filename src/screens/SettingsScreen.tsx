@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -150,6 +150,33 @@ function ChangeLogSection({ c }: { c: any }) {
           ))}
         </View>
       ))}
+    </>
+  );
+}
+
+function CityField({ c }: { c: any }) {
+  const city = useSettingsStore((s) => s.city);
+  const setCity = useSettingsStore((s) => s.setCity);
+  const [val, setVal] = useState(city);
+  useEffect(() => { setVal(city); }, [city]);
+  return (
+    <>
+      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>
+        Город (для prodoctorov)
+      </Text>
+      <Text style={[styles.hint, { color: c.textSecondary }]}>
+        Слаг города из URL prodoctorov.ru, напр. moskva, spb, ekaterinburg.
+      </Text>
+      <TextInput
+        style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 10, color: c.text, backgroundColor: c.card, marginTop: 4 }}
+        value={val}
+        onChangeText={setVal}
+        onBlur={() => setCity(val.trim().toLowerCase())}
+        placeholder="moskva"
+        placeholderTextColor={c.textSecondary}
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
     </>
   );
 }
@@ -387,6 +414,9 @@ export function SettingsScreen() {
 
       {/* Nav Bar Padding */}
       <NavBarToggle c={c} />
+
+      {/* City for prodoctorov */}
+      <CityField c={c} />
 
       {/* Sync Folder */}
       <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>

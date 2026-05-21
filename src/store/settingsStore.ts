@@ -16,6 +16,7 @@ interface SettingsState extends Settings {
   setSyncUrl: (url: string) => void;
   setLastSyncAt: (date: string | null) => void;
   addKnownSyncIds: (ids: string[]) => void;
+  setCity: (city: string) => void;
 }
 
 async function getSetting(key: string, fallback: string): Promise<string> {
@@ -40,6 +41,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   syncUrl: '',
   lastSyncAt: null,
   knownSyncIds: [],
+  city: '',
   loaded: false,
 
   load: async () => {
@@ -54,9 +56,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const syncUrl = await getSetting('syncUrl', '');
     const lastSyncAt = await getSetting('lastSyncAt', '');
     const knownSyncIds = JSON.parse(await getSetting('knownSyncIds', '[]'));
+    const city = await getSetting('city', '');
     set({
       contextCategories, dailyReminderTime, weeklyReminderTime, weeklyReminderDay,
-      theme, fontSize, navBarPadding, syncUrl, lastSyncAt: lastSyncAt || null, knownSyncIds, loaded: true,
+      theme, fontSize, navBarPadding, syncUrl, lastSyncAt: lastSyncAt || null, knownSyncIds, city, loaded: true,
     });
   },
 
@@ -88,4 +91,5 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     set({ knownSyncIds: merged });
     setSetting('knownSyncIds', JSON.stringify(merged));
   },
+  setCity: (city) => { set({ city }); setSetting('city', city); },
 }));

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, Image, StyleSheet, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, Image, StyleSheet, Alert, Modal } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useExerciseStore } from '../store/exerciseStore';
 import { useSettingsStore } from '../store/settingsStore';

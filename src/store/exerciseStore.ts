@@ -52,6 +52,7 @@ interface ExerciseState {
   updateExercise: (id: number, updates: Partial<Pick<Exercise, 'name' | 'imageUri' | 'weightType' | 'tag' | 'description' | 'caloriesPerRep'>>) => void;
   removeExercise: (id: number) => void;
   addLog: (exerciseId: number, weight: number, reps: number, setNum: number) => void;
+  updateLog: (id: number, fields: Partial<Pick<WorkoutLog, 'weight' | 'reps' | 'setNum'>>) => void;
   removeLog: (id: number) => void;
   getExercisesForDay: (dayId: number) => Exercise[];
 }
@@ -266,6 +267,19 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
     );
     const log: WorkoutLog = { id: res.lastInsertRowId, exerciseId, weight, reps, setNum, date, createdAt };
     set((s) => ({ logs: [log, ...s.logs] }));
+  },
+
+  updateLog: async (id, fields) => {
+    set((s) => ({ logs: s.logs.map((l) => (l.id === id ? { ...l, ...fields } : l)) }));
+    const db = await getDb();
+    const setParts: string[] = [];
+    const vals: any[] = [];
+    if (fields.weight !== undefined) { setParts.push('weight = ?'); vals.push(fields.weight); }
+    if (fields.reps !== undefined) { setParts.push('reps = ?'); vals.push(fields.reps); }
+    if (fields.setNum !== undefined) { setParts.push('set_num = ?'); vals.push(fields.setNum); }
+    if (setParts.length === 0) return;
+    vals.push(id);
+    await db.runAsync(`UPDATE workout_logs SET ${setParts.join(', ')} WHERE id = ?`, vals);
   },
 
   removeLog: async (id) => {

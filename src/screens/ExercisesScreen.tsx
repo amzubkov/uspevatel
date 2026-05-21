@@ -28,19 +28,32 @@ export function ExercisesScreen() {
   const [tag, setTag] = useState('');
   const [calPerRep, setCalPerRep] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+
+  const splitTags = (raw?: string | null): string[] =>
+    (raw || '').split(',').map((t) => t.trim()).filter(Boolean);
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
     for (const ex of exercises) {
-      if (ex.tag) tags.add(ex.tag);
+      for (const t of splitTags(ex.tag)) tags.add(t);
     }
     return Array.from(tags).sort();
   }, [exercises]);
 
   const filtered = useMemo(() => {
-    if (!selectedTag) return exercises;
-    return exercises.filter((e) => e.tag === selectedTag);
-  }, [exercises, selectedTag]);
+    const q = search.trim().toLowerCase();
+    return exercises.filter((e) => {
+      const tags = splitTags(e.tag);
+      if (selectedTag && !tags.includes(selectedTag)) return false;
+      if (q) {
+        const inName = e.name.toLowerCase().includes(q);
+        const inTags = tags.some((t) => t.toLowerCase().includes(q));
+        if (!inName && !inTags) return false;
+      }
+      return true;
+    });
+  }, [exercises, selectedTag, search]);
 
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -133,6 +146,23 @@ export function ExercisesScreen() {
         </View>
       )}
 
+      <View style={styles.searchWrap}>
+        <TextInput
+          style={[styles.searchInput, { color: c.text, borderColor: c.border, backgroundColor: c.card }]}
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Поиск..."
+          placeholderTextColor={c.textSecondary}
+          autoCorrect={false}
+          autoCapitalize="none"
+        />
+        {search.length > 0 && (
+          <TouchableOpacity style={styles.searchClear} onPress={() => setSearch('')}>
+            <Text style={{ color: c.textSecondary, fontSize: 18 }}>×</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
       {allTags.length > 0 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tagBar} contentContainerStyle={styles.tagBarContent}>
           <TouchableOpacity
@@ -142,7 +172,7 @@ export function ExercisesScreen() {
             <Text style={[styles.tagChipText, { color: !selectedTag ? '#FFF' : c.textSecondary }]}>Все ({exercises.length})</Text>
           </TouchableOpacity>
           {allTags.map((t) => {
-            const count = exercises.filter((e) => e.tag === t).length;
+            const count = exercises.filter((e) => splitTags(e.tag).includes(t)).length;
             return (
               <TouchableOpacity
                 key={t}
@@ -207,6 +237,9 @@ const styles = StyleSheet.create({
   previewImg: { width: 80, height: 80, borderRadius: 8 },
   formActions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   saveBtn: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 8 },
+  searchWrap: { paddingHorizontal: 12, marginBottom: 8, position: 'relative' },
+  searchInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 15, paddingRight: 36 },
+  searchClear: { position: 'absolute', right: 20, top: 0, bottom: 0, justifyContent: 'center', paddingHorizontal: 6 },
   tagBar: { maxHeight: 40, marginBottom: 4 },
   tagBarContent: { paddingHorizontal: 12, gap: 6, alignItems: 'center' },
   tagChip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, backgroundColor: 'rgba(128,128,128,0.15)' },

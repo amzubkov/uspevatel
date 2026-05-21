@@ -72,7 +72,13 @@ export interface ParsedNote {
   msgDate: number;
 }
 
-export type ParsedItem = ParsedTask | ParsedFlight | ParsedDoc | ParsedHealth | ParsedRef | ParsedTx | ParsedNote;
+export interface ParsedDoctor {
+  type: 'doctor';
+  url: string;
+  msgDate: number;
+}
+
+export type ParsedItem = ParsedTask | ParsedFlight | ParsedDoc | ParsedHealth | ParsedRef | ParsedTx | ParsedNote | ParsedDoctor;
 
 // Normalise date: "14.04.2026" → "2026-04-14", "2026-04-14" stays as is
 function normaliseDate(s: string): string | null {
@@ -95,6 +101,12 @@ function parseDatetime(s: string): { date: string; time?: string } | null {
 // Parse text (or caption) + optional photo
 export function parseMessage(text: string, msgDate: number, photoFileId?: string, docFileId?: string, docFileName?: string, docMimeType?: string): ParsedItem | null {
   const trimmed = text.trim();
+
+  // Auto-detect prodoctorov.ru link in any message — create a Doctor contact
+  const proDoctorMatch = trimmed.match(/https?:\/\/[^\s]*prodoctorov\.ru\/[^\s]*/i);
+  if (proDoctorMatch) {
+    return { type: 'doctor', url: proDoctorMatch[0], msgDate };
+  }
 
   // /task [project:XXX] <subject>[, <deadline>]
   const taskMatch = trimmed.match(/^\/task\s+(.+)/i);

@@ -42,7 +42,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 33;
+const SCHEMA_VERSION = 34;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -871,6 +871,53 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
     try {
       await db.execAsync(`ALTER TABLE doctors ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';`);
       await db.execAsync(`UPDATE doctors SET updated_at = created_at WHERE updated_at = '';`);
+    } catch {}
+  }
+
+  if (currentVer < 34) {
+    // v34: persons + lab_archive + person_id on entries/visits
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS persons (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      );`);
+      // Seed defaults
+      const seed: [string, string, number][] = [
+        ['me', 'Я', 1],
+        ['katya', 'Катя', 2],
+        ['atyatya', 'Атятя', 3],
+        ['mama', 'Мама', 4],
+        ['papa', 'Папа', 5],
+      ];
+      for (const [id, name, ord] of seed) {
+        await db.runAsync(
+          'INSERT OR IGNORE INTO persons (id, name, sort_order) VALUES (?,?,?)',
+          [id, name, ord],
+        );
+      }
+    } catch {}
+    try {
+      await db.execAsync(`ALTER TABLE health_entries ADD COLUMN person_id TEXT NOT NULL DEFAULT 'me';`);
+    } catch {}
+    try {
+      await db.execAsync(`ALTER TABLE doctor_visits ADD COLUMN person_id TEXT NOT NULL DEFAULT 'me';`);
+    } catch {}
+    try {
+      await db.execAsync(`ALTER TABLE doctor_visits ADD COLUMN status TEXT NOT NULL DEFAULT 'done';`);
+    } catch {}
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS lab_archive (
+        id TEXT PRIMARY KEY,
+        person_id TEXT NOT NULL DEFAULT 'me',
+        name TEXT NOT NULL,
+        date TEXT NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'done',
+        created_at TEXT NOT NULL
+      );`);
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_lab_archive_person ON lab_archive(person_id);');
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_lab_archive_date ON lab_archive(date);');
     } catch {}
   }
 

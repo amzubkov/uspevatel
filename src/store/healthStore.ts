@@ -24,6 +24,7 @@ export interface MetricRef {
 export interface HealthEntry {
   id: string;
   metricId: string;
+  personId: string;
   value: number;
   date: string;       // YYYY-MM-DD
   notes: string;
@@ -42,7 +43,7 @@ interface HealthState {
   addEntry: (e: Omit<HealthEntry, 'id' | 'createdAt'>) => Promise<void>;
   updateEntry: (id: string, fields: Partial<Omit<HealthEntry, 'id' | 'createdAt'>>) => Promise<void>;
   removeEntry: (id: string) => Promise<void>;
-  bulkImport: (lines: { name: string; value: number; unit?: string; refMin?: number; refMax?: number }[], date: string) => Promise<number>;
+  bulkImport: (lines: { name: string; value: number; unit?: string; refMin?: number; refMax?: number }[], date: string, personId?: string) => Promise<number>;
   loadPresets: () => Promise<number>;
 }
 
@@ -62,6 +63,7 @@ function rowToEntry(r: any): HealthEntry {
   return {
     id: r.id,
     metricId: r.metric_id,
+    personId: r.person_id || 'me',
     value: r.value,
     date: r.date,
     notes: r.notes || '',
@@ -137,8 +139,8 @@ export const useHealthStore = create<HealthState>()((set, get) => ({
     set((s) => ({ entries: [entry, ...s.entries] }));
     const db = await getDb();
     await db.runAsync(
-      'INSERT INTO health_entries (id, metric_id, value, date, notes, created_at) VALUES (?,?,?,?,?,?)',
-      [entry.id, entry.metricId, entry.value, entry.date, entry.notes, entry.createdAt],
+      'INSERT INTO health_entries (id, metric_id, person_id, value, date, notes, created_at) VALUES (?,?,?,?,?,?,?)',
+      [entry.id, entry.metricId, entry.personId, entry.value, entry.date, entry.notes, entry.createdAt],
     );
   },
 
@@ -148,7 +150,7 @@ export const useHealthStore = create<HealthState>()((set, get) => ({
     const sets: string[] = [];
     const vals: any[] = [];
     const map: Record<string, string> = {
-      metricId: 'metric_id', value: 'value', date: 'date', notes: 'notes',
+      metricId: 'metric_id', personId: 'person_id', value: 'value', date: 'date', notes: 'notes',
     };
     for (const [k, col] of Object.entries(map)) {
       if ((fields as any)[k] !== undefined) { sets.push(`${col} = ?`); vals.push((fields as any)[k]); }
@@ -165,7 +167,7 @@ export const useHealthStore = create<HealthState>()((set, get) => ({
     await db.runAsync('DELETE FROM health_entries WHERE id = ?', [id]);
   },
 
-  bulkImport: async (lines, date) => {
+  bulkImport: async (lines, date, personId = 'me') => {
     const db = await getDb();
     const now = new Date().toISOString();
     let currentMetrics = [...get().metrics];
@@ -192,12 +194,12 @@ export const useHealthStore = create<HealthState>()((set, get) => ({
         if (refMax != null && metric.refMax == null) { metric.refMax = refMax; await db.runAsync('UPDATE health_metrics SET ref_max = ? WHERE id = ?', [refMax, metric.id]); }
       }
       const entry: HealthEntry = {
-        id: Crypto.randomUUID(), metricId: metric.id, value, date, notes: '', createdAt: now,
+        id: Crypto.randomUUID(), metricId: metric.id, personId, value, date, notes: '', createdAt: now,
       };
       newEntries.push(entry);
       await db.runAsync(
-        'INSERT INTO health_entries (id, metric_id, value, date, notes, created_at) VALUES (?,?,?,?,?,?)',
-        [entry.id, entry.metricId, entry.value, entry.date, entry.notes, entry.createdAt],
+        'INSERT INTO health_entries (id, metric_id, person_id, value, date, notes, created_at) VALUES (?,?,?,?,?,?,?)',
+        [entry.id, entry.metricId, entry.personId, entry.value, entry.date, entry.notes, entry.createdAt],
       );
     }
 
