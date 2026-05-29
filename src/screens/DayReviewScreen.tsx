@@ -6,6 +6,7 @@ import { useSportStore } from '../store/sportStore';
 import { useExerciseStore } from '../store/exerciseStore';
 import { useTaskStore } from '../store/taskStore';
 import { colors } from '../utils/theme';
+import { exerciseKcal, calcDailyEntriesKcal, getBodyWeightAt } from '../utils/calories';
 import { useNavigation } from '@react-navigation/native';
 
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
@@ -120,6 +121,9 @@ export function DayReviewScreen() {
     };
   }, [sportEntries, date]);
 
+  // Body weight on this date (last known weight entry on/before date).
+  const bodyWeight = useMemo(() => getBodyWeightAt(sportEntries, date), [sportEntries, date]);
+
   // Workout logs from exerciseStore (gym exercises)
   const dayWorkouts = useMemo(() => {
     const dayLogs = workoutLogs.filter((l) => l.date === date);
@@ -131,11 +135,19 @@ export function DayReviewScreen() {
       g.sets++;
       g.totalReps += log.reps;
       if (log.weight > g.maxWeight) g.maxWeight = log.weight;
-      if (ex.caloriesPerRep) g.calories += log.reps * ex.caloriesPerRep;
+      g.calories += exerciseKcal(ex, log.reps, bodyWeight);
       grouped.set(log.exerciseId, g);
     }
     return [...grouped.values()];
-  }, [workoutLogs, exercises, date]);
+  }, [workoutLogs, exercises, date, bodyWeight]);
+
+  // Total day kcal: gym + daily counters (pullups/abs/squats/run/bike/football/swim)
+  const dayCalories = useMemo(() => {
+    const gymCal = dayWorkouts.reduce((s, w) => s + w.calories, 0);
+    const dailyEntries = sportEntries.filter((e) => e.date === date && e.type !== 'weight');
+    const dailyCal = calcDailyEntriesKcal(dailyEntries, bodyWeight);
+    return Math.round(gymCal + dailyCal);
+  }, [dayWorkouts, sportEntries, date, bodyWeight]);
 
   // Goals & tasks
   const goalsData = useMemo(() => {
@@ -215,7 +227,12 @@ export function DayReviewScreen() {
 
       {/* Sport */}
         <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.navigate('Sport')} style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
-          <Text style={[s.sectionTitle, { color: c.textSecondary }]}>Спорт ›</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={[s.sectionTitle, { color: c.textSecondary }]}>Спорт ›</Text>
+            {dayCalories > 0 && (
+              <Text style={{ color: '#F59E0B', fontSize: 12, fontWeight: '600' }}>🔥 {dayCalories} ккал · {bodyWeight}кг</Text>
+            )}
+          </View>
           {/* Daily counters */}
           {(sportData.pullups > 0 || sportData.abs > 0 || sportData.triceps > 0 || sportData.squats > 0 || sportData.run > 0 || sportData.bike > 0 || sportData.football > 0 || sportData.swim > 0) && (
             <View style={s.sportAutoRow}>

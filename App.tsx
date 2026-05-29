@@ -17,6 +17,7 @@ import { useHealthStore } from './src/store/healthStore';
 import { useAttachmentStore } from './src/store/attachmentStore';
 import { useDoctorStore } from './src/store/doctorStore';
 import { useDoctorContactStore } from './src/store/doctorContactStore';
+import { useContactStore } from './src/store/contactStore';
 import { usePersonStore } from './src/store/personStore';
 import { useLabArchiveStore } from './src/store/labArchiveStore';
 import { useTravelerStore } from './src/store/travelerStore';
@@ -59,6 +60,7 @@ function AppLoader() {
   const loadAttachments = useAttachmentStore((s) => s.load);
   const loadDoctors = useDoctorStore((s) => s.load);
   const loadDoctorContacts = useDoctorContactStore((s) => s.load);
+  const loadContacts = useContactStore((s) => s.load);
   const loadPersons = usePersonStore((s) => s.load);
   const loadLabArchive = useLabArchiveStore((s) => s.load);
   const loadTravelers = useTravelerStore((s) => s.load);
@@ -86,6 +88,7 @@ function AppLoader() {
         loadAttachments(),
         loadDoctors(),
         loadDoctorContacts(),
+        loadContacts(),
         loadPersons(),
         loadLabArchive(),
         loadTravelers(),

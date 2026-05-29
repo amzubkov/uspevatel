@@ -2,7 +2,9 @@ import React, { useState, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Image, StyleSheet, Alert, Modal } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useExerciseStore } from '../store/exerciseStore';
+import { useSportStore } from '../store/sportStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { exerciseKcal, getBodyWeightAt } from '../utils/calories';
 import { ZoomableImage } from '../components/ZoomableImage';
 import { colors } from '../utils/theme';
 import { useRoute } from '@react-navigation/native';
@@ -60,10 +62,13 @@ export function ExerciseDetailScreen() {
   }, [exLogs]);
 
   const maxWeight = useMemo(() => exLogs.reduce((max, l) => Math.max(max, l.weight), 0), [exLogs]);
+  const sportEntries = useSportStore((s) => s.entries);
   const todayCalories = useMemo(() => {
-    if (!exercise?.caloriesPerRep) return 0;
-    return todayLogs.reduce((sum, l) => sum + l.reps * l.setNum * exercise.caloriesPerRep, 0);
-  }, [todayLogs, exercise]);
+    if (!exercise) return 0;
+    const today = new Date().toISOString().slice(0, 10);
+    const bw = getBodyWeightAt(sportEntries, today);
+    return todayLogs.reduce((sum, l) => sum + exerciseKcal(exercise, l.reps * l.setNum, bw), 0);
+  }, [todayLogs, exercise, sportEntries]);
 
   if (!exercise) return <View style={[styles.container, { backgroundColor: c.background }]}><Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Упражнение не найдено</Text></View>;
 

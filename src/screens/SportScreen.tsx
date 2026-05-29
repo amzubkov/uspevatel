@@ -6,6 +6,7 @@ import { useExerciseStore, Exercise, WorkoutLog } from '../store/exerciseStore';
 import { ExercisesScreen } from './ExercisesScreen';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
+import { calcDailyEntryKcal as utilCalcCalories, calcDailyEntriesKcal as utilCalcCaloriesForEntries, exerciseKcal, getBodyWeightAt } from '../utils/calories';
 
 const SportTab = createBottomTabNavigator();
 
@@ -379,41 +380,9 @@ const RUN_OPTIONS = [
 
 const TYPE_LABELS: Record<string, string> = { pullups: 'подтяг.', abs: 'пресс', triceps: 'трицепс', run: 'бег', bike: 'вело', weight: 'вес', water: 'вода' };
 
-// Расчёт калорий по MET (Metabolic Equivalent of Task) и весу тела
-// Формула: kcal = MET × вес(кг) × время(ч)
-// Подтягивания: MET 8.0 (vigorous calisthenics), ~4сек/повтор → 0.005 kcal/кг/повтор
-// Пресс: MET 3.8 (moderate calisthenics), ~2сек/повтор → 0.003 kcal/кг/повтор
-// Трицепс (отжимания/брусья): MET 8.0, ~3сек/повтор → 0.004 kcal/кг/повтор
-// Приседания (bodyweight squats): MET 5.0, ~3сек/повтор → 0.004 kcal/кг/повтор
-// Бег: ~1 kcal/кг/км (общепринятая формула), футбол MET 7.0 × 1ч
-const CAL_PER_REP_PER_KG: Record<string, number> = { pullups: 0.005, abs: 0.003, triceps: 0.004, squats: 0.004 };
-const CAL_RUN_PER_KG: Record<string, number> = { football: 7, '5km': 5, '10km': 10, '20km': 20 };
-
-function calcCalories(entry: SportEntry, weightKg: number): number {
-  if (entry.type === 'run') {
-    // Legacy entries use label like '5km' / 'football' to look up kcal per kg
-    if (entry.label && CAL_RUN_PER_KG[entry.label] !== undefined) {
-      return Math.round(CAL_RUN_PER_KG[entry.label] * weightKg);
-    }
-    // New format: count = km, ~1 kcal/kg/km
-    return Math.round(entry.count * weightKg);
-  }
-  if (entry.type === 'bike') {
-    // Cycling ~20 km/h, MET 7.5 → ~0.375 kcal/kg/km
-    return Math.round(entry.count * 0.375 * weightKg);
-  }
-  if (entry.type === 'football') {
-    // count = minutes; MET 7.0 → 7 kcal/kg/h = 7/60 kcal/kg/min
-    return Math.round((entry.count * 7 * weightKg) / 60);
-  }
-  const perRepPerKg = CAL_PER_REP_PER_KG[entry.type];
-  if (perRepPerKg) return Math.round(entry.count * perRepPerKg * weightKg);
-  return 0;
-}
-
-function calcCaloriesForEntries(entries: SportEntry[], weightKg: number): number {
-  return entries.reduce((sum, e) => sum + calcCalories(e, weightKg), 0);
-}
+// Calorie calc moved to ../utils/calories. Thin aliases for callsite stability.
+const calcCalories = utilCalcCalories;
+const calcCaloriesForEntries = utilCalcCaloriesForEntries;
 
 function formatEntryLabel(e: SportEntry): string {
   if (e.type === 'run') return RUN_OPTIONS.find((o) => o.value === e.label)?.label || e.label || 'бег';
@@ -748,10 +717,10 @@ function WorkoutTab() {
     let cal = 0;
     for (const l of todayLogs) {
       const ex = exercises.find((e) => e.id === l.exerciseId);
-      if (ex && ex.caloriesPerRep > 0) cal += l.reps * l.setNum * ex.caloriesPerRep;
+      if (ex) cal += exerciseKcal(ex, l.reps * l.setNum, lastWeight);
     }
     return Math.round(cal);
-  }, [exLogs, exercises, today]);
+  }, [exLogs, exercises, today, lastWeight]);
 
   const todayDailyEntries = useMemo(() => entries.filter((e) => e.date === today && e.type !== 'weight'), [entries, today]);
   const todayDailyCal = useMemo(() => calcCaloriesForEntries(todayDailyEntries, lastWeight), [todayDailyEntries, lastWeight]);
@@ -791,7 +760,7 @@ function WorkoutTab() {
       let exCal = 0;
       for (const l of dayLogs) {
         const ex = exercises.find((e) => e.id === l.exerciseId);
-        if (ex && ex.caloriesPerRep > 0) exCal += l.reps * l.setNum * ex.caloriesPerRep;
+        if (ex) exCal += exerciseKcal(ex, l.reps * l.setNum, dayWeight);
       }
       const cal = Math.round(exCal + calcCaloriesForEntries(dayDaily, dayWeight));
       return { date: ds, exerciseCount, sets, volume, cal, logs: dayLogs, daily: dayDaily };
@@ -1245,10 +1214,11 @@ function StatsTab() {
   // Calories from exercises (workout_logs)
   const exCalForDate = (date: string) => {
     const dayLogs = exLogs.filter((l) => l.date === date);
+    const dayWeight = getBodyWeightAt(entries, date, lastWeight);
     let cal = 0;
     for (const l of dayLogs) {
       const ex = exercises.find((e) => e.id === l.exerciseId);
-      if (ex && ex.caloriesPerRep > 0) cal += l.reps * l.setNum * ex.caloriesPerRep;
+      if (ex) cal += exerciseKcal(ex, l.reps * l.setNum, dayWeight);
     }
     return Math.round(cal);
   };

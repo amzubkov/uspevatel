@@ -42,7 +42,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 34;
+const SCHEMA_VERSION = 37;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -918,6 +918,39 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
       );`);
       await db.execAsync('CREATE INDEX IF NOT EXISTS idx_lab_archive_person ON lab_archive(person_id);');
       await db.execAsync('CREATE INDEX IF NOT EXISTS idx_lab_archive_date ON lab_archive(date);');
+    } catch {}
+  }
+
+  if (currentVer < 35) {
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS contacts (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT ''
+      );`);
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);');
+    } catch {}
+  }
+
+  if (currentVer < 36) {
+    try {
+      await db.execAsync(`CREATE TABLE IF NOT EXISTS contact_messages (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        direction TEXT NOT NULL DEFAULT 'out',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT ''
+      );`);
+      await db.execAsync('CREATE INDEX IF NOT EXISTS idx_contact_messages_contact ON contact_messages(contact_id, created_at);');
+    } catch {}
+  }
+
+  if (currentVer < 37) {
+    try {
+      await db.execAsync(`ALTER TABLE contacts ADD COLUMN tags TEXT NOT NULL DEFAULT '';`);
     } catch {}
   }
 

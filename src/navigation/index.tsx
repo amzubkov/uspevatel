@@ -37,6 +37,8 @@ import { HealthScreen } from "../screens/HealthScreen";
 import { DocumentsScreen } from "../screens/DocumentsScreen";
 import { TelegramSyncScreen } from "../screens/TelegramSyncScreen";
 import { DayReviewScreen } from "../screens/DayReviewScreen";
+import { ContactsScreen } from "../screens/ContactsScreen";
+import { ContactDetailScreen } from "../screens/ContactDetailScreen";
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -49,6 +51,7 @@ const HeaderButtons = React.memo(function HeaderButtons() {
   const navigation = useNavigation<any>();
 
   const items: { emoji: string; screen: string }[] = [
+    { emoji: '👥', screen: 'Contacts' },
     { emoji: '📅', screen: 'DailyRoutine' },
     { emoji: '📊', screen: 'DayReview' },
     { emoji: '💰', screen: 'Money' },
@@ -73,9 +76,9 @@ const HeaderButtons = React.memo(function HeaderButtons() {
 });
 
 const hStyles = StyleSheet.create({
-  scroll: { flexGrow: 0 },
-  row: { flexDirection: "row", alignItems: "center" },
-  btn: { paddingHorizontal: 3, paddingVertical: 2 },
+  scroll: { flex: 1 },
+  row: { flexDirection: "row", alignItems: "center", paddingRight: 8 },
+  btn: { paddingHorizontal: 5, paddingVertical: 4 },
   emoji: { fontSize: 17 },
 });
 
@@ -111,6 +114,8 @@ function CategoryTabs() {
       headerStyle: { backgroundColor: c.card },
       headerTintColor: c.text,
       headerTitle: "",
+      headerTitleAlign: "left" as const,
+      headerTitleContainerStyle: { left: 0, right: 0, marginHorizontal: 0, paddingHorizontal: 8 },
       tabBarLabelStyle: { fontSize: 10, fontWeight: "700" as const },
     }),
     [theme, navBarPadding],
@@ -124,7 +129,7 @@ function CategoryTabs() {
         options={{
           title: "In",
           tabBarIcon: ({ color }) => <TabEmoji emoji="📥" color={color} />,
-          headerRight: renderHeaderRight,
+          headerTitle: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -133,7 +138,7 @@ function CategoryTabs() {
         options={{
           title: "Day",
           tabBarIcon: ({ color }) => <TabEmoji emoji="☀️" color={color} />,
-          headerRight: renderHeaderRight,
+          headerTitle: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -142,7 +147,7 @@ function CategoryTabs() {
         options={{
           title: "Routine",
           tabBarIcon: ({ color }) => <TabEmoji emoji="🔄" color={color} />,
-          headerRight: renderHeaderRight,
+          headerTitle: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -151,7 +156,7 @@ function CategoryTabs() {
         options={{
           title: "Later",
           tabBarIcon: ({ color }) => <TabEmoji emoji="📋" color={color} />,
-          headerRight: renderHeaderRight,
+          headerTitle: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -160,7 +165,7 @@ function CategoryTabs() {
         options={{
           title: "Control",
           tabBarIcon: ({ color }) => <TabEmoji emoji="👁" color={color} />,
-          headerRight: renderHeaderRight,
+          headerTitle: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -169,7 +174,7 @@ function CategoryTabs() {
         options={{
           title: "MAYBE",
           tabBarIcon: ({ color }) => <TabEmoji emoji="💭" color={color} />,
-          headerRight: renderHeaderRight,
+          headerTitle: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -178,7 +183,7 @@ function CategoryTabs() {
         options={{
           title: "Check",
           tabBarIcon: ({ color }) => <TabEmoji emoji="✅" color={color} />,
-          headerRight: renderHeaderRight,
+          headerTitle: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -187,7 +192,7 @@ function CategoryTabs() {
         options={{
           title: "All",
           tabBarIcon: ({ color }) => <TabEmoji emoji="📑" color={color} />,
-          headerRight: renderHeaderRight,
+          headerTitle: renderHeaderRight,
         }}
       />
     </Tab.Navigator>
@@ -323,6 +328,16 @@ export function AppNavigator() {
           name="Settings"
           component={SettingsScreen}
           options={{ title: "Настройки" }}
+        />
+        <Stack.Screen
+          name="Contacts"
+          component={ContactsScreen}
+          options={{ title: "Контакты" }}
+        />
+        <Stack.Screen
+          name="ContactDetail"
+          component={ContactDetailScreen}
+          options={{ title: "Контакт" }}
         />
       </Stack.Navigator>
     </NavigationContainer>
