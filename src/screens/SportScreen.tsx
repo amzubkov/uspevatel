@@ -717,7 +717,7 @@ function WorkoutTab() {
     let cal = 0;
     for (const l of todayLogs) {
       const ex = exercises.find((e) => e.id === l.exerciseId);
-      if (ex) cal += exerciseKcal(ex, l.reps * l.setNum, lastWeight);
+      if (ex) cal += exerciseKcal(ex, l.reps * l.setNum, lastWeight, l.weight);
     }
     return Math.round(cal);
   }, [exLogs, exercises, today, lastWeight]);
@@ -760,7 +760,7 @@ function WorkoutTab() {
       let exCal = 0;
       for (const l of dayLogs) {
         const ex = exercises.find((e) => e.id === l.exerciseId);
-        if (ex) exCal += exerciseKcal(ex, l.reps * l.setNum, dayWeight);
+        if (ex) exCal += exerciseKcal(ex, l.reps * l.setNum, dayWeight, l.weight);
       }
       const cal = Math.round(exCal + calcCaloriesForEntries(dayDaily, dayWeight));
       return { date: ds, exerciseCount, sets, volume, cal, logs: dayLogs, daily: dayDaily };
@@ -1218,7 +1218,7 @@ function StatsTab() {
     let cal = 0;
     for (const l of dayLogs) {
       const ex = exercises.find((e) => e.id === l.exerciseId);
-      if (ex) cal += exerciseKcal(ex, l.reps * l.setNum, dayWeight);
+      if (ex) cal += exerciseKcal(ex, l.reps * l.setNum, dayWeight, l.weight);
     }
     return Math.round(cal);
   };

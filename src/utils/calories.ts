@@ -47,16 +47,29 @@ export function inferKcalPerKgRep(ex: Pick<Exercise, 'name' | 'weightType'>): nu
   return 0;
 }
 
-// Calories burned by a number of reps of an exercise, given body weight.
+// Physics-based kcal per kg of lifted weight per rep for weighted exercises.
+// W_lift = m × g × h  (h = 0.4 m typical amplitude)
+// Eccentric phase ~half cost → total factor 1.5
+// Body mechanical efficiency η ≈ 0.22
+// 1 kcal = 4184 J
+// → kcal/kg/rep = (9.81 × 0.4 × 1.5) / 0.22 / 4184 ≈ 0.0064
+const KCAL_PER_KG_LIFTED_REP = (9.81 * 0.4 * 1.5) / 0.22 / 4184;
+
+// Calories burned by a number of reps of an exercise.
 // Order of preference:
-//   1) name/weightType-inferred MET-based formula × body weight
-//   2) flat caloriesPerRep stored on the exercise (legacy)
+//   1) weighted exercise with lifted weight: physics-based (weight × reps × amplitude)
+//   2) name/weightType-inferred MET-based formula × body weight
+//   3) flat caloriesPerRep stored on the exercise (legacy)
 export function exerciseKcal(
   ex: Pick<Exercise, 'name' | 'weightType' | 'caloriesPerRep'>,
   totalReps: number,
   bodyWeightKg: number,
+  liftedWeightKg?: number,
 ): number {
   if (totalReps <= 0) return 0;
+  if (ex.weightType > 0 && liftedWeightKg && liftedWeightKg > 0) {
+    return totalReps * liftedWeightKg * KCAL_PER_KG_LIFTED_REP;
+  }
   const perKgRep = inferKcalPerKgRep(ex);
   if (perKgRep > 0 && bodyWeightKg > 0) return totalReps * perKgRep * bodyWeightKg;
   if (ex.caloriesPerRep && ex.caloriesPerRep > 0) return totalReps * ex.caloriesPerRep;

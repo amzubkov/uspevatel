@@ -135,7 +135,7 @@ export function DayReviewScreen() {
       g.sets++;
       g.totalReps += log.reps;
       if (log.weight > g.maxWeight) g.maxWeight = log.weight;
-      g.calories += exerciseKcal(ex, log.reps, bodyWeight);
+      g.calories += exerciseKcal(ex, log.reps, bodyWeight, log.weight);
       grouped.set(log.exerciseId, g);
     }
     return [...grouped.values()];

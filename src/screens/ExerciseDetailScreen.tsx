@@ -67,7 +67,7 @@ export function ExerciseDetailScreen() {
     if (!exercise) return 0;
     const today = new Date().toISOString().slice(0, 10);
     const bw = getBodyWeightAt(sportEntries, today);
-    return todayLogs.reduce((sum, l) => sum + exerciseKcal(exercise, l.reps * l.setNum, bw), 0);
+    return todayLogs.reduce((sum, l) => sum + exerciseKcal(exercise, l.reps * l.setNum, bw, l.weight), 0);
   }, [todayLogs, exercise, sportEntries]);
 
   if (!exercise) return <View style={[styles.container, { backgroundColor: c.background }]}><Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Упражнение не найдено</Text></View>;
