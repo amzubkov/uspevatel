@@ -22,19 +22,6 @@ export interface Task {
   goalType?: 'day' | 'week' | 'month' | 'quarter' | 'year';
 }
 
-export interface SyncConflict {
-  localTask: Task;
-  remoteTask: Task;
-  diffFields: string[];
-}
-
-export interface SyncResult {
-  toExport: Task[];
-  toImport: Task[];
-  toDeleteFromSheet: string[];
-  conflicts: SyncConflict[];
-}
-
 export interface Project {
   id: string;
   name: string; // UPPERCASE
@@ -58,9 +45,6 @@ export interface Settings {
   theme: 'light' | 'dark';
   fontSize: number; // 12-20, default 15
   navBarPadding: boolean; // extra bottom padding for devices with on-screen nav buttons
-  syncUrl: string;
-  lastSyncAt: string | null;
-  knownSyncIds: string[];
   city: string; // prodoctorov slug, e.g. "moskva", "spb"
 }
 

@@ -76,9 +76,6 @@ export async function migrateFromAsyncStorage(db: SQLiteDatabase) {
         ['weeklyReminderDay', String(state.weeklyReminderDay ?? 0)],
         ['theme', state.theme || 'dark'],
         ['fontSize', String(state.fontSize ?? 15)],
-        ['syncUrl', state.syncUrl || ''],
-        ['lastSyncAt', state.lastSyncAt || ''],
-        ['knownSyncIds', JSON.stringify(state.knownSyncIds || [])],
       ];
       for (const [k, v] of pairs) {
         await db.runAsync('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', [k, v]);

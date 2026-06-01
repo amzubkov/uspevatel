@@ -13,9 +13,6 @@ interface SettingsState extends Settings {
   setTheme: (theme: 'light' | 'dark') => void;
   setFontSize: (size: number) => void;
   setNavBarPadding: (on: boolean) => void;
-  setSyncUrl: (url: string) => void;
-  setLastSyncAt: (date: string | null) => void;
-  addKnownSyncIds: (ids: string[]) => void;
   setCity: (city: string) => void;
 }
 
@@ -38,9 +35,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   theme: 'dark',
   fontSize: 15,
   navBarPadding: false,
-  syncUrl: '',
-  lastSyncAt: null,
-  knownSyncIds: [],
   city: '',
   loaded: false,
 
@@ -53,13 +47,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const theme = (await getSetting('theme', 'dark')) as 'light' | 'dark';
     const fontSize = parseInt(await getSetting('fontSize', '15'));
     const navBarPadding = (await getSetting('navBarPadding', 'false')) === 'true';
-    const syncUrl = await getSetting('syncUrl', '');
-    const lastSyncAt = await getSetting('lastSyncAt', '');
-    const knownSyncIds = JSON.parse(await getSetting('knownSyncIds', '[]'));
     const city = await getSetting('city', '');
     set({
       contextCategories, dailyReminderTime, weeklyReminderTime, weeklyReminderDay,
-      theme, fontSize, navBarPadding, syncUrl, lastSyncAt: lastSyncAt || null, knownSyncIds, city, loaded: true,
+      theme, fontSize, navBarPadding, city, loaded: true,
     });
   },
 
@@ -84,12 +75,5 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setTheme: (theme) => { set({ theme }); setSetting('theme', theme); },
   setFontSize: (size) => { const s = Math.max(12, Math.min(20, size)); set({ fontSize: s }); setSetting('fontSize', String(s)); },
   setNavBarPadding: (on) => { set({ navBarPadding: on }); setSetting('navBarPadding', String(on)); },
-  setSyncUrl: (url) => { set({ syncUrl: url }); setSetting('syncUrl', url); },
-  setLastSyncAt: (date) => { set({ lastSyncAt: date }); setSetting('lastSyncAt', date || ''); },
-  addKnownSyncIds: (ids) => {
-    const merged = Array.from(new Set([...get().knownSyncIds, ...ids]));
-    set({ knownSyncIds: merged });
-    setSetting('knownSyncIds', JSON.stringify(merged));
-  },
   setCity: (city) => { set({ city }); setSetting('city', city); },
 }));

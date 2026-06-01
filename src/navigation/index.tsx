@@ -1,5 +1,5 @@
 import React, { useMemo, useCallback, useState, useEffect } from "react";
-import { TouchableOpacity, Text, View, ScrollView, StyleSheet, Alert } from "react-native";
+import { TouchableOpacity, Text, View, StyleSheet, Alert } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import {
   NavigationContainer,
@@ -65,20 +65,19 @@ const HeaderButtons = React.memo(function HeaderButtons() {
   ];
 
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={hStyles.scroll} contentContainerStyle={hStyles.row}>
+    <View style={hStyles.wrap}>
       {items.map((item) => (
         <TouchableOpacity key={item.screen} style={hStyles.btn} onPress={() => navigation.navigate(item.screen)}>
           <Text style={hStyles.emoji}>{item.emoji}</Text>
         </TouchableOpacity>
       ))}
-    </ScrollView>
+    </View>
   );
 });
 
 const hStyles = StyleSheet.create({
-  scroll: { flex: 1 },
-  row: { flexDirection: "row", alignItems: "center", paddingRight: 8 },
-  btn: { paddingHorizontal: 5, paddingVertical: 4 },
+  wrap: { flexDirection: "row", alignItems: "center", paddingRight: 6 },
+  btn: { paddingHorizontal: 3, paddingVertical: 2 },
   emoji: { fontSize: 17 },
 });
 
@@ -114,8 +113,6 @@ function CategoryTabs() {
       headerStyle: { backgroundColor: c.card },
       headerTintColor: c.text,
       headerTitle: "",
-      headerTitleAlign: "left" as const,
-      headerTitleContainerStyle: { left: 0, right: 0, marginHorizontal: 0, paddingHorizontal: 8 },
       tabBarLabelStyle: { fontSize: 10, fontWeight: "700" as const },
     }),
     [theme, navBarPadding],
@@ -129,7 +126,7 @@ function CategoryTabs() {
         options={{
           title: "In",
           tabBarIcon: ({ color }) => <TabEmoji emoji="📥" color={color} />,
-          headerTitle: renderHeaderRight,
+          headerRight: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -138,7 +135,7 @@ function CategoryTabs() {
         options={{
           title: "Day",
           tabBarIcon: ({ color }) => <TabEmoji emoji="☀️" color={color} />,
-          headerTitle: renderHeaderRight,
+          headerRight: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -147,7 +144,7 @@ function CategoryTabs() {
         options={{
           title: "Routine",
           tabBarIcon: ({ color }) => <TabEmoji emoji="🔄" color={color} />,
-          headerTitle: renderHeaderRight,
+          headerRight: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -156,7 +153,7 @@ function CategoryTabs() {
         options={{
           title: "Later",
           tabBarIcon: ({ color }) => <TabEmoji emoji="📋" color={color} />,
-          headerTitle: renderHeaderRight,
+          headerRight: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -165,7 +162,7 @@ function CategoryTabs() {
         options={{
           title: "Control",
           tabBarIcon: ({ color }) => <TabEmoji emoji="👁" color={color} />,
-          headerTitle: renderHeaderRight,
+          headerRight: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -174,7 +171,7 @@ function CategoryTabs() {
         options={{
           title: "MAYBE",
           tabBarIcon: ({ color }) => <TabEmoji emoji="💭" color={color} />,
-          headerTitle: renderHeaderRight,
+          headerRight: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -183,7 +180,7 @@ function CategoryTabs() {
         options={{
           title: "Check",
           tabBarIcon: ({ color }) => <TabEmoji emoji="✅" color={color} />,
-          headerTitle: renderHeaderRight,
+          headerRight: renderHeaderRight,
         }}
       />
       <Tab.Screen
@@ -192,7 +189,7 @@ function CategoryTabs() {
         options={{
           title: "All",
           tabBarIcon: ({ color }) => <TabEmoji emoji="📑" color={color} />,
-          headerTitle: renderHeaderRight,
+          headerRight: renderHeaderRight,
         }}
       />
     </Tab.Navigator>
