@@ -7,6 +7,22 @@ import { colors } from '../utils/theme';
 import { useNavigation } from '@react-navigation/native';
 
 const WEIGHT_LABELS: Record<number, string> = { 0: 'Без веса', 10: 'Гантели', 100: 'Штанга' };
+
+function formatLastDone(dateStr?: string): string {
+  if (!dateStr) return 'ещё не делали';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return 'ещё не делали';
+  const then = new Date(y, m - 1, d);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diffDays = Math.round((today.getTime() - then.getTime()) / 86400000);
+  if (diffDays <= 0) return 'сегодня';
+  if (diffDays === 1) return 'вчера';
+  if (diffDays < 7) return `${diffDays} дн. назад`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)} нед. назад`;
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)} мес. назад`;
+  return `${Math.floor(diffDays / 365)} г. назад`;
+}
 const WEIGHT_OPTIONS: { key: number; label: string }[] = [
   { key: 0, label: 'Без веса' },
   { key: 10, label: 'Гантели' },
@@ -17,8 +33,17 @@ export function ExercisesScreen() {
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
   const exercises = useExerciseStore((s) => s.exercises);
+  const logs = useExerciseStore((s) => s.logs);
   const addExercise = useExerciseStore((s) => s.addExercise);
   const removeExercise = useExerciseStore((s) => s.removeExercise);
+
+  const lastDoneMap = useMemo(() => {
+    const m: Record<number, string> = {};
+    for (const l of logs) {
+      if (!m[l.exerciseId] || l.date > m[l.exerciseId]) m[l.exerciseId] = l.date;
+    }
+    return m;
+  }, [logs]);
   const navigation = useNavigation<any>();
 
   const [showAdd, setShowAdd] = useState(false);
@@ -207,6 +232,9 @@ export function ExercisesScreen() {
               <View style={styles.exMeta}>
                 <Text style={[styles.exType, { color: c.textSecondary }]}>{WEIGHT_LABELS[item.weightType] || 'Гантели'}</Text>
                 {item.tag && <Text style={[styles.exTag, { color: c.primary }]}>{item.tag}</Text>}
+                <Text style={[styles.exLast, { color: lastDoneMap[item.id] ? c.textSecondary : (c.danger || '#FF3B30') }]}>
+                  · {formatLastDone(lastDoneMap[item.id])}
+                </Text>
               </View>
             </View>
             <Text style={{ color: c.textSecondary, fontSize: 16 }}>›</Text>
@@ -251,6 +279,7 @@ const styles = StyleSheet.create({
   exMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 1 },
   exType: { fontSize: 12 },
   exTag: { fontSize: 11, fontWeight: '600' },
+  exLast: { fontSize: 11 },
   emptyContainer: { flex: 1 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { fontSize: 18, fontWeight: '600', marginTop: 12 },
