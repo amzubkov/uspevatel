@@ -7,7 +7,7 @@ export interface DailyLog {
   date: string;           // YYYY-MM-DD
   sleepHours?: number;
   sleepQuality?: number;  // 1-5
-  productivity?: number;  // 1-5
+  productivity?: number;  // 1-5, legacy read-only: UI input removed in v8.13, old values still shown in history
   motivation?: number;    // 1-5
   dayRating?: number;     // 1-5
   sportFootball: number;  // minutes
@@ -57,8 +57,8 @@ export const useDailyLogStore = create<DailyLogState>()((set, get) => ({
       set((s) => ({ logs: s.logs.map((l) => l.date === date ? updated : l) }));
       const db = await getDb();
       await db.runAsync(
-        `UPDATE daily_logs SET sleep_hours=?, sleep_quality=?, productivity=?, motivation=?, day_rating=?, sport_football=?, sport_run=?, notes=? WHERE id=?`,
-        [updated.sleepHours ?? null, updated.sleepQuality ?? null, updated.productivity ?? null,
+        `UPDATE daily_logs SET sleep_hours=?, sleep_quality=?, motivation=?, day_rating=?, sport_football=?, sport_run=?, notes=? WHERE id=?`,
+        [updated.sleepHours ?? null, updated.sleepQuality ?? null,
          updated.motivation ?? null, updated.dayRating ?? null, updated.sportFootball, updated.sportRun, updated.notes, existing.id]
       );
     } else {
@@ -67,7 +67,6 @@ export const useDailyLogStore = create<DailyLogState>()((set, get) => ({
         date,
         sleepHours: fields.sleepHours,
         sleepQuality: fields.sleepQuality,
-        productivity: fields.productivity,
         motivation: fields.motivation,
         dayRating: fields.dayRating,
         sportFootball: fields.sportFootball ?? 0,
@@ -78,8 +77,8 @@ export const useDailyLogStore = create<DailyLogState>()((set, get) => ({
       set((s) => ({ logs: [log, ...s.logs] }));
       const db = await getDb();
       await db.runAsync(
-        `INSERT INTO daily_logs (id, date, sleep_hours, sleep_quality, productivity, motivation, day_rating, sport_football, sport_run, notes, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-        [log.id, log.date, log.sleepHours ?? null, log.sleepQuality ?? null, log.productivity ?? null,
+        `INSERT INTO daily_logs (id, date, sleep_hours, sleep_quality, motivation, day_rating, sport_football, sport_run, notes, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [log.id, log.date, log.sleepHours ?? null, log.sleepQuality ?? null,
          log.motivation ?? null, log.dayRating ?? null, log.sportFootball, log.sportRun, log.notes, log.createdAt]
       );
     }

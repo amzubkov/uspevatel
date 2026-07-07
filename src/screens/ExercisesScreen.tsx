@@ -77,7 +77,7 @@ export function ExercisesScreen() {
         if (!inName && !inTags) return false;
       }
       return true;
-    });
+    }).sort((a, b) => (b.priority || 5) - (a.priority || 5));
   }, [exercises, selectedTag, search]);
 
   const pickImage = async () => {
@@ -230,6 +230,9 @@ export function ExercisesScreen() {
             <View style={{ flex: 1 }}>
               <Text style={[styles.exName, { color: c.text }]} numberOfLines={1}>{item.name}</Text>
               <View style={styles.exMeta}>
+                <Text style={[styles.exPriority, { color: item.priority >= 8 ? '#22C55E' : item.priority <= 3 ? '#F59E0B' : c.textSecondary }]}>
+                  ★{item.priority || 5}
+                </Text>
                 <Text style={[styles.exType, { color: c.textSecondary }]}>{WEIGHT_LABELS[item.weightType] || 'Гантели'}</Text>
                 {item.tag && <Text style={[styles.exTag, { color: c.primary }]}>{item.tag}</Text>}
                 <Text style={[styles.exLast, { color: lastDoneMap[item.id] ? c.textSecondary : (c.danger || '#FF3B30') }]}>
@@ -278,6 +281,7 @@ const styles = StyleSheet.create({
   exName: { fontSize: 15, fontWeight: '600' },
   exMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 1 },
   exType: { fontSize: 12 },
+  exPriority: { fontSize: 12, fontWeight: '700' },
   exTag: { fontSize: 11, fontWeight: '600' },
   exLast: { fontSize: 11 },
   emptyContainer: { flex: 1 },

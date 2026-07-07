@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Alert } from 'react-native';
 import { File, Paths, Directory } from 'expo-file-system';
+import { todayStr } from '../utils/date';
 import { getDb, getImageBaseDir } from '../db/database';
 
 export interface Exercise {
@@ -13,6 +14,7 @@ export interface Exercise {
   tag: string | null;
   weightType: number; // 0=none, 10=dumbbells, 100=barbell
   caloriesPerRep: number; // kcal per rep (0 = not set)
+  priority: number; // 1-10, higher = more valuable in a program
   mediaType: string;
   isPreset: boolean;
 }
@@ -40,21 +42,48 @@ export interface Day {
   description: string | null;
 }
 
+export interface PlanItem {
+  id: number;
+  date: string; // YYYY-MM-DD
+  exerciseId: number;
+  orderNum: number;
+  // AI/manual target for the day (optional)
+  sets?: number;
+  reps?: number;
+  weight?: number;
+}
+
+export interface PlanTarget {
+  sets?: number;
+  reps?: number;
+  weight?: number;
+}
+
 interface ExerciseState {
   exercises: Exercise[];
   logs: WorkoutLog[];
   programs: Program[];
   days: Day[];
+  plan: PlanItem[];
   loaded: boolean;
 
   load: () => Promise<void>;
   addExercise: (name: string, weightType: number, tag?: string, description?: string, imageUri?: string, caloriesPerRep?: number) => Promise<number>;
-  updateExercise: (id: number, updates: Partial<Pick<Exercise, 'name' | 'imageUri' | 'weightType' | 'tag' | 'description' | 'caloriesPerRep'>>) => void;
+  updateExercise: (id: number, updates: Partial<Pick<Exercise, 'name' | 'imageUri' | 'weightType' | 'tag' | 'description' | 'caloriesPerRep' | 'priority'>>) => void;
   removeExercise: (id: number) => void;
   addLog: (exerciseId: number, weight: number, reps: number, setNum: number) => void;
   updateLog: (id: number, fields: Partial<Pick<WorkoutLog, 'weight' | 'reps' | 'setNum'>>) => void;
   removeLog: (id: number) => void;
   getExercisesForDay: (dayId: number) => Exercise[];
+  addPlanItem: (date: string, exerciseId: number, target?: PlanTarget) => Promise<boolean>;
+  removePlanItem: (id: number) => void;
+  copyPlanFromDate: (srcDate: string, destDate: string) => Promise<number>;
+  addProgram: (name: string) => Promise<number>;
+  removeProgram: (id: number) => Promise<void>;
+  addDay: (programId: number, name: string) => Promise<number>;
+  removeDay: (id: number) => Promise<void>;
+  addExerciseToDay: (dayId: number, exerciseId: number) => Promise<void>;
+  removeExerciseFromDay: (dayId: number, exerciseId: number) => Promise<void>;
 }
 
 function resolveImageUri(val: any): string | null {
@@ -84,6 +113,7 @@ function rowToExercise(r: any): Exercise {
     tag: r.tag || null,
     weightType: r.weight_type ?? 10,
     caloriesPerRep: r.calories_per_rep || 0,
+    priority: r.priority ?? 5,
     mediaType: r.media_type || 'photo',
     isPreset: !!r.is_preset,
   };
@@ -131,10 +161,6 @@ function rowToLog(r: any): WorkoutLog {
   };
 }
 
-function todayStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 function nowTimestamp(): string {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
@@ -145,6 +171,7 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
   logs: [],
   programs: [],
   days: [],
+  plan: [],
   loaded: false,
 
   load: async () => {
@@ -156,11 +183,18 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
     const dayRows = await db.getAllAsync<{ id: number; program_id: number; day_number: number; name: string | null; description: string | null }>(
       'SELECT * FROM days ORDER BY program_id, day_number'
     );
+    const planRows = await db.getAllAsync<{ id: number; date: string; exercise_id: number; order_num: number; sets: number | null; reps: number | null; weight: number | null }>(
+      'SELECT * FROM workout_plan ORDER BY date, order_num, id'
+    );
     set({
       exercises: exRows.map(rowToExercise),
       logs: logRows.map(rowToLog),
       programs: progRows.map((r) => ({ id: r.id, name: r.name })),
       days: dayRows.map((r) => ({ id: r.id, programId: r.program_id, dayNumber: r.day_number, name: r.name, description: r.description })),
+      plan: planRows.map((r) => ({
+        id: r.id, date: r.date, exerciseId: r.exercise_id, orderNum: r.order_num || 0,
+        sets: r.sets ?? undefined, reps: r.reps ?? undefined, weight: r.weight ?? undefined,
+      })),
       loaded: true,
     });
   },
@@ -191,7 +225,7 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
         relPath = `exercise_images/${id}.${ext}`;
         absUri = finalDest.uri;
         await db.runAsync('UPDATE exercises SET image_data = ? WHERE id = ?', [relPath, id]);
-        const ex: Exercise = { id, name, weightType, caloriesPerRep: cpr, tag: tag || null, description: description || null, imageUri: null, imageBase64: absUri, orderNum: 0, mediaType: 'photo', isPreset: false };
+        const ex: Exercise = { id, name, weightType, caloriesPerRep: cpr, priority: 5, tag: tag || null, description: description || null, imageUri: null, imageBase64: absUri, orderNum: 0, mediaType: 'photo', isPreset: false };
         set((s) => ({ exercises: [...s.exercises, ex] }));
         return id;
       } catch (e: any) {
@@ -204,7 +238,7 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
       [name, weightType, tag || null, description || null, null, cpr]
     );
     const id = res.lastInsertRowId;
-    const ex: Exercise = { id, name, weightType, caloriesPerRep: cpr, tag: tag || null, description: description || null, imageUri: null, imageBase64: null, orderNum: 0, mediaType: 'photo', isPreset: false };
+    const ex: Exercise = { id, name, weightType, caloriesPerRep: cpr, priority: 5, tag: tag || null, description: description || null, imageUri: null, imageBase64: null, orderNum: 0, mediaType: 'photo', isPreset: false };
     set((s) => ({ exercises: [...s.exercises, ex] }));
     return id;
   },
@@ -243,8 +277,8 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
       exercises: s.exercises.map((e) => (e.id === id ? merged : e)),
     }));
     await db.runAsync(
-      'UPDATE exercises SET name=?, weight_type=?, tag=?, description=?, calories_per_rep=? WHERE id=?',
-      [merged.name, merged.weightType, merged.tag, merged.description, merged.caloriesPerRep, id]
+      'UPDATE exercises SET name=?, weight_type=?, tag=?, description=?, calories_per_rep=?, priority=? WHERE id=?',
+      [merged.name, merged.weightType, merged.tag, merged.description, merged.caloriesPerRep, merged.priority ?? 5, id]
     );
   },
 
@@ -291,6 +325,88 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
   getExercisesForDay: (dayId) => {
     // This needs day_exercises table — load on demand
     return []; // Will be loaded via direct query in UI
+  },
+
+  addPlanItem: async (date, exerciseId, target) => {
+    if (get().plan.some((p) => p.date === date && p.exerciseId === exerciseId)) return false;
+    const orderNum = get().plan.filter((p) => p.date === date).length;
+    const db = await getDb();
+    const res = await db.runAsync(
+      'INSERT OR IGNORE INTO workout_plan (date, exercise_id, order_num, sets, reps, weight) VALUES (?, ?, ?, ?, ?, ?)',
+      [date, exerciseId, orderNum, target?.sets ?? null, target?.reps ?? null, target?.weight ?? null]
+    );
+    // INSERT OR IGNORE keeps the previous lastInsertRowId on conflict — trust changes only
+    if (res.changes === 0) return false;
+    set((s) => ({ plan: [...s.plan, { id: res.lastInsertRowId, date, exerciseId, orderNum, ...target }] }));
+    return true;
+  },
+
+  removePlanItem: async (id) => {
+    set((s) => ({ plan: s.plan.filter((p) => p.id !== id) }));
+    const db = await getDb();
+    await db.runAsync('DELETE FROM workout_plan WHERE id = ?', [id]);
+  },
+
+  addProgram: async (name) => {
+    const db = await getDb();
+    const res = await db.runAsync('INSERT INTO programs (name) VALUES (?)', [name]);
+    const id = res.lastInsertRowId;
+    set((s) => ({ programs: [...s.programs, { id, name }] }));
+    return id;
+  },
+
+  removeProgram: async (id) => {
+    set((s) => ({
+      programs: s.programs.filter((p) => p.id !== id),
+      days: s.days.filter((d) => d.programId !== id),
+    }));
+    const db = await getDb();
+    await db.runAsync('DELETE FROM programs WHERE id = ?', [id]);
+  },
+
+  addDay: async (programId, name) => {
+    const nums = get().days.filter((d) => d.programId === programId).map((d) => d.dayNumber);
+    const dayNumber = nums.length ? Math.max(...nums) + 1 : 1;
+    const db = await getDb();
+    const res = await db.runAsync(
+      'INSERT INTO days (program_id, day_number, name) VALUES (?, ?, ?)',
+      [programId, dayNumber, name || null]
+    );
+    const id = res.lastInsertRowId;
+    set((s) => ({ days: [...s.days, { id, programId, dayNumber, name: name || null, description: null }] }));
+    return id;
+  },
+
+  removeDay: async (id) => {
+    set((s) => ({ days: s.days.filter((d) => d.id !== id) }));
+    const db = await getDb();
+    await db.runAsync('DELETE FROM days WHERE id = ?', [id]);
+  },
+
+  addExerciseToDay: async (dayId, exerciseId) => {
+    const db = await getDb();
+    const row = await db.getFirstAsync<{ m: number | null }>('SELECT MAX(order_num) m FROM day_exercises WHERE day_id = ?', [dayId]);
+    await db.runAsync(
+      'INSERT OR IGNORE INTO day_exercises (day_id, exercise_id, order_num) VALUES (?, ?, ?)',
+      [dayId, exerciseId, (row?.m ?? -1) + 1]
+    );
+  },
+
+  removeExerciseFromDay: async (dayId, exerciseId) => {
+    const db = await getDb();
+    await db.runAsync('DELETE FROM day_exercises WHERE day_id = ? AND exercise_id = ?', [dayId, exerciseId]);
+  },
+
+  copyPlanFromDate: async (srcDate, destDate) => {
+    // srcDate items come from the plan if it exists, otherwise from actually logged exercises
+    const planned = get().plan.filter((p) => p.date === srcDate).map((p) => p.exerciseId);
+    const logged = Array.from(new Set(get().logs.filter((l) => l.date === srcDate).map((l) => l.exerciseId)));
+    const src = planned.length > 0 ? planned : logged;
+    let added = 0;
+    for (const exId of src) {
+      if (await get().addPlanItem(destDate, exId)) added++;
+    }
+    return added;
   },
 }));
 

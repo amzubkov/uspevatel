@@ -1,3 +1,4 @@
+import { todayStr, WEEKDAYS_SUN_LOWER } from '../utils/date';
 import React, { useState, useMemo, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, FlatList, StyleSheet, Alert } from 'react-native';
 import { useSettingsStore } from '../store/settingsStore';
@@ -10,7 +11,7 @@ import { exerciseKcal, calcDailyEntriesKcal, getBodyWeightAt } from '../utils/ca
 import { useNavigation } from '@react-navigation/native';
 
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
-const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+const WEEKDAYS = WEEKDAYS_SUN_LOWER;
 function fmtDate(d: string): string {
   const [y, m, day] = d.split('-').map(Number);
   return `${day} ${MONTHS[m - 1]}`;
@@ -21,10 +22,6 @@ function fmtDateFull(d: string): string {
   const month = MONTHS[dt.getMonth()];
   const wd = WEEKDAYS[dt.getDay()];
   return `${day} ${month}, ${wd}`;
-}
-function todayStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function RatingDots({ value, onChange, color }: { value: number | undefined; onChange: (v: number) => void; color: string }) {
@@ -77,7 +74,6 @@ export function DayReviewScreen() {
 
   const [sleepHours, setSleepHours] = useState('');
   const [sleepQuality, setSleepQuality] = useState<number | undefined>();
-  const [productivity, setProductivity] = useState<number | undefined>();
   const [motivation, setMotivation] = useState<number | undefined>();
   const [dayRating, setDayRating] = useState<number | undefined>();
   const [sportFootball, setSportFootball] = useState('');
@@ -90,14 +86,13 @@ export function DayReviewScreen() {
     if (log) {
       setSleepHours(log.sleepHours ? String(log.sleepHours) : '');
       setSleepQuality(log.sleepQuality);
-      setProductivity(log.productivity);
       setMotivation(log.motivation);
       setDayRating(log.dayRating);
       setSportFootball(log.sportFootball ? String(log.sportFootball) : '');
       setSportRun(log.sportRun ? String(log.sportRun) : '');
       setNotes(log.notes);
     } else {
-      setSleepHours(''); setSleepQuality(undefined); setProductivity(undefined);
+      setSleepHours(''); setSleepQuality(undefined);
       setMotivation(undefined); setDayRating(undefined);
       setSportFootball(''); setSportRun(''); setNotes('');
     }
@@ -162,7 +157,7 @@ export function DayReviewScreen() {
   const handleSave = async () => {
     await saveLog(date, {
       sleepHours: sleepHours ? parseFloat(sleepHours.replace(',', '.')) : undefined,
-      sleepQuality, productivity, motivation, dayRating,
+      sleepQuality, motivation, dayRating,
       sportFootball: parseInt(sportFootball) || 0,
       sportRun: parseInt(sportRun) || 0,
       notes,
@@ -211,10 +206,6 @@ export function DayReviewScreen() {
 
       {/* Ratings */}
       <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
-        <View style={s.ratingRow}>
-          <Text style={[s.label, { color: c.text }]}>Работоспособность</Text>
-          <RatingDots value={productivity} onChange={setProductivity} color="#22C55E" />
-        </View>
         <View style={s.ratingRow}>
           <Text style={[s.label, { color: c.text }]}>Мотивация</Text>
           <RatingDots value={motivation} onChange={setMotivation} color="#F59E0B" />
@@ -340,4 +331,5 @@ const s = StyleSheet.create({
   notesInput: { borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 14, minHeight: 60, textAlignVertical: 'top', marginBottom: 12 },
   saveBtn: { borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
   historyRow: { paddingVertical: 8, borderBottomWidth: 0.5 },
+  empty: { paddingVertical: 24, alignItems: 'center' },
 });

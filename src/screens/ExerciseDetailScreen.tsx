@@ -42,6 +42,7 @@ export function ExerciseDetailScreen() {
   const [editWeightType, setEditWeightType] = useState(0);
   const [editDescription, setEditDescription] = useState('');
   const [editCalPerRep, setEditCalPerRep] = useState('');
+  const [editPriority, setEditPriority] = useState('5');
   const [editImageUri, setEditImageUri] = useState<string | null>(null);
   const [imageChanged, setImageChanged] = useState(false);
 
@@ -80,6 +81,7 @@ export function ExerciseDetailScreen() {
     setEditWeightType(exercise.weightType);
     setEditDescription(exercise.description || '');
     setEditCalPerRep(exercise.caloriesPerRep ? String(exercise.caloriesPerRep) : '');
+    setEditPriority(String(exercise.priority || 5));
     setEditImageUri(currentImage);
     setImageChanged(false);
     setEditing(true);
@@ -113,6 +115,7 @@ export function ExerciseDetailScreen() {
       weightType: editWeightType,
       description: editDescription.trim() || null,
       caloriesPerRep: parseFloat(editCalPerRep.replace(',', '.')) || 0,
+      priority: Math.min(10, Math.max(1, parseInt(editPriority) || 5)),
     };
     if (imageChanged) {
       updates.imageUri = editImageUri; // null = remove, uri = new image
@@ -197,6 +200,15 @@ export function ExerciseDetailScreen() {
               placeholder="Ккал за повтор"
               placeholderTextColor={c.textSecondary}
               keyboardType="decimal-pad"
+            />
+            <TextInput
+              style={[styles.editInput, { color: c.text, borderColor: c.border }]}
+              value={editPriority}
+              onChangeText={setEditPriority}
+              placeholder="Приоритет 1-10"
+              placeholderTextColor={c.textSecondary}
+              keyboardType="number-pad"
+              maxLength={2}
             />
             <View style={styles.typeRow}>
               {WEIGHT_OPTIONS.map((wt) => (
