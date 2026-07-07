@@ -13,6 +13,7 @@ export interface Flight {
   kind: FlightKind;
   title: string;
   city?: string;
+  address?: string; // hotel address / geo point for maps
   flightNumber?: string;
   status: FlightStatus;
   departDate: string;
@@ -67,6 +68,7 @@ export const useFlightStore = create<FlightState>()((set, get) => ({
       kind: r.kind || 'flight',
       title: r.title,
       city: r.city || undefined,
+      address: r.address || undefined,
       flightNumber: r.flight_number || undefined,
       status: r.status,
       departDate: r.depart_date,
@@ -88,8 +90,8 @@ export const useFlightStore = create<FlightState>()((set, get) => ({
     set((s) => ({ flights: [flight, ...s.flights] }));
     const db = await getDb();
     await db.runAsync(
-      'INSERT INTO flights (id, kind, title, city, flight_number, status, depart_date, depart_time, arrive_date, arrive_time, notes, price, currency, image_data, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-      [flight.id, flight.kind, flight.title, flight.city || null, flight.flightNumber || null, flight.status, flight.departDate, flight.departTime || null,
+      'INSERT INTO flights (id, kind, title, city, address, flight_number, status, depart_date, depart_time, arrive_date, arrive_time, notes, price, currency, image_data, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      [flight.id, flight.kind, flight.title, flight.city || null, flight.address || null, flight.flightNumber || null, flight.status, flight.departDate, flight.departTime || null,
        flight.arriveDate || null, flight.arriveTime || null, flight.notes, flight.price || null, flight.currency, flight.imageData || null, flight.createdAt]
     );
     for (const tid of flight.travelerIds) {
@@ -107,7 +109,7 @@ export const useFlightStore = create<FlightState>()((set, get) => ({
     const sets: string[] = [];
     const vals: any[] = [];
     const map: Record<string, string> = {
-      kind: 'kind', title: 'title', city: 'city', flightNumber: 'flight_number', status: 'status', departDate: 'depart_date', departTime: 'depart_time',
+      kind: 'kind', title: 'title', city: 'city', address: 'address', flightNumber: 'flight_number', status: 'status', departDate: 'depart_date', departTime: 'depart_time',
       arriveDate: 'arrive_date', arriveTime: 'arrive_time', notes: 'notes', price: 'price', currency: 'currency',
     };
     for (const [k, col] of Object.entries(map)) {
