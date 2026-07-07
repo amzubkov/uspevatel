@@ -54,6 +54,15 @@ export async function getFileUrl(token: string, fileId: string): Promise<string>
   return `https://api.telegram.org/file/bot${token}/${data.result.file_path}`;
 }
 
+export async function sendMessage(token: string, chatId: number, text: string): Promise<void> {
+  const res = await fetch(`${BASE}${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text }),
+  });
+  if (!res.ok) throw new Error(`sendMessage failed: ${res.status}: ${await res.text()}`);
+}
+
 export async function validateToken(token: string): Promise<string> {
   const res = await fetch(`${BASE}${token}/getMe`);
   if (!res.ok) throw new Error(`Неверный токен (${res.status})`);

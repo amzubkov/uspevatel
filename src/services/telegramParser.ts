@@ -103,7 +103,7 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
   const trimmed = text.trim();
 
   // Auto-detect prodoctorov.ru link in any message — create a Doctor contact
-  const proDoctorMatch = trimmed.match(/https?:\/\/[^\s]*prodoctorov\.ru\/[^\s]*/i);
+  const proDoctorMatch = trimmed.match(/https?:\/\/(?:[a-z0-9-]+\.)*prodoctorov\.ru\/[^\s]*/i);
   if (proDoctorMatch) {
     return { type: 'doctor', url: proDoctorMatch[0], msgDate };
   }

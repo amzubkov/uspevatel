@@ -14,8 +14,11 @@ import { useMoneyStore } from '../store/moneyStore';
 import { useNoteStore } from '../store/noteStore';
 import { useDoctorContactStore } from '../store/doctorContactStore';
 import { fetchProdoctorov } from '../utils/prodoctorovParser';
-import { fetchUpdates, getFileUrl } from '../services/telegramService';
+import { fetchUpdates, getFileUrl, sendMessage } from '../services/telegramService';
+import { getSecret } from '../services/secrets';
+import { toDateStr } from '../utils/date';
 import { parseMessages, ParsedItem } from '../services/telegramParser';
+import { useExerciseStore } from '../store/exerciseStore';
 
 interface SelectableItem {
   item: ParsedItem;
@@ -45,6 +48,64 @@ async function downloadTgPhoto(token: string, fileId: string, subdir: string, fi
   }
 }
 
+// /plan argument: "завтра", "вчера", DD.MM, YYYY-MM-DD; default today
+function parsePlanDateArg(arg?: string): string {
+  const now = new Date();
+  const a = (arg || '').trim().toLowerCase();
+  if (!a || a === 'сегодня') return toDateStr(now);
+  if (a === 'завтра') return toDateStr(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+  if (a === 'вчера') return toDateStr(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+  const iso = a.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return a;
+  const dm = a.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?$/);
+  if (dm) {
+    const y = dm[3] ? parseInt(dm[3]) : now.getFullYear();
+    return `${y}-${String(parseInt(dm[2])).padStart(2, '0')}-${String(parseInt(dm[1])).padStart(2, '0')}`;
+  }
+  return toDateStr(now);
+}
+
+function fmtW(w: number): string {
+  return w % 1 ? String(w) : String(Math.round(w));
+}
+
+async function buildPlanReply(date: string): Promise<string> {
+  const st = useExerciseStore.getState();
+  if (!st.loaded) await st.load();
+  const { plan, exercises, logs } = useExerciseStore.getState();
+  const dayPlan = plan.filter((p) => p.date === date);
+  const [y, m, d] = date.split('-');
+  const dateLabel = `${d}.${m}.${y}`;
+  if (dayPlan.length === 0) return `📋 План на ${dateLabel} пуст`;
+
+  const lines: string[] = [`📋 План на ${dateLabel}:`, ''];
+  let done = 0;
+  for (const p of dayPlan) {
+    const ex = exercises.find((e) => e.id === p.exerciseId);
+    if (!ex) continue;
+    const dayDetail = logs
+      .filter((l) => l.exerciseId === p.exerciseId && l.date === date)
+      .map((l) => `${fmtW(l.weight)}×${l.reps}`).join(', ');
+    if (dayDetail) {
+      done++;
+      lines.push(`✅ ${ex.name} — ${dayDetail}`);
+    } else {
+      // most recent past performance as a weight hint
+      let lastDate = '';
+      const lastSets: string[] = [];
+      for (const l of logs) {
+        if (l.exerciseId !== p.exerciseId || l.date >= date) continue;
+        if (!lastDate) lastDate = l.date;
+        if (l.date !== lastDate) break;
+        lastSets.push(`${fmtW(l.weight)}×${l.reps}`);
+      }
+      lines.push(`⬜ ${ex.name}${lastSets.length ? ` (прошлый раз: ${lastSets.join(', ')})` : ''}`);
+    }
+  }
+  lines.push('', done === dayPlan.length ? '🏆 Всё выполнено!' : `Выполнено ${done} из ${dayPlan.length}`);
+  return lines.join('\n');
+}
+
 export function TelegramSync({ onClose }: { onClose: () => void }) {
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
@@ -58,21 +119,50 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
     setLoading(true);
     try {
       const db = await getDb();
-      const tokenRow = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['tgBotToken']);
+      const token = await getSecret('tgBotToken');
       const offsetRow = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['tgUpdateOffset']);
-      const token = tokenRow?.value;
       if (!token) { Alert.alert('Ошибка', 'Токен бота не задан. Настройки → Telegram бот'); setLoading(false); return; }
       setTgToken(token);
 
       const offset = offsetRow?.value ? parseInt(offsetRow.value) : 0;
       const updates = await fetchUpdates(token, offset);
 
+      // /plan replies are sent immediately; dedupe by update_id since the offset
+      // only advances on save
+      const answeredRow = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['tgPlanLastUpdateId']);
+      let planAnswered = answeredRow?.value ? parseInt(answeredRow.value) : 0;
+      let planReplies = 0;
+
+      // Bots are publicly messageable — only trust our own chat.
+      // First chat ever seen becomes the trusted one (bot is private by usage).
+      const allowedRow = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['tgAllowedChatId']);
+      let allowedChatId = allowedRow?.value ? parseInt(allowedRow.value) : 0;
+      let strangersSkipped = 0;
+
       const parsed: SelectableItem[] = [];
       for (const u of updates) {
         const msg = u.channel_post || u.message;
         if (!msg) continue;
+        if (!allowedChatId && msg.chat?.id) {
+          allowedChatId = msg.chat.id;
+          await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['tgAllowedChatId', String(allowedChatId)]);
+        }
+        if (msg.chat?.id !== allowedChatId) { strangersSkipped++; continue; }
         const text = msg.text || msg.caption || '';
         if (!text) continue;
+        const planMatch = text.trim().match(/^\/plan(?:\s+(.+))?$/i);
+        if (planMatch) {
+          if (u.update_id > planAnswered && msg.chat?.id) {
+            try {
+              await sendMessage(token, msg.chat.id, await buildPlanReply(parsePlanDateArg(planMatch[1])));
+              planAnswered = Math.max(planAnswered, u.update_id);
+              planReplies++;
+            } catch (e: any) {
+              console.warn('plan reply failed:', e?.message);
+            }
+          }
+          continue;
+        }
         // Get largest photo file_id if present
         const photoFileId = msg.photo?.length
           ? msg.photo[msg.photo.length - 1].file_id
@@ -84,9 +174,19 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
         for (const p of items) parsed.push({ item: p, updateId: u.update_id, selected: true });
       }
 
+      if (planReplies > 0) {
+        await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['tgPlanLastUpdateId', String(planAnswered)]);
+      }
+
+      if (strangersSkipped > 0) {
+        console.warn(`TelegramSync: skipped ${strangersSkipped} message(s) from unknown chats`);
+      }
+
       setItems(parsed);
       setFetched(true);
-      if (!parsed.length && updates.length === 0) {
+      if (!parsed.length && planReplies > 0) {
+        Alert.alert('Telegram', `Ответил на /plan (${planReplies})`);
+      } else if (!parsed.length && updates.length === 0) {
         Alert.alert('Telegram', 'Новых сообщений нет');
       } else if (!parsed.length) {
         Alert.alert('Telegram', `${updates.length} сообщений, но ни одно не распознано как /task, /flight или /doc`);
@@ -291,7 +391,7 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
           if (!docId) continue;
           try {
             const fileUrl = await getFileUrl(tgToken, item.docFileId);
-            const ext = (item.docFileName || 'file').split('.').pop() || 'pdf';
+            const ext = ((item.docFileName || '').split('.').pop() || 'pdf').replace(/[^a-zA-Z0-9]/g, '') || 'pdf';
             const fileName = item.docFileName || `document.${ext}`;
             const dir = new Directory(getImageBaseDir(), 'attachments');
             if (!dir.exists) dir.create();
@@ -327,7 +427,7 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
           if (!flightId) continue;
           try {
             const fileUrl = await getFileUrl(tgToken, item.docFileId);
-            const ext = (item.docFileName || 'file').split('.').pop() || 'pdf';
+            const ext = ((item.docFileName || '').split('.').pop() || 'pdf').replace(/[^a-zA-Z0-9]/g, '') || 'pdf';
             const fileName = item.docFileName || `document.${ext}`;
             const dir = new Directory(getImageBaseDir(), 'attachments');
             if (!dir.exists) dir.create();
@@ -443,7 +543,7 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <View style={[st.container, { backgroundColor: c.bg }]}>
+    <View style={[st.container, { backgroundColor: c.background }]}>
       <View style={[st.header, { borderBottomColor: c.border }]}>
         <Text style={{ color: c.text, fontSize: 17, fontWeight: '700' }}>Telegram Sync</Text>
         <TouchableOpacity onPress={onClose}>
