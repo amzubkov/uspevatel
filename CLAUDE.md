@@ -35,7 +35,7 @@ src/
 desktop/
   src/                   # React frontend (mirrors mobile screens)
   src-tauri/             # Rust/Tauri backend config
-android/                 # Android native build (com.uspevatel.app, versionCode 15)
+android/                 # Android native build (com.uspevatel.app; versionCode in app.json + build.gradle)
 modules/expo-file-copy/  # Custom Expo module
 ```
 
@@ -66,6 +66,7 @@ All stores follow the same pattern:
 - `/doc name` - create document (photo or PDF attachment)
 - `/health` (multiline) - `name, value[, unit, refMin, refMax]` bulk import
 - `/ref source:XXX` (multiline) - import reference ranges
+- `/plan [сегодня|завтра|вчера|DD.MM|YYYY-MM-DD]` - bot replies with workout plan for the date (sent on next sync)
 
 ## Build & Run
 

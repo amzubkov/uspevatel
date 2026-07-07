@@ -3,7 +3,7 @@
     "name": "uspevatel-app",
     "slug": "uspevatel-app",
     "scheme": "uspevatel",
-    "version": "8.12",
+    "version": "8.13",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -23,7 +23,7 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "versionCode": 33,
+      "versionCode": 34,
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "CAMERA",
@@ -52,7 +52,8 @@
           "calendarPermission": "Приложению нужен доступ к календарю для отображения расписания"
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      "expo-secure-store"
     ]
   }
 }
