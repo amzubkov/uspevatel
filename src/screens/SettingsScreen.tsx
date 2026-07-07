@@ -23,8 +23,18 @@ import { useRoutineStore } from "../store/routineStore";
 import { CHANGELOG } from "../changelog";
 import { getSyncFolder, setSyncFolder, getDb } from "../db/database";
 import { validateToken } from "../services/telegramService";
+import { getSecret, setSecret, deleteSecret } from "../services/secrets";
 
 const IMAGE_DIRS = ['task_images', 'flight_images', 'document_images', 'note_images', 'exercise_images'];
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = '';
+  const CHUNK = 8192; // String.fromCharCode blows the call stack on multi-MB arrays
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
 
 function BackupRestore({ c }: { c: any }) {
   const handleBackup = useCallback(async () => {
@@ -34,11 +44,13 @@ function BackupRestore({ c }: { c: any }) {
       if (!perm.granted || !perm.directoryUri) { Alert.alert('Отменено'); return; }
       const destUri = perm.directoryUri;
 
-      // Copy DB
+      // Copy DB — checkpoint first, otherwise recent writes stay in -wal and are lost from the copy
+      const liveDb = await getDb();
+      await liveDb.execAsync('PRAGMA wal_checkpoint(TRUNCATE)');
       const dbSrc = new File(Paths.document, 'SQLite/uspevatel.db');
       if (dbSrc.exists) {
-        const dbBytes = dbSrc.bytes();
-        const base64 = btoa(String.fromCharCode(...dbBytes));
+        const dbBytes = await dbSrc.bytes();
+        const base64 = bytesToBase64(dbBytes);
         await StorageAccessFramework.createFileAsync(destUri, 'uspevatel.db', 'application/x-sqlite3')
           .then(async (uri) => {
             await StorageAccessFramework.writeAsStringAsync(uri, base64, { encoding: 'base64' as any });
@@ -52,8 +64,8 @@ function BackupRestore({ c }: { c: any }) {
         if (!srcDir.exists) continue;
         for (const item of srcDir.list()) {
           if (item instanceof File) {
-            const bytes = item.bytes();
-            const b64 = btoa(String.fromCharCode(...bytes));
+            const bytes = await item.bytes();
+            const b64 = bytesToBase64(bytes);
             const fileName = `${dirName}__${item.name}`;
             await StorageAccessFramework.createFileAsync(destUri, fileName, 'image/jpeg')
               .then(async (uri) => {
@@ -88,7 +100,7 @@ function BackupRestore({ c }: { c: any }) {
             const b64 = await StorageAccessFramework.readAsStringAsync(dbFile, { encoding: 'base64' as any });
             const destPath = Paths.document.uri + '/SQLite/uspevatel.db';
             const dest = new File(destPath);
-            dest.write(b64, { encoding: 'base64' });
+            await dest.write(b64, { encoding: 'base64' });
           }
 
           // Restore photos
@@ -104,7 +116,7 @@ function BackupRestore({ c }: { c: any }) {
             if (!imgDir.exists) imgDir.create();
             const b64 = await StorageAccessFramework.readAsStringAsync(fileUri, { encoding: 'base64' as any });
             const dest = new File(imgDir, fileName);
-            dest.write(b64, { encoding: 'base64' });
+            await dest.write(b64, { encoding: 'base64' });
             photoCount++;
           }
 
@@ -227,9 +239,8 @@ export function SettingsScreen() {
   // Load saved token on mount
   React.useEffect(() => {
     (async () => {
-      const db = await getDb();
-      const row = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['tgBotToken']);
-      if (row?.value) setTgToken(row.value);
+      const t = await getSecret('tgBotToken');
+      if (t) setTgToken(t);
     })();
   }, []);
 
@@ -239,19 +250,88 @@ export function SettingsScreen() {
     try {
       const db = await getDb();
       if (!token) {
-        await db.runAsync('DELETE FROM settings WHERE key IN (?, ?)', ['tgBotToken', 'tgUpdateOffset']);
+        await deleteSecret('tgBotToken');
+        await db.runAsync('DELETE FROM settings WHERE key IN (?, ?)', ['tgUpdateOffset', 'tgAllowedChatId']);
         setTgStatus('Токен удалён');
         setTgSaving(false);
         return;
       }
       const botName = await validateToken(token);
-      await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['tgBotToken', token]);
+      await setSecret('tgBotToken', token);
       setTgStatus(`Подключён: ${botName}`);
     } catch (e: any) {
       setTgStatus(String(e?.message || e));
     }
     setTgSaving(false);
   }, [tgToken]);
+
+  // Ollama AI
+  const [ollamaKey, setOllamaKeyState] = useState("");
+  const [ollamaModel, setOllamaModelState] = useState("deepseek-v4-flash");
+  const [ollamaStatus, setOllamaStatus] = useState<string | null>(null);
+  React.useEffect(() => {
+    (async () => {
+      const k = await getSecret('ollamaApiKey');
+      if (k) setOllamaKeyState(k);
+      const db = await getDb();
+      const mrow = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['ollamaModel']);
+      if (mrow?.value) setOllamaModelState(mrow.value);
+    })();
+  }, []);
+  const handleSaveOllamaModel = useCallback(async (model: string) => {
+    setOllamaModelState(model);
+    const db = await getDb();
+    await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['ollamaModel', model]);
+    setOllamaStatus(`Модель: ${model}`);
+  }, []);
+  const [aiGoal, setAiGoalState] = useState('ОФП');
+  const [aiSex, setAiSexState] = useState('Мужской');
+  const [aiBirthYear, setAiBirthYearState] = useState('');
+  const [aiRestrictions, setAiRestrictionsState] = useState('');
+  React.useEffect(() => {
+    (async () => {
+      const db = await getDb();
+      const g = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['aiGoal']);
+      if (g?.value) setAiGoalState(g.value);
+      const s = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['aiSex']);
+      if (s?.value) setAiSexState(s.value);
+      const by = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['aiBirthYear']);
+      if (by?.value) setAiBirthYearState(by.value);
+      const r = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['aiRestrictions']);
+      if (r?.value) setAiRestrictionsState(r.value);
+    })();
+  }, []);
+  const handleSaveAiSex = useCallback(async (sex: string) => {
+    setAiSexState(sex);
+    const db = await getDb();
+    await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['aiSex', sex]);
+  }, []);
+  const handleSaveAiGoal = useCallback(async (goal: string) => {
+    setAiGoalState(goal);
+    const db = await getDb();
+    await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['aiGoal', goal]);
+  }, []);
+  const handleSaveAiRestrictions = useCallback(async () => {
+    const db = await getDb();
+    const v = aiRestrictions.trim();
+    if (v) await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['aiRestrictions', v]);
+    else await db.runAsync('DELETE FROM settings WHERE key = ?', ['aiRestrictions']);
+    setOllamaStatus('Ограничения сохранены');
+  }, [aiRestrictions]);
+  const handleSaveOllamaKey = useCallback(async () => {
+    try {
+      const key = ollamaKey.trim();
+      if (!key) {
+        await deleteSecret('ollamaApiKey');
+        setOllamaStatus('Ключ удалён');
+        return;
+      }
+      await setSecret('ollamaApiKey', key);
+      setOllamaStatus('Сохранено');
+    } catch (e: any) {
+      setOllamaStatus(String(e?.message || e));
+    }
+  }, [ollamaKey]);
 
   // Sync folder
   const [syncFolderInput, setSyncFolderInput] = useState(getSyncFolder() || "");
@@ -559,6 +639,140 @@ export function SettingsScreen() {
       </TouchableOpacity>
       {tgStatus && (
         <Text style={{ color: c.textSecondary, fontSize: 13, marginTop: 6 }}>{tgStatus}</Text>
+      )}
+
+      {/* Ollama AI */}
+      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>
+        AI-планировщик (Ollama Cloud)
+      </Text>
+      <Text style={[styles.hint, { color: c.textSecondary }]}>
+        API-ключ с ollama.com. Кнопка 🤖 на экране «План» составит тренировку по истории.
+      </Text>
+      <View style={styles.addContextRow}>
+        <TextInput
+          style={[
+            styles.addContextInput,
+            { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13 },
+          ]}
+          value={ollamaKey}
+          onChangeText={setOllamaKeyState}
+          placeholder="api-key..."
+          placeholderTextColor={c.textSecondary}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry
+        />
+      </View>
+      <TouchableOpacity
+        style={[styles.exportBtn, { backgroundColor: c.primary, marginTop: 8 }]}
+        onPress={handleSaveOllamaKey}
+      >
+        <Text style={styles.exportBtnText}>{ollamaKey.trim() ? 'Сохранить ключ' : 'Удалить ключ'}</Text>
+      </TouchableOpacity>
+      <Text style={[styles.hint, { color: c.textSecondary, marginTop: 12 }]}>Модель:</Text>
+      <View style={styles.addContextRow}>
+        <TextInput
+          style={[
+            styles.addContextInput,
+            { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13 },
+          ]}
+          value={ollamaModel}
+          onChangeText={setOllamaModelState}
+          onEndEditing={() => handleSaveOllamaModel(ollamaModel.trim() || 'deepseek-v4-flash')}
+          placeholder="deepseek-v4-flash"
+          placeholderTextColor={c.textSecondary}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
+        <View style={{ flexDirection: 'row', gap: 6 }}>
+          {['deepseek-v4-flash', 'deepseek-v4-pro', 'glm-5', 'qwen3.5:397b', 'kimi-k2.6', 'gpt-oss:120b'].map((m) => (
+            <TouchableOpacity
+              key={m}
+              style={{
+                paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12,
+                backgroundColor: ollamaModel === m ? c.primary : 'rgba(128,128,128,0.15)',
+              }}
+              onPress={() => handleSaveOllamaModel(m)}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '600', color: ollamaModel === m ? '#FFF' : c.textSecondary }}>{m}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </ScrollView>
+      <Text style={[styles.hint, { color: c.textSecondary, marginTop: 12 }]}>Пол:</Text>
+      <View style={{ flexDirection: 'row', gap: 6 }}>
+        {['Мужской', 'Женский'].map((s) => (
+          <TouchableOpacity
+            key={s}
+            style={{
+              paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14,
+              backgroundColor: aiSex === s ? c.primary : 'rgba(128,128,128,0.15)',
+            }}
+            onPress={() => handleSaveAiSex(s)}
+          >
+            <Text style={{ fontSize: 13, fontWeight: '600', color: aiSex === s ? '#FFF' : c.textSecondary }}>{s}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={[styles.hint, { color: c.textSecondary, marginTop: 12 }]}>Год рождения (для AI-советчика по анализам):</Text>
+      <View style={styles.addContextRow}>
+        <TextInput
+          style={[
+            styles.addContextInput,
+            { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13 },
+          ]}
+          value={aiBirthYear}
+          onChangeText={setAiBirthYearState}
+          onEndEditing={async () => {
+            const db = await getDb();
+            const y = aiBirthYear.trim();
+            if (/^(19|20)\d{2}$/.test(y)) {
+              await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['aiBirthYear', y]);
+              setOllamaStatus(`Год рождения: ${y}`);
+            } else if (!y) {
+              await db.runAsync('DELETE FROM settings WHERE key = ?', ['aiBirthYear']);
+            }
+          }}
+          placeholder="1985"
+          placeholderTextColor={c.textSecondary}
+          keyboardType="number-pad"
+          maxLength={4}
+        />
+      </View>
+      <Text style={[styles.hint, { color: c.textSecondary, marginTop: 12 }]}>Цель тренировок:</Text>
+      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+        {['ОФП', 'Масса', 'Сила', 'Похудение'].map((g) => (
+          <TouchableOpacity
+            key={g}
+            style={{
+              paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14,
+              backgroundColor: aiGoal === g ? c.primary : 'rgba(128,128,128,0.15)',
+            }}
+            onPress={() => handleSaveAiGoal(g)}
+          >
+            <Text style={{ fontSize: 13, fontWeight: '600', color: aiGoal === g ? '#FFF' : c.textSecondary }}>{g}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={[styles.hint, { color: c.textSecondary, marginTop: 12 }]}>Ограничения (травмы, что исключить):</Text>
+      <View style={styles.addContextRow}>
+        <TextInput
+          style={[
+            styles.addContextInput,
+            { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13, minHeight: 40 },
+          ]}
+          value={aiRestrictions}
+          onChangeText={setAiRestrictionsState}
+          onEndEditing={handleSaveAiRestrictions}
+          placeholder="напр.: болит правое колено — без приседа и выпадов"
+          placeholderTextColor={c.textSecondary}
+          multiline
+        />
+      </View>
+      {ollamaStatus && (
+        <Text style={{ color: c.textSecondary, fontSize: 13, marginTop: 6 }}>{ollamaStatus}</Text>
       )}
 
       {/* Data */}
