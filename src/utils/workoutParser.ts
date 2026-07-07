@@ -1,5 +1,5 @@
-import { SportEntry } from '../store/sportStore';
-import { Exercise, WorkoutLog } from '../store/exerciseStore';
+import type { SportEntry } from '../store/sportStore';
+import type { Exercise, WorkoutLog } from '../store/exerciseStore';
 
 // ─── Workout quick-entry parser ───
 const NUM_PAT = '\\d+(?:[.,]\\d+)?';
