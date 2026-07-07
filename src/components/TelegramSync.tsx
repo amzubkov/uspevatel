@@ -182,6 +182,16 @@ export function TelegramSync({ onClose }: { onClose: () => void }) {
         console.warn(`TelegramSync: skipped ${strangersSkipped} message(s) from unknown chats`);
       }
 
+      // Advance the offset past consumed noise (strangers, /plan, unrecognized) so it
+      // can't pile up forever; recognized-but-unsaved items stay fetchable next time.
+      if (updates.length > 0) {
+        const maxId = Math.max(...updates.map((u) => u.update_id));
+        const newOffset = parsed.length > 0 ? Math.min(...parsed.map((it) => it.updateId)) : maxId + 1;
+        if (newOffset > offset) {
+          await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['tgUpdateOffset', String(newOffset)]);
+        }
+      }
+
       setItems(parsed);
       setFetched(true);
       if (!parsed.length && planReplies > 0) {

@@ -69,14 +69,14 @@ interface ExerciseState {
 
   load: () => Promise<void>;
   addExercise: (name: string, weightType: number, tag?: string, description?: string, imageUri?: string, caloriesPerRep?: number) => Promise<number>;
-  updateExercise: (id: number, updates: Partial<Pick<Exercise, 'name' | 'imageUri' | 'weightType' | 'tag' | 'description' | 'caloriesPerRep' | 'priority'>>) => void;
-  removeExercise: (id: number) => void;
-  addLog: (exerciseId: number, weight: number, reps: number, setNum: number) => void;
-  updateLog: (id: number, fields: Partial<Pick<WorkoutLog, 'weight' | 'reps' | 'setNum'>>) => void;
-  removeLog: (id: number) => void;
+  updateExercise: (id: number, updates: Partial<Pick<Exercise, 'name' | 'imageUri' | 'weightType' | 'tag' | 'description' | 'caloriesPerRep' | 'priority'>>) => Promise<void>;
+  removeExercise: (id: number) => Promise<void>;
+  addLog: (exerciseId: number, weight: number, reps: number, setNum: number) => Promise<void>;
+  updateLog: (id: number, fields: Partial<Pick<WorkoutLog, 'weight' | 'reps' | 'setNum'>>) => Promise<void>;
+  removeLog: (id: number) => Promise<void>;
   getExercisesForDay: (dayId: number) => Exercise[];
   addPlanItem: (date: string, exerciseId: number, target?: PlanTarget) => Promise<boolean>;
-  removePlanItem: (id: number) => void;
+  removePlanItem: (id: number) => Promise<void>;
   copyPlanFromDate: (srcDate: string, destDate: string) => Promise<number>;
   addProgram: (name: string) => Promise<number>;
   removeProgram: (id: number) => Promise<void>;
