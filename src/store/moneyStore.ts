@@ -39,7 +39,7 @@ interface MoneyState {
   getLastTxDate: (accountId: string) => string | undefined;
   removeAccount: (id: string) => Promise<void>;
 
-  addTransaction: (t: Omit<Transaction, 'id' | 'createdAt' | 'isCorrection'>) => Promise<void>;
+  addTransaction: (t: Omit<Transaction, 'id' | 'createdAt' | 'isCorrection' | 'timestamp'> & { timestamp?: string }) => Promise<void>;
   updateTransaction: (id: string, fields: Partial<Omit<Transaction, 'id' | 'createdAt'>>) => Promise<void>;
   removeTransaction: (id: string) => Promise<void>;
   clearTransactions: (accountId: string) => Promise<void>;

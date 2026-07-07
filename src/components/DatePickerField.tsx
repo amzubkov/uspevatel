@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { toDateStr } from '../utils/date';
 import { View, Text, TouchableOpacity, Platform, StyleSheet } from 'react-native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
@@ -11,10 +12,6 @@ interface Props {
   borderColor: string;
   secondaryColor: string;
   backgroundColor?: string;
-}
-
-function toDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function parseDate(s: string): Date {

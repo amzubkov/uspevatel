@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import * as Crypto from 'expo-crypto';
+import { todayStr } from '../utils/date';
 import { getDb } from '../db/database';
 
 export interface RoutineItem {
@@ -23,10 +24,6 @@ interface RoutineState {
   getCompletedCount: () => number;
 }
 
-function todayStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 export const useRoutineStore = create<RoutineState>()((set, get) => ({
   items: [],

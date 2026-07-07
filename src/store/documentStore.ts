@@ -26,7 +26,7 @@ interface DocumentState {
   loaded: boolean;
   load: () => Promise<void>;
   addDocument: (name: string) => Promise<string>;
-  updateDocument: (id: string, name: string) => Promise<void>;
+  updateDocument: (id: string, updates: Partial<Pick<Document, 'name' | 'notes'>>) => Promise<void>;
   removeDocument: (id: string) => Promise<void>;
   addImage: (docId: string, uri: string) => Promise<void>;
   removeImage: (imageId: string) => Promise<void>;
