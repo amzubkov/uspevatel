@@ -42,7 +42,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 37;
+const SCHEMA_VERSION = 41;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -948,10 +948,44 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
     } catch {}
   }
 
-  if (currentVer < 37) {
+  // Swallow only "already applied" errors (re-run of an ALTER); real failures must
+  // propagate so schema_version doesn't advance past a missing migration.
+  const alterIgnoringDuplicate = async (sql: string) => {
     try {
-      await db.execAsync(`ALTER TABLE contacts ADD COLUMN tags TEXT NOT NULL DEFAULT '';`);
-    } catch {}
+      await db.execAsync(sql);
+    } catch (e: any) {
+      if (!String(e?.message || e).includes('duplicate column')) throw e;
+    }
+  };
+
+  if (currentVer < 37) {
+    await alterIgnoringDuplicate(`ALTER TABLE contacts ADD COLUMN tags TEXT NOT NULL DEFAULT '';`);
+  }
+
+  if (currentVer < 38) {
+    await db.execAsync(`CREATE TABLE IF NOT EXISTS workout_plan (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      exercise_id INTEGER NOT NULL,
+      order_num INTEGER DEFAULT 0,
+      FOREIGN KEY (exercise_id) REFERENCES exercises(id) ON DELETE CASCADE,
+      UNIQUE(date, exercise_id)
+    );`);
+    await db.execAsync('CREATE INDEX IF NOT EXISTS idx_workout_plan_date ON workout_plan(date);');
+  }
+
+  if (currentVer < 39) {
+    await alterIgnoringDuplicate(`ALTER TABLE exercises ADD COLUMN priority INTEGER NOT NULL DEFAULT 5;`);
+  }
+
+  if (currentVer < 40) {
+    await alterIgnoringDuplicate(`ALTER TABLE flights ADD COLUMN address TEXT;`);
+  }
+
+  if (currentVer < 41) {
+    await alterIgnoringDuplicate(`ALTER TABLE workout_plan ADD COLUMN sets INTEGER;`);
+    await alterIgnoringDuplicate(`ALTER TABLE workout_plan ADD COLUMN reps INTEGER;`);
+    await alterIgnoringDuplicate(`ALTER TABLE workout_plan ADD COLUMN weight REAL;`);
   }
 
   if (currentVer < SCHEMA_VERSION) {
