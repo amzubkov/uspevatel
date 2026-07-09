@@ -265,40 +265,24 @@ export function SettingsScreen() {
     setTgSaving(false);
   }, [tgToken]);
 
-  // Ollama AI
+  // Ollama AI (модель, цель и замечания задаются на экране «План» при запуске AI-плана)
   const [ollamaKey, setOllamaKeyState] = useState("");
-  const [ollamaModel, setOllamaModelState] = useState("deepseek-v4-flash");
   const [ollamaStatus, setOllamaStatus] = useState<string | null>(null);
   React.useEffect(() => {
     (async () => {
       const k = await getSecret('ollamaApiKey');
       if (k) setOllamaKeyState(k);
-      const db = await getDb();
-      const mrow = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['ollamaModel']);
-      if (mrow?.value) setOllamaModelState(mrow.value);
     })();
   }, []);
-  const handleSaveOllamaModel = useCallback(async (model: string) => {
-    setOllamaModelState(model);
-    const db = await getDb();
-    await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['ollamaModel', model]);
-    setOllamaStatus(`Модель: ${model}`);
-  }, []);
-  const [aiGoal, setAiGoalState] = useState('ОФП');
   const [aiSex, setAiSexState] = useState('Мужской');
   const [aiBirthYear, setAiBirthYearState] = useState('');
-  const [aiRestrictions, setAiRestrictionsState] = useState('');
   React.useEffect(() => {
     (async () => {
       const db = await getDb();
-      const g = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['aiGoal']);
-      if (g?.value) setAiGoalState(g.value);
       const s = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['aiSex']);
       if (s?.value) setAiSexState(s.value);
       const by = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['aiBirthYear']);
       if (by?.value) setAiBirthYearState(by.value);
-      const r = await db.getFirstAsync<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['aiRestrictions']);
-      if (r?.value) setAiRestrictionsState(r.value);
     })();
   }, []);
   const handleSaveAiSex = useCallback(async (sex: string) => {
@@ -306,18 +290,6 @@ export function SettingsScreen() {
     const db = await getDb();
     await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['aiSex', sex]);
   }, []);
-  const handleSaveAiGoal = useCallback(async (goal: string) => {
-    setAiGoalState(goal);
-    const db = await getDb();
-    await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['aiGoal', goal]);
-  }, []);
-  const handleSaveAiRestrictions = useCallback(async () => {
-    const db = await getDb();
-    const v = aiRestrictions.trim();
-    if (v) await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['aiRestrictions', v]);
-    else await db.runAsync('DELETE FROM settings WHERE key = ?', ['aiRestrictions']);
-    setOllamaStatus('Ограничения сохранены');
-  }, [aiRestrictions]);
   const handleSaveOllamaKey = useCallback(async () => {
     try {
       const key = ollamaKey.trim();
@@ -646,7 +618,7 @@ export function SettingsScreen() {
         AI-планировщик (Ollama Cloud)
       </Text>
       <Text style={[styles.hint, { color: c.textSecondary }]}>
-        API-ключ с ollama.com. Кнопка 🤖 на экране «План» составит тренировку по истории.
+        API-ключ с ollama.com. Модель, цель и замечания задаются на экране «План» при нажатии 🤖.
       </Text>
       <View style={styles.addContextRow}>
         <TextInput
@@ -669,38 +641,6 @@ export function SettingsScreen() {
       >
         <Text style={styles.exportBtnText}>{ollamaKey.trim() ? 'Сохранить ключ' : 'Удалить ключ'}</Text>
       </TouchableOpacity>
-      <Text style={[styles.hint, { color: c.textSecondary, marginTop: 12 }]}>Модель:</Text>
-      <View style={styles.addContextRow}>
-        <TextInput
-          style={[
-            styles.addContextInput,
-            { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13 },
-          ]}
-          value={ollamaModel}
-          onChangeText={setOllamaModelState}
-          onEndEditing={() => handleSaveOllamaModel(ollamaModel.trim() || 'deepseek-v4-flash')}
-          placeholder="deepseek-v4-flash"
-          placeholderTextColor={c.textSecondary}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
-        <View style={{ flexDirection: 'row', gap: 6 }}>
-          {['deepseek-v4-flash', 'deepseek-v4-pro', 'glm-5', 'qwen3.5:397b', 'kimi-k2.6', 'gpt-oss:120b'].map((m) => (
-            <TouchableOpacity
-              key={m}
-              style={{
-                paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12,
-                backgroundColor: ollamaModel === m ? c.primary : 'rgba(128,128,128,0.15)',
-              }}
-              onPress={() => handleSaveOllamaModel(m)}
-            >
-              <Text style={{ fontSize: 12, fontWeight: '600', color: ollamaModel === m ? '#FFF' : c.textSecondary }}>{m}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </ScrollView>
       <Text style={[styles.hint, { color: c.textSecondary, marginTop: 12 }]}>Пол:</Text>
       <View style={{ flexDirection: 'row', gap: 6 }}>
         {['Мужской', 'Женский'].map((s) => (
@@ -739,36 +679,6 @@ export function SettingsScreen() {
           placeholderTextColor={c.textSecondary}
           keyboardType="number-pad"
           maxLength={4}
-        />
-      </View>
-      <Text style={[styles.hint, { color: c.textSecondary, marginTop: 12 }]}>Цель тренировок:</Text>
-      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-        {['ОФП', 'Масса', 'Сила', 'Похудение'].map((g) => (
-          <TouchableOpacity
-            key={g}
-            style={{
-              paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14,
-              backgroundColor: aiGoal === g ? c.primary : 'rgba(128,128,128,0.15)',
-            }}
-            onPress={() => handleSaveAiGoal(g)}
-          >
-            <Text style={{ fontSize: 13, fontWeight: '600', color: aiGoal === g ? '#FFF' : c.textSecondary }}>{g}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      <Text style={[styles.hint, { color: c.textSecondary, marginTop: 12 }]}>Ограничения (травмы, что исключить):</Text>
-      <View style={styles.addContextRow}>
-        <TextInput
-          style={[
-            styles.addContextInput,
-            { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13, minHeight: 40 },
-          ]}
-          value={aiRestrictions}
-          onChangeText={setAiRestrictionsState}
-          onEndEditing={handleSaveAiRestrictions}
-          placeholder="напр.: болит правое колено — без приседа и выпадов"
-          placeholderTextColor={c.textSecondary}
-          multiline
         />
       </View>
       {ollamaStatus && (

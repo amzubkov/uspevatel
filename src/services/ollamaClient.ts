@@ -5,9 +5,9 @@ import { getDb } from '../db/database';
 import { getSecret, setSecret } from './secrets';
 
 const OLLAMA_URL = 'https://ollama.com/api/chat';
-export const DEFAULT_MODEL = 'deepseek-v4-flash';
+export const DEFAULT_MODEL = 'kimi-k2.6';
 export const VISION_MODEL = 'gemma3:27b';
-export const SUGGESTED_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro', 'glm-5', 'qwen3.5:397b', 'kimi-k2.6', 'gpt-oss:120b'];
+export const SUGGESTED_MODELS = ['kimi-k2.6', 'deepseek-v4-flash', 'deepseek-v4-pro', 'glm-5', 'qwen3.5:397b', 'gpt-oss:120b'];
 
 export async function getSetting(key: string): Promise<string> {
   const db = await getDb();

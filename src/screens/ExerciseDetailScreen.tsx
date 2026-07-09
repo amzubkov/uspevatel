@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, Image, StyleSheet, Alert, Modal } from 'react-native';
+import React, { useState, useMemo, useEffect } from 'react';
+import { View, Text, TextInput, TouchableOpacity, FlatList, Image, StyleSheet, Alert, Modal, Vibration } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useExerciseStore } from '../store/exerciseStore';
 import { useSportStore } from '../store/sportStore';
@@ -34,6 +34,31 @@ export function ExerciseDetailScreen() {
   const [reps, setReps] = useState('');
   const [sets, setSets] = useState('1');
   const [showFullImg, setShowFullImg] = useState(false);
+
+  // Rest timer between sets
+  const [showTimerPrompt, setShowTimerPrompt] = useState(false);
+  const [timerEnd, setTimerEnd] = useState<number | null>(null);
+  const [timerLeft, setTimerLeft] = useState(0);
+
+  useEffect(() => {
+    if (timerEnd == null) return;
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((timerEnd - Date.now()) / 1000));
+      setTimerLeft(left);
+      if (left <= 0) {
+        setTimerEnd(null);
+        Vibration.vibrate([0, 400, 200, 400]);
+      }
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [timerEnd]);
+
+  const startTimer = (min: number) => {
+    setShowTimerPrompt(false);
+    setTimerEnd(Date.now() + min * 60000);
+  };
 
   // Edit state
   const [editing, setEditing] = useState(false);
@@ -134,6 +159,7 @@ export function ExerciseDetailScreen() {
     setWeight('');
     setReps('');
     setSets('1');
+    if (timerEnd == null) setShowTimerPrompt(true);
   };
 
   const logTime = (log: typeof exLogs[0]) => {
@@ -287,6 +313,32 @@ export function ExerciseDetailScreen() {
             <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 16 }}>+</Text>
           </TouchableOpacity>
         </View>
+        {timerEnd != null ? (
+          <View style={styles.timerRow}>
+            <Text style={[styles.timerText, { color: c.primary }]}>
+              ⏱ Отдых: {Math.floor(timerLeft / 60)}:{String(timerLeft % 60).padStart(2, '0')}
+            </Text>
+            <TouchableOpacity onPress={() => setTimerEnd(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={{ color: c.textSecondary, fontSize: 16 }}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        ) : showTimerPrompt ? (
+          <View style={styles.timerRow}>
+            <Text style={{ color: c.textSecondary, fontSize: 13, fontWeight: '600' }}>Запустить таймер?</Text>
+            {[1, 2, 3, 4, 5].map((m) => (
+              <TouchableOpacity
+                key={m}
+                style={[styles.timerChip, { backgroundColor: c.primary }]}
+                onPress={() => startTimer(m)}
+              >
+                <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '700' }}>{m}м</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity onPress={() => setShowTimerPrompt(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={{ color: c.textSecondary, fontSize: 16 }}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
       </View>
 
       {/* Today */}
@@ -351,6 +403,9 @@ const styles = StyleSheet.create({
   logRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   logInput: { flex: 1, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 15, textAlign: 'center' },
   logBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  timerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' },
+  timerChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 },
+  timerText: { fontSize: 16, fontWeight: '700', flex: 1, fontVariant: ['tabular-nums'] },
   section: { fontSize: 12, fontWeight: '600', paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4, textTransform: 'uppercase' },
   logRow2: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, gap: 12 },
   logTime: { fontSize: 13, width: 45 },

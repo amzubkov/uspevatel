@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { toDateStr, shiftDateStr, WEEKDAYS_SUN } from '../utils/date';
 import { useExerciseStore, Exercise, loadDayExercises } from '../store/exerciseStore';
 import { requestAiPlan, AiPlan } from '../services/aiPlannerService';
+import { getSetting, setSetting, DEFAULT_MODEL, SUGGESTED_MODELS } from '../services/ollamaClient';
 import { ActivityIndicator } from 'react-native';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
@@ -58,10 +59,18 @@ export function WorkoutPlanScreen() {
   const [editDayExs, setEditDayExs] = useState<Exercise[]>([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiPlan, setAiPlan] = useState<AiPlan | null>(null);
+  const [showAiSetup, setShowAiSetup] = useState(false);
+  const [aiModel, setAiModel] = useState(DEFAULT_MODEL);
+  const [aiGoal, setAiGoal] = useState('ОФП');
+  const [aiNotes, setAiNotes] = useState('');
 
   const runAiPlan = async (minutes: number) => {
+    setShowAiSetup(false);
     setAiLoading(true);
     try {
+      await setSetting('ollamaModel', aiModel.trim() || DEFAULT_MODEL);
+      await setSetting('aiGoal', aiGoal);
+      await setSetting('aiRestrictions', aiNotes.trim());
       const plan = await requestAiPlan(date, minutes);
       setAiPlan(plan);
     } catch (e: any) {
@@ -70,13 +79,11 @@ export function WorkoutPlanScreen() {
     setAiLoading(false);
   };
 
-  const handleAiPlan = () => {
-    Alert.alert('Сколько времени есть?', undefined, [
-      { text: '45 мин', onPress: () => runAiPlan(45) },
-      { text: '60 мин', onPress: () => runAiPlan(60) },
-      { text: '90 мин', onPress: () => runAiPlan(90) },
-      { text: 'Отмена', style: 'cancel' },
-    ]);
+  const handleAiPlan = async () => {
+    setAiModel((await getSetting('ollamaModel')) || DEFAULT_MODEL);
+    setAiGoal((await getSetting('aiGoal')) || 'ОФП');
+    setAiNotes(await getSetting('aiRestrictions'));
+    setShowAiSetup(true);
   };
 
   const acceptAiPlan = async () => {
@@ -303,6 +310,70 @@ export function WorkoutPlanScreen() {
           {aiLoading ? <ActivityIndicator color="#FFF" /> : <Text numberOfLines={1} adjustsFontSizeToFit style={styles.fabText}>🤖 AI-план</Text>}
         </TouchableOpacity>
       </View>
+
+      {/* AI plan setup: model, goal, notes, time */}
+      <Modal visible={showAiSetup} animationType="slide" onRequestClose={() => setShowAiSetup(false)}>
+        <View style={[styles.container, { backgroundColor: c.background, paddingTop: insets.top }]}>
+          <View style={styles.pickerHeader}>
+            <Text style={[styles.pickerTitle, { color: c.text }]}>🤖 AI-план на {fmtDate(date).toLowerCase()}</Text>
+            <TouchableOpacity onPress={() => setShowAiSetup(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+              <Text style={{ color: c.textSecondary, fontSize: 16, fontWeight: '600' }}>Отмена</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 48, gap: 8 }} keyboardShouldPersistTaps="handled">
+            <Text style={[styles.aiLabel, { color: c.textSecondary }]}>Модель:</Text>
+            <TextInput
+              style={[styles.aiInput, { color: c.text, borderColor: c.border, backgroundColor: c.card }]}
+              value={aiModel}
+              onChangeText={setAiModel}
+              placeholder={DEFAULT_MODEL}
+              placeholderTextColor={c.textSecondary}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <View style={styles.chipRow}>
+              {SUGGESTED_MODELS.map((m) => (
+                <TouchableOpacity
+                  key={m}
+                  style={[styles.tagChip, aiModel === m && { backgroundColor: c.primary }]}
+                  onPress={() => setAiModel(m)}
+                >
+                  <Text style={[styles.tagChipText, { color: aiModel === m ? '#FFF' : c.textSecondary }]}>{m}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={[styles.aiLabel, { color: c.textSecondary, marginTop: 8 }]}>Цель тренировок:</Text>
+            <View style={styles.chipRow}>
+              {['ОФП', 'Масса', 'Сила', 'Похудение'].map((g) => (
+                <TouchableOpacity
+                  key={g}
+                  style={[styles.tagChip, aiGoal === g && { backgroundColor: c.primary }]}
+                  onPress={() => setAiGoal(g)}
+                >
+                  <Text style={[styles.tagChipText, { color: aiGoal === g ? '#FFF' : c.textSecondary }]}>{g}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={[styles.aiLabel, { color: c.textSecondary, marginTop: 8 }]}>Особые замечания (травмы, пожелания — попадут в промпт):</Text>
+            <TextInput
+              style={[styles.aiInput, { color: c.text, borderColor: c.border, backgroundColor: c.card, minHeight: 60, textAlignVertical: 'top' }]}
+              value={aiNotes}
+              onChangeText={setAiNotes}
+              placeholder="напр.: болит правое колено — без приседа и выпадов"
+              placeholderTextColor={c.textSecondary}
+              multiline
+            />
+            <Text style={[styles.aiLabel, { color: c.textSecondary, marginTop: 8 }]}>Сколько времени есть?</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {[45, 60, 90].map((m) => (
+                <TouchableOpacity key={m} style={[styles.fab, { backgroundColor: '#0EA5E9' }]} onPress={() => runAiPlan(m)}>
+                  <Text style={styles.fabText}>{m} мин</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* AI plan preview */}
       <Modal visible={aiPlan != null} animationType="slide" onRequestClose={() => setAiPlan(null)}>
@@ -577,4 +648,7 @@ const styles = StyleSheet.create({
   inlineAddRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   inlineInput: { flex: 1, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, fontSize: 14 },
   inlineBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  aiLabel: { fontSize: 13, fontWeight: '600' },
+  aiInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 14 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
 });
