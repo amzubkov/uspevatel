@@ -15,6 +15,7 @@ import { StorageAccessFramework } from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as DocumentPicker from "expo-document-picker";
 import { File, Paths, Directory } from "expo-file-system";
+import { useNavigation } from "@react-navigation/native";
 import { useSettingsStore } from "../store/settingsStore";
 import { useTaskStore } from "../store/taskStore";
 import { useProjectStore } from "../store/projectStore";
@@ -217,6 +218,7 @@ function NavBarToggle({ c }: { c: any }) {
 }
 
 export function SettingsScreen() {
+  const navigation = useNavigation<any>();
   const contextCategories = useSettingsStore((s) => s.contextCategories);
   const addContextCategory = useSettingsStore((s) => s.addContextCategory);
   const removeContextCategory = useSettingsStore(
@@ -612,6 +614,12 @@ export function SettingsScreen() {
       {tgStatus && (
         <Text style={{ color: c.textSecondary, fontSize: 13, marginTop: 6 }}>{tgStatus}</Text>
       )}
+      <TouchableOpacity
+        style={[styles.exportBtn, { backgroundColor: c.primary, marginTop: 8 }]}
+        onPress={() => navigation.navigate('TelegramSync')}
+      >
+        <Text style={styles.exportBtnText}>Открыть Telegram Sync</Text>
+      </TouchableOpacity>
 
       {/* Ollama AI */}
       <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>

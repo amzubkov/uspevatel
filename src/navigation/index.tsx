@@ -36,6 +36,7 @@ import { PlannerTab } from "../screens/PlannerTab";
 import { HealthScreen } from "../screens/HealthScreen";
 import { DocumentsScreen } from "../screens/DocumentsScreen";
 import { TelegramSyncScreen } from "../screens/TelegramSyncScreen";
+import { NutritionScreen } from "../screens/NutritionScreen";
 import { DayReviewScreen } from "../screens/DayReviewScreen";
 import { ContactsScreen } from "../screens/ContactsScreen";
 import { ContactDetailScreen } from "../screens/ContactDetailScreen";
@@ -60,7 +61,7 @@ const HeaderButtons = React.memo(function HeaderButtons() {
     { emoji: '✈️', screen: 'Planner' },
     { emoji: '📄', screen: 'Documents' },
     { emoji: '📂', screen: 'Projects' },
-    { emoji: '🤖', screen: 'TelegramSync' },
+    { emoji: '🍽️', screen: 'Nutrition' },
     { emoji: '⚙️', screen: 'Settings' },
   ];
 
@@ -320,6 +321,11 @@ export function AppNavigator() {
           name="TelegramSync"
           component={TelegramSyncScreen}
           options={{ title: "Telegram Sync" }}
+        />
+        <Stack.Screen
+          name="Nutrition"
+          component={NutritionScreen}
+          options={{ title: "Питание" }}
         />
         <Stack.Screen
           name="Settings"

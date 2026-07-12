@@ -1,5 +1,6 @@
 import * as SQLite from "expo-sqlite";
 import { seedExercises } from "./seed";
+import { FOOD_CATALOG } from "./foodCatalog";
 import { migrateFromAsyncStorage } from "./migrate";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Paths } from "expo-file-system";
@@ -42,7 +43,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 41;
+const SCHEMA_VERSION = 43;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -384,7 +385,52 @@ CREATE TABLE IF NOT EXISTS transactions (
 
 CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
+
+CREATE TABLE IF NOT EXISTS nutrition_entries (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  date TEXT NOT NULL,
+  time TEXT NOT NULL,
+  meal_type TEXT NOT NULL CHECK(meal_type IN ('breakfast','lunch','dinner','snack')),
+  amount_grams REAL NOT NULL CHECK(amount_grams > 0),
+  kcal_per_100 REAL NOT NULL CHECK(kcal_per_100 >= 0),
+  protein_per_100 REAL NOT NULL CHECK(protein_per_100 >= 0),
+  fat_per_100 REAL NOT NULL CHECK(fat_per_100 >= 0),
+  carbs_per_100 REAL NOT NULL CHECK(carbs_per_100 >= 0),
+  kcal_auto INTEGER NOT NULL DEFAULT 0 CHECK(kcal_auto IN (0, 1)),
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_nutrition_entries_date ON nutrition_entries(date);
+
+CREATE TABLE IF NOT EXISTS food_catalog (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  name_en TEXT NOT NULL DEFAULT '',
+  kcal_per_100 REAL NOT NULL,
+  protein_per_100 REAL NOT NULL,
+  fat_per_100 REAL NOT NULL,
+  carbs_per_100 REAL NOT NULL,
+  source TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_food_catalog_name ON food_catalog(name);
 `;
+
+// Populate the offline food catalog from the bundled seed (only when empty).
+async function seedFoodCatalog(db: SQLite.SQLiteDatabase): Promise<void> {
+  const row = await db.getFirstAsync<{ cnt: number }>('SELECT COUNT(*) as cnt FROM food_catalog');
+  if ((row?.cnt ?? 0) > 0) return;
+  await db.withTransactionAsync(async () => {
+    for (const [name, nameEn, kcal, protein, fat, carbs, source] of FOOD_CATALOG) {
+      await db.runAsync(
+        'INSERT INTO food_catalog (name, name_en, kcal_per_100, protein_per_100, fat_per_100, carbs_per_100, source) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [name, nameEn, kcal, protein, fat, carbs, source],
+      );
+    }
+  });
+}
 
 export async function getDb(): Promise<SQLite.SQLiteDatabase> {
   if (_db) return _db;
@@ -986,6 +1032,40 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
     await alterIgnoringDuplicate(`ALTER TABLE workout_plan ADD COLUMN sets INTEGER;`);
     await alterIgnoringDuplicate(`ALTER TABLE workout_plan ADD COLUMN reps INTEGER;`);
     await alterIgnoringDuplicate(`ALTER TABLE workout_plan ADD COLUMN weight REAL;`);
+  }
+
+  if (currentVer < 42) {
+    await db.execAsync(`CREATE TABLE IF NOT EXISTS nutrition_entries (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      date TEXT NOT NULL,
+      time TEXT NOT NULL,
+      meal_type TEXT NOT NULL CHECK(meal_type IN ('breakfast','lunch','dinner','snack')),
+      amount_grams REAL NOT NULL CHECK(amount_grams > 0),
+      kcal_per_100 REAL NOT NULL CHECK(kcal_per_100 >= 0),
+      protein_per_100 REAL NOT NULL CHECK(protein_per_100 >= 0),
+      fat_per_100 REAL NOT NULL CHECK(fat_per_100 >= 0),
+      carbs_per_100 REAL NOT NULL CHECK(carbs_per_100 >= 0),
+      kcal_auto INTEGER NOT NULL DEFAULT 0 CHECK(kcal_auto IN (0, 1)),
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );`);
+    await db.execAsync('CREATE INDEX IF NOT EXISTS idx_nutrition_entries_date ON nutrition_entries(date);');
+  }
+
+  if (currentVer < 43) {
+    await db.execAsync(`CREATE TABLE IF NOT EXISTS food_catalog (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      name_en TEXT NOT NULL DEFAULT '',
+      kcal_per_100 REAL NOT NULL,
+      protein_per_100 REAL NOT NULL,
+      fat_per_100 REAL NOT NULL,
+      carbs_per_100 REAL NOT NULL,
+      source TEXT NOT NULL DEFAULT ''
+    );`);
+    await db.execAsync('CREATE INDEX IF NOT EXISTS idx_food_catalog_name ON food_catalog(name);');
+    await seedFoodCatalog(db);
   }
 
   if (currentVer < SCHEMA_VERSION) {

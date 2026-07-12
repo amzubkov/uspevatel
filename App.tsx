@@ -26,6 +26,8 @@ import { useCarStore } from './src/store/carStore';
 import { useNoteStore } from './src/store/noteStore';
 import { useMoneyStore } from './src/store/moneyStore';
 import { useDailyLogStore } from './src/store/dailyLogStore';
+import { useNutritionStore } from './src/store/nutritionStore';
+import { useNutritionGoalStore } from './src/store/nutritionGoalStore';
 import { loadSyncFolder } from './src/db/database';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -69,6 +71,8 @@ function AppLoader() {
   const loadNotes = useNoteStore((s) => s.load);
   const loadMoney = useMoneyStore((s) => s.load);
   const loadDailyLogs = useDailyLogStore((s) => s.load);
+  const loadNutrition = useNutritionStore((s) => s.load);
+  const loadNutritionGoals = useNutritionGoalStore((s) => s.load);
 
   useEffect(() => {
     (async () => {
@@ -97,6 +101,8 @@ function AppLoader() {
         loadNotes(),
         loadMoney(),
         loadDailyLogs(),
+        loadNutrition(),
+        loadNutritionGoals(),
       ]);
       setReady(true);
     })();
