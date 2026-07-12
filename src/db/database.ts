@@ -43,7 +43,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 43;
+const SCHEMA_VERSION = 46;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -416,6 +416,38 @@ CREATE TABLE IF NOT EXISTS food_catalog (
 );
 
 CREATE INDEX IF NOT EXISTS idx_food_catalog_name ON food_catalog(name);
+
+CREATE TABLE IF NOT EXISTS recurring_payments (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  amount REAL NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'RUB',
+  due_date TEXT NOT NULL,
+  recurrence TEXT NOT NULL DEFAULT 'monthly' CHECK(recurrence IN ('once','weekly','monthly','quarterly','semiannual','yearly')),
+  account_id TEXT,
+  category TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0, 1)),
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_recurring_payments_due ON recurring_payments(due_date);
+
+CREATE TABLE IF NOT EXISTS nutrition_plan (
+  id TEXT PRIMARY KEY,
+  date TEXT NOT NULL,
+  meal_type TEXT NOT NULL CHECK(meal_type IN ('breakfast','lunch','dinner','snack')),
+  name TEXT NOT NULL,
+  amount_grams REAL NOT NULL CHECK(amount_grams > 0),
+  kcal_per_100 REAL NOT NULL CHECK(kcal_per_100 >= 0),
+  protein_per_100 REAL NOT NULL CHECK(protein_per_100 >= 0),
+  fat_per_100 REAL NOT NULL CHECK(fat_per_100 >= 0),
+  carbs_per_100 REAL NOT NULL CHECK(carbs_per_100 >= 0),
+  done INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0, 1)),
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_nutrition_plan_date ON nutrition_plan(date);
 `;
 
 // Populate the offline food catalog from the bundled seed (only when empty).
@@ -1066,6 +1098,61 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
     );`);
     await db.execAsync('CREATE INDEX IF NOT EXISTS idx_food_catalog_name ON food_catalog(name);');
     await seedFoodCatalog(db);
+  }
+
+  if (currentVer < 44) {
+    await db.execAsync(`CREATE TABLE IF NOT EXISTS recurring_payments (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      amount REAL NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'RUB',
+      due_date TEXT NOT NULL,
+      recurrence TEXT NOT NULL DEFAULT 'monthly' CHECK(recurrence IN ('once','weekly','monthly','yearly')),
+      account_id TEXT,
+      category TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0, 1)),
+      created_at TEXT NOT NULL
+    );`);
+    await db.execAsync('CREATE INDEX IF NOT EXISTS idx_recurring_payments_due ON recurring_payments(due_date);');
+  }
+
+  if (currentVer < 45) {
+    // Widen recurrence CHECK to include quarterly/semiannual — rebuild the table.
+    await db.execAsync('ALTER TABLE recurring_payments RENAME TO recurring_payments_old;');
+    await db.execAsync(`CREATE TABLE recurring_payments (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      amount REAL NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'RUB',
+      due_date TEXT NOT NULL,
+      recurrence TEXT NOT NULL DEFAULT 'monthly' CHECK(recurrence IN ('once','weekly','monthly','quarterly','semiannual','yearly')),
+      account_id TEXT,
+      category TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0, 1)),
+      created_at TEXT NOT NULL
+    );`);
+    await db.execAsync('INSERT INTO recurring_payments SELECT * FROM recurring_payments_old;');
+    await db.execAsync('DROP TABLE recurring_payments_old;');
+    await db.execAsync('CREATE INDEX IF NOT EXISTS idx_recurring_payments_due ON recurring_payments(due_date);');
+  }
+
+  if (currentVer < 46) {
+    await db.execAsync(`CREATE TABLE IF NOT EXISTS nutrition_plan (
+      id TEXT PRIMARY KEY,
+      date TEXT NOT NULL,
+      meal_type TEXT NOT NULL CHECK(meal_type IN ('breakfast','lunch','dinner','snack')),
+      name TEXT NOT NULL,
+      amount_grams REAL NOT NULL CHECK(amount_grams > 0),
+      kcal_per_100 REAL NOT NULL CHECK(kcal_per_100 >= 0),
+      protein_per_100 REAL NOT NULL CHECK(protein_per_100 >= 0),
+      fat_per_100 REAL NOT NULL CHECK(fat_per_100 >= 0),
+      carbs_per_100 REAL NOT NULL CHECK(carbs_per_100 >= 0),
+      done INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0, 1)),
+      created_at TEXT NOT NULL
+    );`);
+    await db.execAsync('CREATE INDEX IF NOT EXISTS idx_nutrition_plan_date ON nutrition_plan(date);');
   }
 
   if (currentVer < SCHEMA_VERSION) {

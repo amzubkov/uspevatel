@@ -111,3 +111,41 @@ export async function cancelFlightReminder(flightId: string) {
     await Notifications.cancelScheduledNotificationAsync(`flight-${flightId}`);
   } catch {}
 }
+
+// Payment reminders: fire at 10:00 three days and one day before the due date.
+const PAYMENT_PLANS: { days: number; suffix: string; when: string }[] = [
+  { days: 3, suffix: '-3d', when: 'через 3 дня' },
+  { days: 1, suffix: '-1d', when: 'завтра' },
+];
+
+export async function schedulePaymentReminders(
+  id: string,
+  name: string,
+  amountLabel: string,
+  dueDate: string,
+): Promise<void> {
+  await cancelPaymentReminders(id);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return;
+  const granted = await requestPermissions();
+  if (!granted) return;
+
+  const [y, m, d] = dueDate.split('-').map(Number);
+  for (const plan of PAYMENT_PLANS) {
+    const when = new Date(y, m - 1, d, 10, 0, 0);
+    when.setDate(when.getDate() - plan.days);
+    if (when.getTime() <= Date.now()) continue;
+    await Notifications.scheduleNotificationAsync({
+      identifier: `payment-${id}${plan.suffix}`,
+      content: { title: `💳 Платёж ${plan.when}`, body: `${name} — ${amountLabel}`, sound: true },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: when },
+    });
+  }
+}
+
+export async function cancelPaymentReminders(id: string): Promise<void> {
+  for (const plan of PAYMENT_PLANS) {
+    try {
+      await Notifications.cancelScheduledNotificationAsync(`payment-${id}${plan.suffix}`);
+    } catch {}
+  }
+}

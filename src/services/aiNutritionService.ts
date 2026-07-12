@@ -1,7 +1,7 @@
 // AI food recognition via Ollama Cloud vision model: photo of a dish -> name,
 // estimated portion and per-100g KБЖУ, ready to prefill the nutrition form.
 
-import { ollamaChatJson, VISION_MODEL } from './ollamaClient';
+import { ollamaChatJson, VISION_MODEL, getSetting } from './ollamaClient';
 
 export interface ParsedFood {
   name: string;          // dish/product name in Russian
@@ -83,4 +83,73 @@ export async function lookupFoodByName(name: string): Promise<ParsedFood> {
     throw new Error('Не удалось найти данные по этому названию');
   }
   return food;
+}
+
+export type MenuMealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
+
+export interface MenuItem {
+  mealType: MenuMealType;
+  name: string;
+  amountGrams: number;
+  kcalPer100: number;
+  proteinPer100: number;
+  fatPer100: number;
+  carbsPer100: number;
+}
+
+const MENU_SCHEMA = {
+  type: 'object',
+  properties: {
+    meals: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          mealType: { type: 'string', enum: ['breakfast', 'lunch', 'dinner', 'snack'] },
+          name: { type: 'string' },
+          amountGrams: { type: 'number' },
+          kcalPer100: { type: 'number' },
+          proteinPer100: { type: 'number' },
+          fatPer100: { type: 'number' },
+          carbsPer100: { type: 'number' },
+        },
+        required: ['mealType', 'name', 'amountGrams', 'kcalPer100', 'proteinPer100', 'fatPer100', 'carbsPer100'],
+      },
+    },
+  },
+  required: ['meals'],
+};
+
+export async function generateDietMenu(params: {
+  dietName: string;
+  kcal: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+}): Promise<MenuItem[]> {
+  const restrictions = (await getSetting('aiRestrictions')).trim();
+  const prompt = `Ты нутрициолог. Составь примерное меню на один день по диете «${params.dietName}».
+Цели на день: ${Math.round(params.kcal)} ккал, белки ${Math.round(params.protein)} г, жиры ${Math.round(params.fat)} г, углеводы ${Math.round(params.carbs)} г.
+${restrictions ? `Ограничения/предпочтения: ${restrictions}.` : ''}
+Правила:
+- 4–6 блюд, распределены по приёмам: breakfast, lunch, dinner, snack.
+- Для каждого: mealType, name (по-русски), amountGrams (вес порции), и пищевая ценность на 100 г: kcalPer100, proteinPer100, fatPer100, carbsPer100.
+- Суммарно по дню приблизься к целям КБЖУ. Реалистичные продукты и числа, запятую считай точкой.
+Ответ — только JSON: {"meals":[{"mealType":"breakfast","name":"Овсянка на молоке","amountGrams":250,"kcalPer100":90,"proteinPer100":3.5,"fatPer100":2,"carbsPer100":15}]}`;
+
+  const raw = await ollamaChatJson({ user: prompt, format: MENU_SCHEMA });
+  const meals: any[] = Array.isArray(raw?.meals) ? raw.meals : [];
+  const validMeal = new Set(['breakfast', 'lunch', 'dinner', 'snack']);
+  const items: MenuItem[] = meals.map((m) => ({
+    mealType: (validMeal.has(m?.mealType) ? m.mealType : 'snack') as MenuMealType,
+    name: String(m?.name || '').trim(),
+    amountGrams: num(m?.amountGrams) || 100,
+    kcalPer100: num(m?.kcalPer100),
+    proteinPer100: num(m?.proteinPer100),
+    fatPer100: num(m?.fatPer100),
+    carbsPer100: num(m?.carbsPer100),
+  })).filter((m) => m.name);
+
+  if (items.length === 0) throw new Error('Модель не вернула меню');
+  return items;
 }

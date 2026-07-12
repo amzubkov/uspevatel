@@ -17,6 +17,8 @@ import { DatePickerField } from '../components/DatePickerField';
 import { TimePickerField } from '../components/TimePickerField';
 import { parseFoodPhoto, lookupFoodByName, ParsedFood } from '../services/aiNutritionService';
 import { searchFood, FoodHit } from '../services/foodDatabase';
+import { DIETS, getDiet, macrosForKcal } from '../utils/diets';
+import { MenuPlan } from './nutrition/MenuPlan';
 import {
   MealType,
   NutritionEntry,
@@ -115,9 +117,11 @@ export function NutritionScreen() {
   const goalProtein = useNutritionGoalStore((state) => state.protein);
   const goalFat = useNutritionGoalStore((state) => state.fat);
   const goalCarbs = useNutritionGoalStore((state) => state.carbs);
+  const goalDiet = useNutritionGoalStore((state) => state.diet);
   const setGoals = useNutritionGoalStore((state) => state.setGoals);
 
   const today = toDateStr(new Date());
+  const [nutTab, setNutTab] = useState<'diary' | 'menu'>('diary');
   const [date, setDate] = useState(today);
   const [editing, setEditing] = useState<NutritionEntry | null>(null);
   const [form, setForm] = useState<FormState>(() => emptyForm(today));
@@ -128,7 +132,7 @@ export function NutritionScreen() {
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<FoodHit[] | null>(null);
   const [showGoals, setShowGoals] = useState(false);
-  const [goalForm, setGoalForm] = useState({ kcal: '', protein: '', fat: '', carbs: '' });
+  const [goalForm, setGoalForm] = useState({ kcal: '', protein: '', fat: '', carbs: '', diet: goalDiet });
 
   const dayEntries = useMemo(
     () => entries.filter((entry) => entry.date === date),
@@ -428,8 +432,22 @@ export function NutritionScreen() {
       protein: numberInput(goalProtein),
       fat: numberInput(goalFat),
       carbs: numberInput(goalCarbs),
+      diet: goalDiet,
     });
     setShowGoals(true);
+  };
+
+  // Pick a diet → recompute macro fields from the current kcal target.
+  const pickDiet = (dietId: string) => {
+    const kcal = parseNonNegative(goalForm.kcal) ?? 0;
+    const m = macrosForKcal(kcal, getDiet(dietId));
+    setGoalForm((g) => ({
+      ...g,
+      diet: dietId,
+      protein: numberInput(m.protein),
+      fat: numberInput(m.fat),
+      carbs: numberInput(m.carbs),
+    }));
   };
 
   const saveGoals = async () => {
@@ -443,7 +461,7 @@ export function NutritionScreen() {
     }
     const next: NutritionGoals = { kcal, protein, fat, carbs };
     try {
-      await setGoals(next);
+      await setGoals(next, goalForm.diet);
       setShowGoals(false);
     } catch (error: any) {
       Alert.alert('Не удалось сохранить', String(error?.message || error));
@@ -473,6 +491,22 @@ export function NutritionScreen() {
         </TouchableOpacity>
       </View>
 
+      <View style={styles.nutTabs}>
+        {([['diary', 'Дневник'], ['menu', 'Меню']] as const).map(([key, label]) => (
+          <TouchableOpacity
+            key={key}
+            style={[styles.nutTab, { borderBottomColor: nutTab === key ? c.primary : 'transparent' }]}
+            onPress={() => setNutTab(key)}
+          >
+            <Text style={{ color: nutTab === key ? c.primary : c.textSecondary, fontWeight: '700', fontSize: 14 }}>{label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {nutTab === 'menu' ? (
+        <MenuPlan date={date} theme={theme} formatDate={formatDate} />
+      ) : (
+      <>
       <TouchableOpacity
         activeOpacity={0.9}
         onPress={openGoals}
@@ -480,8 +514,8 @@ export function NutritionScreen() {
       >
         <View style={styles.summaryTop}>
           <ProgressRing
-            size={132}
-            strokeWidth={13}
+            size={112}
+            strokeWidth={11}
             progress={goalKcal > 0 ? totals.kcal / goalKcal : 0}
             color={totals.kcal > goalKcal ? '#EF4444' : c.primary}
             trackColor={c.border}
@@ -503,6 +537,11 @@ export function NutritionScreen() {
           <MacroRing value={totals.fat} goal={goalFat} label="Жиры" color="#F59E0B" c={c} />
           <MacroRing value={totals.carbs} goal={goalCarbs} label="Углеводы" color="#22C55E" c={c} />
         </View>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.dietBar} onPress={() => setNutTab('menu')}>
+        <Text style={[styles.dietBarText, { color: c.textSecondary }]}>Диета: <Text style={{ color: c.text, fontWeight: '700' }}>{getDiet(goalDiet).name}</Text></Text>
+        <Text style={[styles.dietMenuBtnText, { color: c.primary }]}>Меню на день →</Text>
       </TouchableOpacity>
 
       <ScrollView contentContainerStyle={styles.listContent}>
@@ -565,6 +604,8 @@ export function NutritionScreen() {
             <Text style={styles.fabText}>+</Text>
           </TouchableOpacity>
         </>
+      )}
+      </>
       )}
 
       <Modal visible={showForm} animationType="slide" onRequestClose={closeForm}>
@@ -780,6 +821,22 @@ export function NutritionScreen() {
         <View style={styles.goalsBackdrop}>
           <View style={[styles.goalsCard, { backgroundColor: c.card }]}>
             <Text style={[styles.goalsTitle, { color: c.text }]}>Дневные цели</Text>
+            <Text style={[styles.fieldLabel, { color: c.textSecondary, marginTop: 0 }]}>Диета</Text>
+            <View style={styles.chips}>
+              {DIETS.map((d) => {
+                const active = goalForm.diet === d.id;
+                return (
+                  <TouchableOpacity
+                    key={d.id}
+                    style={[styles.mealChip, { borderColor: active ? c.primary : c.border, backgroundColor: active ? c.primary : c.card }]}
+                    onPress={() => pickDiet(d.id)}
+                  >
+                    <Text style={{ color: active ? '#FFF' : c.text, fontSize: 12, fontWeight: '600' }}>{d.name}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <Text style={[styles.formHint, { color: c.textSecondary }]}>{getDiet(goalForm.diet).desc}. Выбор диеты пересчитает БЖУ из калорий.</Text>
             <View style={styles.macroGrid}>
               <NumberField label="Ккал в день" value={goalForm.kcal} onChange={(kcal) => setGoalForm((g) => ({ ...g, kcal }))} placeholder="2000" colors={c} />
               <NumberField label="Белки, г" value={goalForm.protein} onChange={(protein) => setGoalForm((g) => ({ ...g, protein }))} placeholder="110" colors={c} />
@@ -805,7 +862,7 @@ function MacroRing({ value, goal, label, color, c }: { value: number; goal: numb
   const pct = goal > 0 ? Math.round((value / goal) * 100) : 0;
   return (
     <View style={styles.macroRing}>
-      <ProgressRing size={68} strokeWidth={7} progress={goal > 0 ? value / goal : 0} color={color} trackColor={c.border}>
+      <ProgressRing size={58} strokeWidth={6} progress={goal > 0 ? value / goal : 0} color={color} trackColor={c.border}>
         <Text style={[styles.macroRingPct, { color: c.textSecondary }]}>{pct}%</Text>
       </ProgressRing>
       <Text style={[styles.macroRingLabel, { color: c.text }]}>{label}</Text>
@@ -901,29 +958,35 @@ const styles = StyleSheet.create({
   dateCenter: { minWidth: 160, alignItems: 'center', paddingVertical: 3 },
   dateTitle: { fontSize: 18, fontWeight: '700' },
   todayHint: { fontSize: 10, marginTop: 1 },
-  summary: { marginHorizontal: 12, padding: 14, borderRadius: 14, borderWidth: 1 },
+  summary: { marginHorizontal: 12, marginTop: 4, padding: 11, borderRadius: 14, borderWidth: 1 },
   summaryTop: { flexDirection: 'row', alignItems: 'center' },
-  ringKcal: { fontSize: 26, fontWeight: '800' },
-  ringKcalGoal: { fontSize: 11, marginTop: -1 },
-  ringPctBadge: { marginTop: 4, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 1 },
-  ringPctText: { color: '#FFF', fontSize: 12, fontWeight: '800' },
-  summarySide: { flex: 1, paddingLeft: 16 },
-  summarySideLabel: { fontSize: 11 },
-  summarySideValue: { fontSize: 28, fontWeight: '800', marginVertical: 1 },
-  macroRingsRow: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 14 },
+  ringKcal: { fontSize: 22, fontWeight: '800' },
+  ringKcalGoal: { fontSize: 10, marginTop: -1 },
+  ringPctBadge: { marginTop: 3, borderRadius: 9, paddingHorizontal: 7, paddingVertical: 1 },
+  ringPctText: { color: '#FFF', fontSize: 11, fontWeight: '800' },
+  summarySide: { flex: 1, paddingLeft: 14 },
+  summarySideLabel: { fontSize: 10 },
+  summarySideValue: { fontSize: 24, fontWeight: '800', marginVertical: 1 },
+  nutTabs: { flexDirection: 'row', paddingHorizontal: 12 },
+  nutTab: { flex: 1, alignItems: 'center', paddingVertical: 9, borderBottomWidth: 2 },
+  dietBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: 12, marginTop: 8 },
+  dietBarText: { fontSize: 13 },
+  dietMenuBtn: { borderWidth: 1, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 7, borderStyle: 'dashed' },
+  dietMenuBtnText: { fontSize: 13, fontWeight: '700' },
+  macroRingsRow: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 10 },
   macroRing: { alignItems: 'center' },
-  macroRingPct: { fontSize: 12, fontWeight: '700' },
-  macroRingLabel: { fontSize: 12, fontWeight: '700', marginTop: 5 },
-  macroRingValue: { fontSize: 10, marginTop: 1 },
+  macroRingPct: { fontSize: 11, fontWeight: '700' },
+  macroRingLabel: { fontSize: 11, fontWeight: '700', marginTop: 4 },
+  macroRingValue: { fontSize: 9, marginTop: 1 },
   goalsBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 },
   goalsCard: { borderRadius: 16, padding: 18 },
   goalsTitle: { fontSize: 18, fontWeight: '700', marginBottom: 12 },
   goalsActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
   goalsBtn: { flex: 1, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
   goalsBtnText: { fontSize: 15, fontWeight: '700' },
-  listContent: { padding: 12, paddingBottom: 100, flexGrow: 1 },
-  empty: { flex: 1, minHeight: 320, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
-  emptyIcon: { fontSize: 52, marginBottom: 12 },
+  listContent: { padding: 12, paddingTop: 6, paddingBottom: 80, flexGrow: 1 },
+  empty: { alignItems: 'center', justifyContent: 'flex-start', paddingTop: 12, paddingHorizontal: 32 },
+  emptyIcon: { fontSize: 44, marginBottom: 8 },
   emptyTitle: { fontSize: 18, fontWeight: '700', textAlign: 'center' },
   emptyText: { fontSize: 13, lineHeight: 19, textAlign: 'center', marginTop: 6 },
   emptyButton: { marginTop: 18, paddingHorizontal: 22, paddingVertical: 12, borderRadius: 12 },

@@ -28,6 +28,8 @@ import { useMoneyStore } from './src/store/moneyStore';
 import { useDailyLogStore } from './src/store/dailyLogStore';
 import { useNutritionStore } from './src/store/nutritionStore';
 import { useNutritionGoalStore } from './src/store/nutritionGoalStore';
+import { useNutritionPlanStore } from './src/store/nutritionPlanStore';
+import { useRecurringPaymentStore } from './src/store/recurringPaymentStore';
 import { loadSyncFolder } from './src/db/database';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -73,6 +75,8 @@ function AppLoader() {
   const loadDailyLogs = useDailyLogStore((s) => s.load);
   const loadNutrition = useNutritionStore((s) => s.load);
   const loadNutritionGoals = useNutritionGoalStore((s) => s.load);
+  const loadRecurringPayments = useRecurringPaymentStore((s) => s.load);
+  const loadNutritionPlan = useNutritionPlanStore((s) => s.load);
 
   useEffect(() => {
     (async () => {
@@ -103,6 +107,8 @@ function AppLoader() {
         loadDailyLogs(),
         loadNutrition(),
         loadNutritionGoals(),
+        loadRecurringPayments(),
+        loadNutritionPlan(),
       ]);
       setReady(true);
     })();

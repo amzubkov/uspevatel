@@ -4,12 +4,13 @@ import { useMoneyStore, Account, Transaction, BankType } from '../store/moneySto
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
 import { DatePickerField } from '../components/DatePickerField';
+import { UpcomingPayments } from './money/UpcomingPayments';
 import { parseBankFile, parseBankFileXlsx, BANK_LABELS, ParsedTransaction } from '../services/bankParsers';
 import * as DocumentPicker from 'expo-document-picker';
 import * as LegacyFS from 'expo-file-system/legacy';
 import * as PdfTextExtract from 'expo-pdf-text-extract';
 
-const CURRENCIES = ['RUB', 'EUR', 'USDT'];
+const CURRENCIES = ['RUB', 'EUR', 'USD', 'USDT'];
 const ACC_COLORS = ['#EF4444', '#F59E0B', '#22C55E', '#3B82F6', '#8B5CF6', '#EC4899', '#06B6D4', '#6B7280'];
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 function dayOffset(n: number): string {
@@ -31,7 +32,7 @@ function fmtDateNum(d: string): string {
   const [y, m, day] = d.split('-');
   return `${day}.${m}.${y}`;
 }
-const CUR_SYMBOL: Record<string, string> = { RUB: '₽', EUR: '€', USDT: '$' };
+const CUR_SYMBOL: Record<string, string> = { RUB: '₽', EUR: '€', USD: '$', USDT: '₮' };
 function curSym(c: string) { return CUR_SYMBOL[c] || c; }
 
 function fmtAmount(n: number, currency: string): string {
@@ -57,6 +58,7 @@ export function MoneyScreen() {
   const c = colors[theme];
   const { accounts, addAccount, updateAccount, removeAccount, addTransaction, updateTransaction, removeTransaction, addCorrection, getCorrection, getCorrectionDate, getBalance, getTransactionsForAccount, getLastTxDate, getAllCategories, getAllTags } = useMoneyStore();
 
+  const [mainTab, setMainTab] = useState<'accounts' | 'upcoming'>('accounts');
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [showAccountForm, setShowAccountForm] = useState(false);
 
@@ -838,9 +840,34 @@ export function MoneyScreen() {
     );
   }
 
+  const renderTabBar = () => (
+    <View style={st.mainTabs}>
+      {([['accounts', 'Счета'], ['upcoming', 'Платежи']] as const).map(([key, label]) => (
+        <TouchableOpacity
+          key={key}
+          style={[st.mainTab, { borderBottomColor: mainTab === key ? c.primary : 'transparent' }]}
+          onPress={() => { setMainTab(key); if (key === 'upcoming') setSelectedAccountId(null); }}
+        >
+          <Text style={{ color: mainTab === key ? c.primary : c.textSecondary, fontWeight: '700', fontSize: 14 }}>{label}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
+  // ── Upcoming payments tab ──
+  if (mainTab === 'upcoming') {
+    return (
+      <View style={[st.container, { backgroundColor: c.background }]}>
+        {renderTabBar()}
+        <UpcomingPayments theme={theme} />
+      </View>
+    );
+  }
+
   // ── Main screen ──
   return (
     <View style={[st.container, { backgroundColor: c.background }]}>
+      {renderTabBar()}
       {/* Accounts list */}
       <ScrollView style={{ maxHeight: 220 }} contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8, gap: 6 }}>
         {accounts.map((acc) => {
@@ -1102,6 +1129,8 @@ export function MoneyScreen() {
 
 const st = StyleSheet.create({
   container: { flex: 1 },
+  mainTabs: { flexDirection: 'row', paddingHorizontal: 12, paddingTop: 6 },
+  mainTab: { flex: 1, alignItems: 'center', paddingVertical: 9, borderBottomWidth: 2 },
   accCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderRadius: 10, borderWidth: 1 },
   accName: { fontSize: 15, fontWeight: '600' },
   accBalance: { fontSize: 15, fontWeight: '700' },
