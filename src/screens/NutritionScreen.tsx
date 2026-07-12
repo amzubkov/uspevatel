@@ -19,6 +19,7 @@ import { parseFoodPhoto, lookupFoodByName, ParsedFood } from '../services/aiNutr
 import { searchFood, FoodHit } from '../services/foodDatabase';
 import { DIETS, getDiet, macrosForKcal } from '../utils/diets';
 import { MenuPlan } from './nutrition/MenuPlan';
+import { ShoppingList } from './nutrition/ShoppingList';
 import {
   MealType,
   NutritionEntry,
@@ -121,7 +122,7 @@ export function NutritionScreen() {
   const setGoals = useNutritionGoalStore((state) => state.setGoals);
 
   const today = toDateStr(new Date());
-  const [nutTab, setNutTab] = useState<'diary' | 'menu'>('diary');
+  const [nutTab, setNutTab] = useState<'diary' | 'menu' | 'shop'>('diary');
   const [date, setDate] = useState(today);
   const [editing, setEditing] = useState<NutritionEntry | null>(null);
   const [form, setForm] = useState<FormState>(() => emptyForm(today));
@@ -492,7 +493,7 @@ export function NutritionScreen() {
       </View>
 
       <View style={styles.nutTabs}>
-        {([['diary', 'Дневник'], ['menu', 'Меню']] as const).map(([key, label]) => (
+        {([['diary', 'Дневник'], ['menu', 'Меню'], ['shop', 'Покупки']] as const).map(([key, label]) => (
           <TouchableOpacity
             key={key}
             style={[styles.nutTab, { borderBottomColor: nutTab === key ? c.primary : 'transparent' }]}
@@ -505,6 +506,8 @@ export function NutritionScreen() {
 
       {nutTab === 'menu' ? (
         <MenuPlan date={date} theme={theme} formatDate={formatDate} />
+      ) : nutTab === 'shop' ? (
+        <ShoppingList theme={theme} />
       ) : (
       <>
       <TouchableOpacity
@@ -952,12 +955,12 @@ function NumberField({
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  dateRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8 },
-  dateArrow: { width: 54, height: 44, alignItems: 'center', justifyContent: 'center' },
-  dateArrowText: { fontSize: 34, lineHeight: 38, fontWeight: '500' },
-  dateCenter: { minWidth: 160, alignItems: 'center', paddingVertical: 3 },
-  dateTitle: { fontSize: 18, fontWeight: '700' },
-  todayHint: { fontSize: 10, marginTop: 1 },
+  dateRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 4 },
+  dateArrow: { width: 48, height: 34, alignItems: 'center', justifyContent: 'center' },
+  dateArrowText: { fontSize: 27, lineHeight: 30, fontWeight: '500' },
+  dateCenter: { minWidth: 150, alignItems: 'center', paddingVertical: 2 },
+  dateTitle: { fontSize: 15, fontWeight: '700' },
+  todayHint: { fontSize: 9, marginTop: 0 },
   summary: { marginHorizontal: 12, marginTop: 4, padding: 11, borderRadius: 14, borderWidth: 1 },
   summaryTop: { flexDirection: 'row', alignItems: 'center' },
   ringKcal: { fontSize: 22, fontWeight: '800' },

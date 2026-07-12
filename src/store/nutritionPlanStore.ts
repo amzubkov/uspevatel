@@ -3,6 +3,11 @@ import { create } from 'zustand';
 import { getDb } from '../db/database';
 import { MealType } from './nutritionStore';
 
+export interface Ingredient {
+  name: string;
+  grams: number;
+}
+
 export interface PlanItem {
   id: string;
   date: string;
@@ -13,6 +18,7 @@ export interface PlanItem {
   proteinPer100: number;
   fatPer100: number;
   carbsPer100: number;
+  ingredients: Ingredient[];
   done: boolean;
   createdAt: string;
 }
@@ -30,7 +36,18 @@ interface PlanItemRow {
   fat_per_100: number;
   carbs_per_100: number;
   done: number;
+  ingredients: string;
   created_at: string;
+}
+
+function parseIngredients(raw: string): Ingredient[] {
+  try {
+    const arr = JSON.parse(raw || '[]');
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map((x: any) => ({ name: String(x?.name || '').trim(), grams: Number(x?.grams) || 0 }))
+      .filter((x) => x.name && x.grams > 0);
+  } catch { return []; }
 }
 
 function rowToItem(r: PlanItemRow): PlanItem {
@@ -44,6 +61,7 @@ function rowToItem(r: PlanItemRow): PlanItem {
     proteinPer100: r.protein_per_100,
     fatPer100: r.fat_per_100,
     carbsPer100: r.carbs_per_100,
+    ingredients: parseIngredients(r.ingredients),
     done: !!r.done,
     createdAt: r.created_at,
   };
@@ -69,6 +87,7 @@ const COLS: Record<keyof PlanItemInput, string> = {
   proteinPer100: 'protein_per_100',
   fatPer100: 'fat_per_100',
   carbsPer100: 'carbs_per_100',
+  ingredients: 'ingredients',
 };
 
 export const useNutritionPlanStore = create<PlanState>()((set, get) => ({
@@ -83,14 +102,14 @@ export const useNutritionPlanStore = create<PlanState>()((set, get) => ({
   },
 
   addItem: async (input) => {
-    const item: PlanItem = { ...input, id: Crypto.randomUUID(), done: false, createdAt: new Date().toISOString() };
+    const item: PlanItem = { ...input, ingredients: input.ingredients || [], id: Crypto.randomUUID(), done: false, createdAt: new Date().toISOString() };
     const db = await getDb();
     await db.runAsync(
       `INSERT INTO nutrition_plan
-        (id, date, meal_type, name, amount_grams, kcal_per_100, protein_per_100, fat_per_100, carbs_per_100, done, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+        (id, date, meal_type, name, amount_grams, kcal_per_100, protein_per_100, fat_per_100, carbs_per_100, done, ingredients, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
       [item.id, item.date, item.mealType, item.name, item.amountGrams, item.kcalPer100,
-       item.proteinPer100, item.fatPer100, item.carbsPer100, item.createdAt],
+       item.proteinPer100, item.fatPer100, item.carbsPer100, JSON.stringify(item.ingredients), item.createdAt],
     );
     set((state) => ({ items: [...state.items, item] }));
   },
@@ -101,7 +120,10 @@ export const useNutritionPlanStore = create<PlanState>()((set, get) => ({
     const values: (string | number)[] = [];
     for (const key of keys) {
       const value = fields[key];
-      if (value !== undefined) { assignments.push(`${COLS[key]} = ?`); values.push(value as string | number); }
+      if (value !== undefined) {
+        assignments.push(`${COLS[key]} = ?`);
+        values.push(key === 'ingredients' ? JSON.stringify(value) : (value as string | number));
+      }
     }
     if (assignments.length === 0) return;
     const db = await getDb();

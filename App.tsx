@@ -29,6 +29,7 @@ import { useDailyLogStore } from './src/store/dailyLogStore';
 import { useNutritionStore } from './src/store/nutritionStore';
 import { useNutritionGoalStore } from './src/store/nutritionGoalStore';
 import { useNutritionPlanStore } from './src/store/nutritionPlanStore';
+import { useShoppingStore } from './src/store/shoppingStore';
 import { useRecurringPaymentStore } from './src/store/recurringPaymentStore';
 import { loadSyncFolder } from './src/db/database';
 
@@ -77,6 +78,7 @@ function AppLoader() {
   const loadNutritionGoals = useNutritionGoalStore((s) => s.load);
   const loadRecurringPayments = useRecurringPaymentStore((s) => s.load);
   const loadNutritionPlan = useNutritionPlanStore((s) => s.load);
+  const loadShopping = useShoppingStore((s) => s.load);
 
   useEffect(() => {
     (async () => {
@@ -109,6 +111,7 @@ function AppLoader() {
         loadNutritionGoals(),
         loadRecurringPayments(),
         loadNutritionPlan(),
+        loadShopping(),
       ]);
       setReady(true);
     })();

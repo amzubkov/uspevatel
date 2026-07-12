@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Image, StyleSheet, Alert, Modal, Vibration } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { useAudioPlayer } from 'expo-audio';
 import { useExerciseStore } from '../store/exerciseStore';
 import { useSportStore } from '../store/sportStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -39,6 +40,7 @@ export function ExerciseDetailScreen() {
   const [showTimerPrompt, setShowTimerPrompt] = useState(false);
   const [timerEnd, setTimerEnd] = useState<number | null>(null);
   const [timerLeft, setTimerLeft] = useState(0);
+  const beep = useAudioPlayer(require('../../assets/beep.wav'));
 
   useEffect(() => {
     if (timerEnd == null) return;
@@ -48,6 +50,7 @@ export function ExerciseDetailScreen() {
       if (left <= 0) {
         setTimerEnd(null);
         Vibration.vibrate([0, 400, 200, 400]);
+        try { beep.seekTo(0); beep.play(); } catch {}
       }
     };
     tick();

@@ -43,7 +43,7 @@ export async function closeDb(): Promise<void> {
   }
 }
 
-const SCHEMA_VERSION = 46;
+const SCHEMA_VERSION = 47;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -444,6 +444,7 @@ CREATE TABLE IF NOT EXISTS nutrition_plan (
   fat_per_100 REAL NOT NULL CHECK(fat_per_100 >= 0),
   carbs_per_100 REAL NOT NULL CHECK(carbs_per_100 >= 0),
   done INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0, 1)),
+  ingredients TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL
 );
 
@@ -1153,6 +1154,10 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
       created_at TEXT NOT NULL
     );`);
     await db.execAsync('CREATE INDEX IF NOT EXISTS idx_nutrition_plan_date ON nutrition_plan(date);');
+  }
+
+  if (currentVer < 47) {
+    await alterIgnoringDuplicate(`ALTER TABLE nutrition_plan ADD COLUMN ingredients TEXT NOT NULL DEFAULT '[]';`);
   }
 
   if (currentVer < SCHEMA_VERSION) {

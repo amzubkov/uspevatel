@@ -78,11 +78,16 @@ export function MenuPlan({ date, theme, formatDate }: { date: string; theme: 'li
       setLoading(true);
       try {
         if (replace) await clearDate(date);
-        const menu = await generateDietMenu({ dietName: getDiet(goalDiet).name, kcal: goalKcal, protein: goalProtein, fat: goalFat, carbs: goalCarbs });
+        // Avoid dishes already planned on other days (and kept ones on this day) so future days differ.
+        const avoid = Array.from(new Set(
+          items.filter((i) => i.date !== date || !replace).map((i) => i.name.trim()).filter(Boolean),
+        ));
+        const menu = await generateDietMenu({ dietName: getDiet(goalDiet).name, kcal: goalKcal, protein: goalProtein, fat: goalFat, carbs: goalCarbs, avoid });
         for (const m of menu) {
           await addItem({
             date, mealType: m.mealType, name: m.name, amountGrams: m.amountGrams,
             kcalPer100: m.kcalPer100, proteinPer100: m.proteinPer100, fatPer100: m.fatPer100, carbsPer100: m.carbsPer100,
+            ingredients: m.ingredients,
           });
         }
       } catch (e: any) {
@@ -151,7 +156,7 @@ export function MenuPlan({ date, theme, formatDate }: { date: string; theme: 'li
       Alert.alert('Меню', 'Граммы > 0, КБЖУ — неотрицательные'); return;
     }
     const kcal = form.kcalPer100.trim() ? kcalRaw : estimateKcalFromMacros({ proteinPer100: protein, fatPer100: fat, carbsPer100: carbs });
-    const input = { date, mealType: form.mealType, name, amountGrams: amount, kcalPer100: kcal, proteinPer100: protein, fatPer100: fat, carbsPer100: carbs };
+    const input = { date, mealType: form.mealType, name, amountGrams: amount, kcalPer100: kcal, proteinPer100: protein, fatPer100: fat, carbsPer100: carbs, ingredients: editing ? editing.ingredients : [] };
     try {
       if (editing) await updateItem(editing.id, input);
       else await addItem(input);

@@ -87,6 +87,11 @@ export async function lookupFoodByName(name: string): Promise<ParsedFood> {
 
 export type MenuMealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 
+export interface MenuIngredient {
+  name: string;
+  grams: number;
+}
+
 export interface MenuItem {
   mealType: MenuMealType;
   name: string;
@@ -95,6 +100,7 @@ export interface MenuItem {
   proteinPer100: number;
   fatPer100: number;
   carbsPer100: number;
+  ingredients: MenuIngredient[];
 }
 
 const MENU_SCHEMA = {
@@ -112,8 +118,16 @@ const MENU_SCHEMA = {
           proteinPer100: { type: 'number' },
           fatPer100: { type: 'number' },
           carbsPer100: { type: 'number' },
+          ingredients: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { name: { type: 'string' }, grams: { type: 'number' } },
+              required: ['name', 'grams'],
+            },
+          },
         },
-        required: ['mealType', 'name', 'amountGrams', 'kcalPer100', 'proteinPer100', 'fatPer100', 'carbsPer100'],
+        required: ['mealType', 'name', 'amountGrams', 'kcalPer100', 'proteinPer100', 'fatPer100', 'carbsPer100', 'ingredients'],
       },
     },
   },
@@ -126,16 +140,20 @@ export async function generateDietMenu(params: {
   protein: number;
   fat: number;
   carbs: number;
+  avoid?: string[];
 }): Promise<MenuItem[]> {
   const restrictions = (await getSetting('aiRestrictions')).trim();
+  const avoid = (params.avoid || []).filter(Boolean).slice(0, 40);
   const prompt = `Ты нутрициолог. Составь примерное меню на один день по диете «${params.dietName}».
 Цели на день: ${Math.round(params.kcal)} ккал, белки ${Math.round(params.protein)} г, жиры ${Math.round(params.fat)} г, углеводы ${Math.round(params.carbs)} г.
 ${restrictions ? `Ограничения/предпочтения: ${restrictions}.` : ''}
+${avoid.length ? `НЕ повторяй эти блюда (они уже запланированы на другие дни), предложи другие: ${avoid.join(', ')}.` : ''}
 Правила:
 - 4–6 блюд, распределены по приёмам: breakfast, lunch, dinner, snack.
 - Для каждого: mealType, name (по-русски), amountGrams (вес порции), и пищевая ценность на 100 г: kcalPer100, proteinPer100, fatPer100, carbsPer100.
+- ingredients: список продуктов блюда с граммовкой (name + grams). Только сырые продукты для покупки (например "овсяные хлопья" 60, "молоко" 200, "банан" 100), а не готовое блюдо. Сумма граммов ингредиентов ≈ amountGrams.
 - Суммарно по дню приблизься к целям КБЖУ. Реалистичные продукты и числа, запятую считай точкой.
-Ответ — только JSON: {"meals":[{"mealType":"breakfast","name":"Овсянка на молоке","amountGrams":250,"kcalPer100":90,"proteinPer100":3.5,"fatPer100":2,"carbsPer100":15}]}`;
+Ответ — только JSON: {"meals":[{"mealType":"breakfast","name":"Овсянка на молоке с бананом","amountGrams":360,"kcalPer100":90,"proteinPer100":3.5,"fatPer100":2,"carbsPer100":15,"ingredients":[{"name":"овсяные хлопья","grams":60},{"name":"молоко","grams":200},{"name":"банан","grams":100}]}]}`;
 
   const raw = await ollamaChatJson({ user: prompt, format: MENU_SCHEMA });
   const meals: any[] = Array.isArray(raw?.meals) ? raw.meals : [];
@@ -148,6 +166,9 @@ ${restrictions ? `Ограничения/предпочтения: ${restriction
     proteinPer100: num(m?.proteinPer100),
     fatPer100: num(m?.fatPer100),
     carbsPer100: num(m?.carbsPer100),
+    ingredients: (Array.isArray(m?.ingredients) ? m.ingredients : [])
+      .map((g: any) => ({ name: String(g?.name || '').trim(), grams: num(g?.grams) }))
+      .filter((g: MenuIngredient) => g.name && g.grams > 0),
   })).filter((m) => m.name);
 
   if (items.length === 0) throw new Error('Модель не вернула меню');
