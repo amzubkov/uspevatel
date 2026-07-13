@@ -23,7 +23,15 @@ export async function setSetting(key: string, value: string): Promise<void> {
 
 export const getOllamaKey = () => getSecret('ollamaApiKey');
 export const setOllamaKey = (k: string) => setSecret('ollamaApiKey', k);
-export const getOllamaModel = async () => (await getSetting('ollamaModel')) || DEFAULT_MODEL;
+
+// Models retired or now behind a paid plan — auto-heal a stale saved setting.
+const LEGACY_MODELS = new Set([
+  'kimi-k2.6', 'gemma3:27b', 'deepseek-v4-flash', 'deepseek-v4-pro', 'glm-5', 'qwen3.5:397b', 'gpt-oss:120b',
+]);
+export const getOllamaModel = async () => {
+  const saved = await getSetting('ollamaModel');
+  return !saved || LEGACY_MODELS.has(saved) ? DEFAULT_MODEL : saved;
+};
 export const setOllamaModel = (m: string) => setSetting('ollamaModel', m || DEFAULT_MODEL);
 
 // Models sometimes ignore the format schema and wrap JSON in markdown/prose —
@@ -44,6 +52,7 @@ interface OllamaChatOpts {
   user: string;
   images?: string[];       // base64; forces vision usage on caller's model choice
   format?: object;         // JSON schema hint (not all models honor it)
+  timeoutMs?: number;      // abort if no response within this window (default 120s)
 }
 
 // Sends one chat request and returns the parsed JSON object from the reply.
@@ -56,11 +65,24 @@ export async function ollamaChatJson(opts: OllamaChatOpts): Promise<any> {
   if (opts.system) messages.push({ role: 'system', content: opts.system });
   messages.push({ role: 'user', content: opts.user, ...(opts.images ? { images: opts.images } : {}) });
 
-  const res = await fetch(OLLAMA_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-    body: JSON.stringify({ model, stream: false, ...(opts.format ? { format: opts.format } : {}), messages }),
-  });
+  // Abort if the model stalls, so callers fail with a clear error instead of spinning forever.
+  const controller = new AbortController();
+  const timeoutMs = opts.timeoutMs ?? 120000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(OLLAMA_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model, stream: false, ...(opts.format ? { format: opts.format } : {}), messages }),
+      signal: controller.signal,
+    });
+  } catch (e: any) {
+    if (e?.name === 'AbortError') throw new Error(`Модель «${model}» не ответила за ${Math.round(timeoutMs / 1000)} с. Попробуйте другую модель (Спорт → 🤖 План) или повторите.`);
+    throw new Error(`Сеть недоступна: ${String(e?.message || e)}`);
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) throw new Error(`Ollama API ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();
   return extractJson(String(data?.message?.content || ''));

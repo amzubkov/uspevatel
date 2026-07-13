@@ -1,4 +1,4 @@
-import { todayStr, WEEKDAYS_SUN_LOWER } from '../utils/date';
+import { todayStr, shiftDateStr, WEEKDAYS_SUN_LOWER } from '../utils/date';
 import React, { useState, useMemo, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, FlatList, StyleSheet, Alert } from 'react-native';
 import { useSettingsStore } from '../store/settingsStore';
@@ -6,6 +6,9 @@ import { useDailyLogStore } from '../store/dailyLogStore';
 import { useSportStore } from '../store/sportStore';
 import { useExerciseStore } from '../store/exerciseStore';
 import { useTaskStore } from '../store/taskStore';
+import { useNutritionStore } from '../store/nutritionStore';
+import { useNutritionGoalStore } from '../store/nutritionGoalStore';
+import { sumNutrition } from '../utils/nutrition';
 import { colors } from '../utils/theme';
 import { exerciseKcal, calcDailyEntriesKcal, getBodyWeightAt } from '../utils/calories';
 import { useNavigation } from '@react-navigation/native';
@@ -144,6 +147,23 @@ export function DayReviewScreen() {
     return Math.round(gymCal + dailyCal);
   }, [dayWorkouts, sportEntries, date, bodyWeight]);
 
+  // Food: calories + macros logged for this date
+  const nutritionEntries = useNutritionStore((s) => s.entries);
+  const goalKcal = useNutritionGoalStore((s) => s.kcal);
+  const foodData = useMemo(() => {
+    const day = nutritionEntries.filter((e) => e.date === date);
+    // Overnight fasting window: last meal today -> first meal tomorrow.
+    const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    const nextDay = nutritionEntries.filter((e) => e.date === shiftDateStr(date, 1));
+    let fastingMin: number | null = null;
+    if (day.length && nextDay.length) {
+      const lastToday = Math.max(...day.map((e) => toMin(e.time)));
+      const firstNext = Math.min(...nextDay.map((e) => toMin(e.time)));
+      fastingMin = 24 * 60 - lastToday + firstNext;
+    }
+    return { totals: sumNutrition(day), count: day.length, fastingMin };
+  }, [nutritionEntries, date]);
+
   // Goals & tasks
   const goalsData = useMemo(() => {
     const dayGoalsTotal = allTasks.filter((t) => t.goalType === 'day').length;
@@ -174,7 +194,7 @@ export function DayReviewScreen() {
   const hasSport = sportData.pullups > 0 || sportData.abs > 0 || sportData.triceps > 0 || sportData.squats > 0;
 
   const mainContent = (
-    <ScrollView style={[s.container, { backgroundColor: c.background }]} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+    <ScrollView style={[s.container, { backgroundColor: c.background }]} contentContainerStyle={{ padding: 12, paddingBottom: 48 }}>
       {/* Date selector */}
       <View style={s.dateRow}>
         <TouchableOpacity onPress={() => changeDate(-1)}><Text style={[s.dateArrow, { color: c.primary }]}>{'<'}</Text></TouchableOpacity>
@@ -252,6 +272,29 @@ export function DayReviewScreen() {
           )}
         </TouchableOpacity>
 
+      {/* Food */}
+      <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.navigate('Nutrition')} style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={[s.sectionTitle, { color: c.textSecondary }]}>Еда ›</Text>
+          {foodData.count > 0 && (
+            <Text style={{ color: goalKcal > 0 && foodData.totals.kcal > goalKcal ? '#EF4444' : '#22C55E', fontSize: 12, fontWeight: '600' }}>
+              🍽️ {Math.round(foodData.totals.kcal)}{goalKcal > 0 ? ` / ${Math.round(goalKcal)}` : ''} ккал
+            </Text>
+          )}
+        </View>
+        {foodData.count > 0 ? (
+          <Text style={{ color: c.text, fontSize: 14, marginTop: 4 }}>
+            Б {Math.round(foodData.totals.protein)} · Ж {Math.round(foodData.totals.fat)} · У {Math.round(foodData.totals.carbs)} г · {foodData.count} записей
+          </Text>
+        ) : (
+          <Text style={{ color: c.textSecondary, fontSize: 13, marginTop: 4 }}>Ничего не записано</Text>
+        )}
+        {foodData.fastingMin != null && (
+          <Text style={{ color: c.textSecondary, fontSize: 13, marginTop: 2 }}>
+            🌙→🌅 Ночное окно: {Math.floor(foodData.fastingMin / 60)}ч {foodData.fastingMin % 60}м
+          </Text>
+        )}
+      </TouchableOpacity>
 
       {/* Goals & tasks */}
       <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -317,19 +360,19 @@ export function DayReviewScreen() {
 
 const s = StyleSheet.create({
   container: { flex: 1 },
-  dateRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginBottom: 11 },
-  dateArrow: { fontSize: 17, fontWeight: '700', paddingHorizontal: 8 },
-  dateText: { fontSize: 13, fontWeight: '700' },
-  section: { borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 12, gap: 8 },
-  sectionTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', marginBottom: 4 },
+  dateRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginBottom: 8 },
+  dateArrow: { fontSize: 16, fontWeight: '700', paddingHorizontal: 8 },
+  dateText: { fontSize: 12, fontWeight: '700' },
+  section: { borderWidth: 1, borderRadius: 12, padding: 10, marginBottom: 8, gap: 6 },
+  sectionTitle: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 3 },
   ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label: { fontSize: 13, fontWeight: '600', flex: 1 },
-  smallInput: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, fontSize: 14, width: 45, textAlign: 'center' },
+  label: { fontSize: 12, fontWeight: '600', flex: 1 },
+  smallInput: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, fontSize: 13, width: 45, textAlign: 'center' },
   sportAutoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  sportChip: { fontSize: 14, fontWeight: '600' },
+  sportChip: { fontSize: 13, fontWeight: '600' },
   sportInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  notesInput: { borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 14, minHeight: 60, textAlignVertical: 'top', marginBottom: 12 },
-  saveBtn: { borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+  notesInput: { borderWidth: 1, borderRadius: 10, padding: 10, fontSize: 14, minHeight: 50, textAlignVertical: 'top', marginBottom: 8 },
+  saveBtn: { borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginBottom: 8 },
   historyRow: { paddingVertical: 8, borderBottomWidth: 0.5 },
   empty: { paddingVertical: 24, alignItems: 'center' },
 });

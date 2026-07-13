@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { toDateStr, shiftDateStr, WEEKDAYS_SUN } from '../utils/date';
 import { useExerciseStore, Exercise, loadDayExercises } from '../store/exerciseStore';
 import { requestAiPlan, AiPlan } from '../services/aiPlannerService';
-import { getSetting, setSetting, DEFAULT_MODEL, SUGGESTED_MODELS } from '../services/ollamaClient';
+import { getSetting, setSetting, getOllamaModel, DEFAULT_MODEL, SUGGESTED_MODELS } from '../services/ollamaClient';
 import { ActivityIndicator } from 'react-native';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
@@ -80,7 +80,7 @@ export function WorkoutPlanScreen() {
   };
 
   const handleAiPlan = async () => {
-    setAiModel((await getSetting('ollamaModel')) || DEFAULT_MODEL);
+    setAiModel(await getOllamaModel());
     setAiGoal((await getSetting('aiGoal')) || 'ОФП');
     setAiNotes(await getSetting('aiRestrictions'));
     setShowAiSetup(true);
