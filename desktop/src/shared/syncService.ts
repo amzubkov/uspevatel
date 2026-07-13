@@ -14,52 +14,29 @@ async function gasGet(url: string): Promise<string> {
   const res = await fetch(url, { redirect: 'follow' });
   const text = await res.text();
   log(`GET response: status=${res.status} type=${res.type} body=${text.substring(0, 200)}`);
+  if (!res.ok) {
+    throw new Error(`GET failed (${res.status}): ${text.substring(0, 300)}`);
+  }
   return extractJson(text, res.status);
 }
 
 async function gasPost(url: string, payload: unknown): Promise<void> {
   const body = JSON.stringify(payload);
   log(`POST payload: ${body.substring(0, 300)}`);
-
-  // Google Apps Script redirect issue:
-  // POST → 302 → browser converts to GET → body lost
-  // Solution: redirect:'manual', check for opaque redirect = success
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body,
-      redirect: 'manual',
-    });
-    log(`POST response: status=${res.status} type=${res.type} redirected=${res.redirected}`);
-
-    // opaqueredirect (status 0) = Google received our POST and sent 302 = SUCCESS
-    if (res.type === 'opaqueredirect' || res.status === 302 || res.status === 0) {
-      log('POST OK (redirect = script processed it)');
-      return;
-    }
-    // 200 = direct response (no redirect, unlikely but fine)
-    if (res.ok) {
-      const text = await res.text();
-      log(`POST OK: ${text.substring(0, 200)}`);
-      return;
-    }
-    log(`POST unexpected: status=${res.status}`);
-  } catch (err) {
-    log(`POST error: ${err}`);
-    // Fallback: no-cors (fire and forget)
-    try {
-      await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body,
-        mode: 'no-cors',
-      });
-      log('POST fallback (no-cors) sent');
-    } catch (err2) {
-      log(`POST fallback also failed: ${err2}`);
-      throw err2;
-    }
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body,
+    redirect: 'follow',
+  });
+  const text = await res.text();
+  log(`POST response: status=${res.status} type=${res.type} body=${text.substring(0, 200)}`);
+  if (!res.ok) {
+    throw new Error(`POST failed (${res.status}): ${text.substring(0, 300)}`);
+  }
+  const parsed = JSON.parse(extractJson(text, res.status));
+  if (!parsed || parsed.status !== 'ok') {
+    throw new Error(`POST was not acknowledged: ${text.substring(0, 300)}`);
   }
 }
 
@@ -107,7 +84,7 @@ function normalizeRemoteTask(raw: Record<string, unknown>): Task {
     project: raw.project ? String(raw.project) : undefined,
     notes: String(raw.notes ?? ''),
     startDate: raw.startDate ? String(raw.startDate) : undefined,
-    priority: (['high', 'normal', 'low'].includes(String(raw.priority))
+    priority: (['super', 'high', 'normal', 'low'].includes(String(raw.priority))
       ? String(raw.priority)
       : 'normal') as Task['priority'],
     isRecurring: raw.isRecurring === true || raw.isRecurring === 'true',

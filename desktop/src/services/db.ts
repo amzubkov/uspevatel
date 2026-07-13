@@ -1,11 +1,27 @@
 import Database from "@tauri-apps/plugin-sql";
+import { invoke } from "@tauri-apps/api/core";
 
 let db: Database | null = null;
-let currentFolder: string | null = null;
 
-const SYNC_FOLDER_KEY = "syncFolder";
+const LOCAL_DATABASE_URL = "sqlite:uspevatel-desktop.db";
+const SNAPSHOT_SOURCE_KEY = "mobileSnapshotSource";
+const SNAPSHOT_ASSET_ROOT_KEY = "mobileSnapshotAssetRoot";
 const SETTINGS_KEY = "uspevatel-settings";
-const SYNC_FOLDER_CHANGED_EVENT = "uspevatel-sync-folder-changed";
+const SNAPSHOT_CHANGED_EVENT = "uspevatel-mobile-snapshot-changed";
+const SYNC_STATE_KEYS = [
+  "uspevatel-sync-baseline-url",
+  "uspevatel-sync-dirty-task-ids",
+  "uspevatel-sync-tombstone-ids",
+];
+
+export interface SnapshotImportResult {
+  sourcePath: string;
+  localPath: string;
+  assetRoot: string;
+  assetFilesCopied: number;
+  schemaVersion: string | null;
+  taskCount: number;
+}
 
 export interface AppSettings {
   syncUrl: string;
@@ -61,67 +77,96 @@ const SCHEMA_STMTS = [
   `CREATE INDEX IF NOT EXISTS idx_flights_depart ON flights(depart_date)`,
 ];
 
-export async function openDatabase(syncFolder: string): Promise<Database> {
-  if (db && currentFolder === syncFolder) return db;
-  if (db) {
+export async function openDatabase(): Promise<Database> {
+  if (db) return db;
+  const opened = await Database.load(LOCAL_DATABASE_URL);
+  try {
+    await opened.execute("PRAGMA journal_mode = WAL");
+    await opened.execute("PRAGMA foreign_keys = ON");
+    for (const stmt of SCHEMA_STMTS) {
+      await opened.execute(stmt);
+    }
+    db = opened;
+    return opened;
+  } catch (error) {
     try {
-      await db.close();
-    } catch {}
+      await opened.close();
+    } catch {
+      // Preserve the original schema/bootstrap error.
+    }
+    throw error;
   }
-  const path = syncFolder.startsWith("/")
-    ? `sqlite:${syncFolder}/uspevatel.db`
-    : `sqlite:${syncFolder}/uspevatel.db`;
-  db = await Database.load(path);
-  currentFolder = syncFolder;
-  await db.execute("PRAGMA journal_mode = WAL");
-  await db.execute("PRAGMA foreign_keys = ON");
-  for (const stmt of SCHEMA_STMTS) {
-    await db.execute(stmt);
-  }
-  return db;
 }
 
 export function getDb(): Database | null {
   return db;
 }
-export function getSyncFolder(): string | null {
-  return currentFolder;
-}
 
-export function getSyncFolderSetting(): string | null {
-  return localStorage.getItem(SYNC_FOLDER_KEY);
-}
-
-export function setSyncFolderSetting(folder: string) {
-  localStorage.setItem(SYNC_FOLDER_KEY, folder);
-  notifySyncFolderChanged(folder);
-}
-
-export function clearSyncFolderSetting() {
-  localStorage.removeItem(SYNC_FOLDER_KEY);
-  currentFolder = null;
+export async function closeDatabase(): Promise<void> {
+  const current = db;
   db = null;
-  notifySyncFolderChanged(null);
+  if (!current) return;
+  try {
+    await current.close();
+  } catch {
+    // The pool may already be closed after a failed startup/import.
+  }
 }
 
-export function onSyncFolderChanged(
-  listener: (folder: string | null) => void,
+export function getSnapshotSourceSetting(): string | null {
+  return localStorage.getItem(SNAPSHOT_SOURCE_KEY);
+}
+
+export function getSnapshotAssetFolder(): string | null {
+  return localStorage.getItem(SNAPSHOT_ASSET_ROOT_KEY);
+}
+
+function setSnapshotSourceSetting(sourcePath: string, assetRoot: string) {
+  localStorage.setItem(SNAPSHOT_SOURCE_KEY, sourcePath);
+  localStorage.setItem(SNAPSHOT_ASSET_ROOT_KEY, assetRoot);
+  // A replacement database must not inherit acknowledgements or pending
+  // writes that belonged to the previous local copy.
+  for (const key of SYNC_STATE_KEYS) localStorage.removeItem(key);
+  notifySnapshotChanged(sourcePath);
+}
+
+export function onSnapshotChanged(
+  listener: (sourcePath: string | null) => void,
 ): () => void {
   const handler = (event: Event) => {
     listener((event as CustomEvent<string | null>).detail ?? null);
   };
-  window.addEventListener(SYNC_FOLDER_CHANGED_EVENT, handler as EventListener);
+  window.addEventListener(SNAPSHOT_CHANGED_EVENT, handler as EventListener);
   return () =>
     window.removeEventListener(
-      SYNC_FOLDER_CHANGED_EVENT,
+      SNAPSHOT_CHANGED_EVENT,
       handler as EventListener,
     );
 }
 
-function notifySyncFolderChanged(folder: string | null) {
+function notifySnapshotChanged(sourcePath: string | null) {
   window.dispatchEvent(
-    new CustomEvent(SYNC_FOLDER_CHANGED_EVENT, { detail: folder }),
+    new CustomEvent(SNAPSHOT_CHANGED_EVENT, { detail: sourcePath }),
   );
+}
+
+export async function chooseAndReplaceLocalDatabaseWithSnapshot(): Promise<SnapshotImportResult | null> {
+  await closeDatabase();
+  try {
+    const result = await invoke<SnapshotImportResult | null>(
+      "choose_and_import_mobile_snapshot",
+    );
+    await openDatabase();
+    if (result) {
+      setSnapshotSourceSetting(result.sourcePath, result.assetRoot);
+    }
+    return result;
+  } catch (error) {
+    // The Rust command keeps the previous local DB as a rollback copy. Reopen
+    // whatever database is active so the UI remains usable after a rejection.
+    await openDatabase().catch(() => undefined);
+    throw error;
+  }
 }
 
 function parseJson<T>(raw: string | null, fallback: T): T {
@@ -183,7 +228,7 @@ async function writeSettingsToDb(settings: AppSettings): Promise<void> {
 }
 
 export async function loadAppSettings(): Promise<AppSettings> {
-  if (!getSyncFolder() || !db) {
+  if (!db) {
     return loadLegacySettings();
   }
   const rows = await db.select<{ key: string; value: string }[]>(
@@ -205,7 +250,7 @@ export async function loadAppSettings(): Promise<AppSettings> {
 
 export async function saveAppSettings(settings: AppSettings): Promise<void> {
   const next = clampSettings(settings);
-  if (!getSyncFolder() || !db) {
+  if (!db) {
     saveLegacySettings(next);
     return;
   }
@@ -251,7 +296,7 @@ export async function migrateLegacyDesktopDataToDb(): Promise<MigrationSummary> 
   if ((await getTableCount("tasks")) === 0 && legacyTasks.length > 0) {
     for (const task of legacyTasks) {
       await db.execute(
-        `INSERT OR REPLACE INTO tasks
+        `INSERT OR IGNORE INTO tasks
           (id, subject, action, category, context_category, project, notes, start_date, deadline, reminder_at, priority, is_recurring, recur_days, completed, completed_at, image_data, created_at, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
         [
@@ -467,7 +512,7 @@ async function selectAll<T = any>(
 }
 
 export async function exportAllData(): Promise<BackupData> {
-  if (!getSyncFolder() || !db) {
+  if (!db) {
     return {
       tasks: parseJson<any[]>(localStorage.getItem("uspevatel-tasks"), []),
       projects: parseJson<any[]>(
@@ -537,7 +582,7 @@ function normalizeBackupData(raw: any): BackupData {
 
 export async function importAllData(raw: any): Promise<void> {
   const data = normalizeBackupData(raw);
-  if (!getSyncFolder() || !db) {
+  if (!db) {
     localStorage.setItem("uspevatel-tasks", JSON.stringify(data.tasks));
     localStorage.setItem("uspevatel-projects", JSON.stringify(data.projects));
     localStorage.setItem("sport_entries", JSON.stringify(data.sport_entries));
@@ -553,152 +598,9 @@ export async function importAllData(raw: any): Promise<void> {
     saveLegacySettings(data.settings);
     return;
   }
-
-  await clearDatabaseTables();
-
-  for (const task of data.tasks) {
-    await db.execute(
-      `INSERT OR REPLACE INTO tasks
-        (id, subject, action, category, context_category, project, notes, start_date, deadline, reminder_at, priority, is_recurring, recur_days, completed, completed_at, image_data, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
-      [
-        task.id,
-        task.subject ?? "",
-        task.action,
-        task.category,
-        task.context_category ?? task.contextCategory ?? null,
-        task.project ?? null,
-        task.notes ?? "",
-        task.start_date ?? task.startDate ?? null,
-        task.deadline ?? null,
-        task.reminder_at ?? task.reminderAt ?? null,
-        task.priority ?? "normal",
-        task.is_recurring ?? (task.isRecurring ? 1 : 0),
-        task.recur_days ??
-          (task.recurDays ? JSON.stringify(task.recurDays) : null),
-        task.completed ? 1 : 0,
-        task.completed_at ?? task.completedAt ?? null,
-        task.image_data ?? task.imageUri ?? null,
-        task.created_at ?? task.createdAt ?? new Date().toISOString(),
-        task.updated_at ?? task.updatedAt ?? new Date().toISOString(),
-      ],
-    );
-  }
-
-  for (const project of data.projects) {
-    await db.execute(
-      "INSERT OR REPLACE INTO projects (id, name, is_current, notes) VALUES ($1,$2,$3,$4)",
-      [
-        project.id,
-        project.name,
-        project.is_current ?? (project.isCurrent ? 1 : 0),
-        project.notes ?? "",
-      ],
-    );
-  }
-
-  for (const entry of data.sport_entries) {
-    await db.execute(
-      "INSERT OR REPLACE INTO sport_entries (id, type, label, count, date, time) VALUES ($1,$2,$3,$4,$5,$6)",
-      [
-        entry.id,
-        entry.type,
-        entry.label ?? null,
-        entry.count,
-        entry.date,
-        entry.time,
-      ],
-    );
-  }
-
-  for (const exercise of data.exercises) {
-    await db.execute(
-      `INSERT OR REPLACE INTO exercises
-        (id, name, description, image_uri, image_data, order_num, tag, weight_type, media_type, is_preset)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [
-        exercise.id,
-        exercise.name,
-        exercise.description ?? null,
-        exercise.image_uri ?? exercise.imageUri ?? null,
-        exercise.image_data ?? exercise.imageUri ?? null,
-        exercise.order_num ?? exercise.orderNum ?? 0,
-        exercise.tag ?? null,
-        exercise.weight_type ?? exercise.weightType ?? 10,
-        exercise.media_type ?? exercise.mediaType ?? "photo",
-        exercise.is_preset ?? (exercise.isPreset ? 1 : 0),
-      ],
-    );
-  }
-
-  for (const log of data.workout_logs) {
-    await db.execute(
-      "INSERT OR REPLACE INTO workout_logs (id, exercise_id, weight, reps, set_num, date, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-      [
-        log.id,
-        log.exercise_id ?? log.exerciseId,
-        log.weight,
-        log.reps,
-        log.set_num ?? log.setNum ?? 1,
-        log.date,
-        log.created_at ?? log.createdAt ?? log.date,
-      ],
-    );
-  }
-
-  for (const flight of data.flights) {
-    await db.execute(
-      `INSERT OR REPLACE INTO flights
-        (id, kind, title, status, depart_date, depart_time, arrive_date, arrive_time, notes, image_data, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [
-        flight.id,
-        flight.kind ?? "flight",
-        flight.title,
-        flight.status,
-        flight.depart_date ?? flight.departDate,
-        flight.depart_time ?? flight.departTime ?? null,
-        flight.arrive_date ?? flight.arriveDate ?? null,
-        flight.arrive_time ?? flight.arriveTime ?? null,
-        flight.notes ?? "",
-        flight.image_data ?? flight.imageUri ?? null,
-        flight.created_at ?? flight.createdAt ?? new Date().toISOString(),
-      ],
-    );
-  }
-
-  for (const item of data.routine_items) {
-    await db.execute(
-      "INSERT OR REPLACE INTO routines (id, title, sort_order) VALUES ($1,$2,$3)",
-      [item.id, item.title, item.sort_order ?? item.order ?? 0],
-    );
-  }
-
-  const routineRows = Array.isArray(data.routine_completions)
-    ? data.routine_completions
-    : Object.entries(data.routine_completions).flatMap(([date, ids]) =>
-        (ids as string[]).map((id) => ({ routine_id: id, date })),
-      );
-  for (const row of routineRows) {
-    await db.execute(
-      "INSERT OR IGNORE INTO routine_completions (routine_id, date) VALUES ($1,$2)",
-      [row.routine_id ?? row.routineId, row.date],
-    );
-  }
-
-  for (const item of data.checklist) {
-    await db.execute(
-      "INSERT OR REPLACE INTO checklist (id, title, done, created_at) VALUES ($1,$2,$3,$4)",
-      [
-        item.id,
-        item.title,
-        item.done ? 1 : 0,
-        item.created_at ?? item.createdAt ?? new Date().toISOString(),
-      ],
-    );
-  }
-
-  await writeSettingsToDb(data.settings);
+  throw new Error(
+    "JSON-импорт отключён для SQLite: он не описывает всю мобильную схему. Импортируйте проверенный .db snapshot.",
+  );
 }
 
 async function clearDatabaseTables(): Promise<void> {
@@ -720,7 +622,7 @@ async function clearDatabaseTables(): Promise<void> {
 }
 
 export async function clearAllData(): Promise<void> {
-  if (!getSyncFolder() || !db) {
+  if (!db) {
     for (const key of [
       "uspevatel-tasks",
       "uspevatel-projects",

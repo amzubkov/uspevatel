@@ -2,17 +2,9 @@ import React, { useState, useCallback, useEffect } from "react";
 import { useApp } from "../context/AppContext";
 import { colors } from "../styles/theme";
 import { syncLog } from "../shared/syncService";
-import { save, open } from "@tauri-apps/plugin-dialog";
-import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
+import { invoke } from "@tauri-apps/api/core";
 import { useDatabase } from "../context/DatabaseContext";
-import {
-  clearAllData,
-  exportAllData,
-  importAllData,
-  migrateLegacyDesktopDataToDb,
-  openDatabase,
-  setSyncFolderSetting,
-} from "../services/db";
+import { clearAllData, exportAllData } from "../services/db";
 
 const APPS_SCRIPT_CODE = `var SHEET_NAME = 'Tasks';
 var HEADERS = ['id','subject','action','category','contextCategory','project','notes','startDate','priority','isRecurring','recurDays','completed','completedAt','deadline','createdAt','updatedAt','reminderAt'];
@@ -61,6 +53,9 @@ function doGet() {
 }
 
 function doPost(e) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
   var payload = JSON.parse(e.postData.contents);
   if (payload.routineLog) {
     var rs = getOrCreateRoutineSheet();
@@ -99,10 +94,13 @@ function doPost(e) {
     else sheet.appendRow(rowValues);
   }
   return ContentService.createTextOutput(JSON.stringify({status:'ok'})).setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    lock.releaseLock();
+  }
 }`;
 
 export function SettingsScreen() {
-  const { tasks, projects, settings, refresh, loading } = useApp();
+  const { tasks, projects, settings, refresh, syncRemote, loading, error } = useApp();
   const c = colors[settings.theme];
 
   const [syncUrlInput, setSyncUrlInput] = useState(settings.syncUrl);
@@ -121,7 +119,7 @@ export function SettingsScreen() {
     }
     setSyncStatus("Загрузка...");
     try {
-      await refresh();
+      await syncRemote();
       settings.update({ lastSyncAt: new Date().toISOString() });
       setSyncStatus("Синхронизировано");
     } catch (err) {
@@ -129,7 +127,7 @@ export function SettingsScreen() {
         `Ошибка: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-  }, [settings, refresh]);
+  }, [settings, syncRemote]);
 
   const handleAddContext = () => {
     const trimmed = newContext.trim();
@@ -145,70 +143,44 @@ export function SettingsScreen() {
     setNewContext("");
   };
 
-  const { syncFolder, reload } = useDatabase();
-  const [folderStatus, setFolderStatus] = useState<string | null>(null);
+  const { snapshotSource, importMobileSnapshot, reload } = useDatabase();
+  const [snapshotStatus, setSnapshotStatus] = useState<string | null>(null);
 
-  const handleChooseFolder = useCallback(async () => {
+  const handleChooseSnapshot = useCallback(async () => {
     try {
-      const path = await open({ directory: true });
-      if (!path) return;
-      await openDatabase(path as string);
-      const migration = await migrateLegacyDesktopDataToDb();
-      setSyncFolderSetting(path as string);
-      await reload();
-      await refresh();
-      const notes =
-        migration.imported.length > 0
-          ? ` Импортировано: ${migration.imported.join(", ")}.`
-          : migration.skipped.length > 0
-            ? ` База уже содержала данные: ${migration.skipped.join(", ")}.`
-            : "";
-      setFolderStatus(`Подключено: ${path}.${notes}`);
+      if (
+        !window.confirm(
+          "Выбрать и импортировать снимок мобильной базы в локальную desktop-копию? Исходные файлы останутся неизменными, а текущая desktop-копия будет сохранена как .previous.",
+        )
+      ) {
+        return;
+      }
+      setSnapshotStatus("Проверка и копирование snapshot...");
+      const result = await importMobileSnapshot();
+      if (!result) {
+        setSnapshotStatus("Импорт отменён");
+        return;
+      }
+      setSnapshotStatus(
+        `Импортировано задач: ${result.taskCount}, локальных вложений: ${result.assetFilesCopied}. Схема: ${result.schemaVersion ?? "не указана"}. Исходный файл не изменён.`,
+      );
     } catch (e) {
-      setFolderStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+      setSnapshotStatus(
+        `Ошибка: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
-  }, [refresh, reload]);
+  }, [importMobileSnapshot]);
 
   const [dataStatus, setDataStatus] = useState<string | null>(null);
 
   const handleExportToFile = async () => {
     try {
-      const path = await save({
-        defaultPath: "uspevatel-backup.json",
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!path) return;
       const data = await exportAllData();
-      await writeTextFile(path, JSON.stringify(data, null, 2));
-      setDataStatus(`Сохранено: ${path}`);
-    } catch (e) {
-      setDataStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-
-  const handleImportFromFile = async () => {
-    try {
-      const path = await open({
-        multiple: false,
-        filters: [{ name: "JSON", extensions: ["json"] }],
+      const path = await invoke<string | null>("save_desktop_export", {
+        contents: JSON.stringify(data, null, 2),
       });
       if (!path) return;
-      const raw = await readTextFile(path as string);
-      const data = JSON.parse(raw);
-      if (typeof data !== "object" || !data) {
-        setDataStatus("Неверный формат файла");
-        return;
-      }
-      if (
-        !window.confirm(
-          "Заменить все данные из файла? Текущие данные будут перезаписаны.",
-        )
-      )
-        return;
-      await importAllData(data);
-      setDataStatus("Импорт завершён. Перезагрузка...");
-      await reload();
-      await refresh();
+      setDataStatus(`Сохранено: ${path}`);
     } catch (e) {
       setDataStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -339,7 +311,7 @@ export function SettingsScreen() {
         </button>
       </div>
 
-      {/* Sync Folder (SQLite) */}
+      {/* Mobile SQLite snapshot */}
       <h3
         style={{
           color: c.text,
@@ -349,13 +321,15 @@ export function SettingsScreen() {
           marginBottom: 8,
         }}
       >
-        Папка синхронизации (SQLite)
+        Снимок мобильной базы (SQLite)
       </h3>
       <p style={{ color: c.textSecondary, fontSize: 13, marginBottom: 8 }}>
-        Укажите папку Dropbox с файлом uspevatel.db для синхронизации с
-        телефоном
+        Desktop проверяет выбранный файл и создаёт отдельную локальную копию.
+        Каталоги task_images, flight_images и exercise_images также копируются
+        внутрь приложения. Автоматической синхронизации с телефоном и записи в
+        исходные файлы нет.
       </p>
-      {syncFolder && (
+      {snapshotSource && (
         <div
           style={{
             padding: "8px 12px",
@@ -368,26 +342,28 @@ export function SettingsScreen() {
           <span
             style={{ color: c.text, fontSize: 13, fontFamily: "monospace" }}
           >
-            {syncFolder}
+            Последний импорт: {snapshotSource}
           </span>
         </div>
       )}
       <button
-        onClick={handleChooseFolder}
+        onClick={handleChooseSnapshot}
+        disabled={loading}
         style={{
           width: "100%",
           padding: 14,
           borderRadius: 10,
-          backgroundColor: syncFolder ? c.card : c.primary,
-          color: syncFolder ? c.text : "#fff",
+          backgroundColor: snapshotSource ? c.card : c.primary,
+          color: snapshotSource ? c.text : "#fff",
           fontWeight: 600,
           fontSize: 15,
-          border: syncFolder ? `1px solid ${c.border}` : "none",
+          border: snapshotSource ? `1px solid ${c.border}` : "none",
+          opacity: loading ? 0.5 : 1,
         }}
       >
-        {syncFolder ? "Изменить папку..." : "Выбрать папку..."}
+        {snapshotSource ? "Импортировать другой snapshot..." : "Импортировать snapshot..."}
       </button>
-      {folderStatus && (
+      {snapshotStatus && (
         <div
           style={{
             backgroundColor: c.card,
@@ -397,7 +373,7 @@ export function SettingsScreen() {
             border: `1px solid ${c.border}`,
           }}
         >
-          <span style={{ color: c.text, fontSize: 13 }}>{folderStatus}</span>
+          <span style={{ color: c.text, fontSize: 13 }}>{snapshotStatus}</span>
         </div>
       )}
 
@@ -571,6 +547,22 @@ export function SettingsScreen() {
         </div>
       )}
 
+      {error && (
+        <div
+          style={{
+            backgroundColor: c.card,
+            borderRadius: 8,
+            padding: 10,
+            marginTop: 8,
+            border: `1px solid ${c.danger}`,
+          }}
+        >
+          <span style={{ color: c.danger, fontSize: 13 }}>
+            Последняя ошибка: {error}
+          </span>
+        </div>
+      )}
+
       <button
         onClick={() => setShowScript(!showScript)}
         style={{
@@ -677,8 +669,8 @@ export function SettingsScreen() {
         Сохранение / Загрузка
       </h3>
       <p style={{ color: c.textSecondary, fontSize: 13, marginBottom: 8 }}>
-        Экспорт и импорт всех данных (задачи, проекты, спорт, упражнения,
-        перелёты, рутина, чеклист)
+        JSON-экспорт поддерживаемых desktop-разделов. Для безопасной загрузки
+        мобильных данных используйте SQLite snapshot выше.
       </p>
 
       <div style={{ display: "flex", gap: 8 }}>
@@ -695,20 +687,6 @@ export function SettingsScreen() {
           }}
         >
           Сохранить в файл...
-        </button>
-        <button
-          onClick={handleImportFromFile}
-          style={{
-            flex: 1,
-            padding: 14,
-            borderRadius: 10,
-            backgroundColor: c.success,
-            color: "#fff",
-            fontWeight: 600,
-            fontSize: 15,
-          }}
-        >
-          Загрузить из файла...
         </button>
       </div>
 
@@ -748,7 +726,9 @@ export function SettingsScreen() {
       <button
         onClick={() => {
           if (
-            window.confirm("Удалить все данные? Это действие нельзя отменить!")
+            window.confirm(
+              "Удалить данные только из локальной desktop-копии? Импортированный мобильный snapshot не изменится.",
+            )
           ) {
             void clearAllData()
               .then(async () => {
@@ -772,7 +752,7 @@ export function SettingsScreen() {
           fontWeight: 600,
         }}
       >
-        Удалить все данные
+        Очистить локальную desktop-копию
       </button>
 
       {/* Debug Log */}

@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useApp } from '../context/AppContext';
+import { RemoteSyncError, useApp } from '../context/AppContext';
 import { colors } from '../styles/theme';
 import { Category, CATEGORY_LABELS } from '../shared/types';
 import { resolveImageSrc } from '../services/images';
@@ -15,13 +15,12 @@ export function TaskDetailScreen() {
   const contextCategories = settings.contextCategories;
 
   const task = useMemo(() => tasks.find((t) => t.id === taskId), [tasks, taskId]);
-  const deletedRef = useRef(false);
 
   const [subject, setSubject] = useState(task?.subject || '');
   const [action, setAction] = useState(task?.action || '');
   const [notes, setNotes] = useState(task?.notes || '');
   const [category, setCategory] = useState<Category>(task?.category || 'IN');
-  const [priority, setPriority] = useState<'high' | 'normal' | 'low'>(task?.priority || 'normal');
+  const [priority, setPriority] = useState<'super' | 'high' | 'normal' | 'low'>(task?.priority || 'normal');
   const [project, setProject] = useState<string | undefined>(task?.project);
   const [contextCategory, setContextCategory] = useState<string | undefined>(task?.contextCategory);
   const [deadline, setDeadline] = useState<string | undefined>(task?.deadline);
@@ -30,6 +29,18 @@ export function TaskDetailScreen() {
   const [showDeadlinePicker, setShowDeadlinePicker] = useState(false);
   const [customDeadlineDate, setCustomDeadlineDate] = useState('');
   const [customDeadlineTime, setCustomDeadlineTime] = useState('');
+
+  useEffect(() => {
+    if (!task) return;
+    setSubject(task.subject || '');
+    setAction(task.action || '');
+    setNotes(task.notes || '');
+    setCategory(task.category);
+    setPriority(task.priority || 'normal');
+    setProject(task.project);
+    setContextCategory(task.contextCategory);
+    setDeadline(task.deadline);
+  }, [taskId, task?.id]);
 
   const knownSubjects = useMemo(() => {
     const set = new Set<string>();
@@ -60,18 +71,36 @@ export function TaskDetailScreen() {
     if (!exists) addProject(name.trim());
   };
 
-  const handleSave = () => {
-    deletedRef.current = true;
+  const handleSave = async () => {
     ensureProjectExists(project);
-    updateTask(taskId!, { subject, action, notes, category, priority, project: project || undefined, contextCategory: contextCategory || undefined, deadline: deadline || undefined });
-    navigate(-1);
+    try {
+      await updateTask(taskId!, { subject, action, notes, category, priority, project: project || undefined, contextCategory: contextCategory || undefined, deadline: deadline || undefined });
+      navigate(-1);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+      if (error instanceof RemoteSyncError) navigate(-1);
+    }
   };
 
   const handleDelete = () => {
     if (window.confirm('Удалить задачу? Это действие нельзя отменить')) {
-      deletedRef.current = true;
-      deleteTask(taskId!);
+      void deleteTask(taskId!)
+        .then(() => navigate(-1))
+        .catch((error) => {
+          alert(error instanceof Error ? error.message : String(error));
+          if (error instanceof RemoteSyncError) navigate(-1);
+        });
+    }
+  };
+
+  const handleComplete = async () => {
+    try {
+      if (task.completed) await uncompleteTask(taskId!);
+      else await completeTask(taskId!);
       navigate(-1);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+      if (error instanceof RemoteSyncError) navigate(-1);
     }
   };
 
@@ -172,9 +201,9 @@ export function TaskDetailScreen() {
 
       <label style={{ fontSize: 13, fontWeight: 600, color: c.textSecondary, display: 'block', marginTop: 16, marginBottom: 6 }}>Приоритет</label>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {(['high', 'normal', 'low'] as const).map((p) => (
-          <button key={p} onClick={() => setPriority(p)} style={chipStyle(priority === p, p === 'high' ? '#DC2626' : p === 'normal' ? '#16A34A' : '#EAB308')}>
-            {p === 'high' ? 'Высокий' : p === 'normal' ? 'Обычный' : 'Низкий'}
+        {(['super', 'high', 'normal', 'low'] as const).map((p) => (
+          <button key={p} onClick={() => setPriority(p)} style={chipStyle(priority === p, p === 'super' ? '#7F1D1D' : p === 'high' ? '#DC2626' : p === 'normal' ? '#16A34A' : '#EAB308')}>
+            {p === 'super' ? 'Супер' : p === 'high' ? 'Высокий' : p === 'normal' ? 'Обычный' : 'Низкий'}
           </button>
         ))}
       </div>
@@ -230,7 +259,7 @@ export function TaskDetailScreen() {
       {/* Actions */}
       <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
         <button
-          onClick={() => { task.completed ? uncompleteTask(taskId!) : completeTask(taskId!); navigate(-1); }}
+          onClick={() => void handleComplete()}
           style={{ flex: 1, padding: 14, borderRadius: 10, backgroundColor: task.completed ? c.warning : c.success, color: '#fff', fontSize: 16, fontWeight: 600 }}
         >
           {task.completed ? 'Вернуть' : 'Выполнено'}

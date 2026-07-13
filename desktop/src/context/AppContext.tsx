@@ -1,20 +1,25 @@
 import React, {
   createContext,
-  useContext,
-  useState,
   useCallback,
+  useContext,
   useEffect,
   useRef,
+  useState,
 } from "react";
 import { Task, Project, Category } from "../shared/types";
 import { fetchRemoteTasks, pushChanges } from "../shared/syncService";
+import { mergeRemoteTasks } from "../shared/syncMerge";
 import { useSettings } from "../hooks/useSettings";
-import {
-  getDb,
-  getSyncFolder,
-  getSyncFolderSetting,
-  onSyncFolderChanged,
-} from "../services/db";
+import { getDb } from "../services/db";
+import { useDatabase } from "./DatabaseContext";
+
+const DIRTY_TASKS_KEY = "uspevatel-sync-dirty-task-ids";
+const TOMBSTONES_KEY = "uspevatel-sync-tombstone-ids";
+const SYNC_BASELINE_KEY = "uspevatel-sync-baseline-url";
+
+export class RemoteSyncError extends Error {
+  override name = "RemoteSyncError";
+}
 
 interface AppState {
   tasks: Task[];
@@ -23,6 +28,7 @@ interface AppState {
   error: string | null;
   settings: ReturnType<typeof useSettings>;
   refresh: () => Promise<void>;
+  syncRemote: () => Promise<void>;
   addTask: (
     data: Partial<Task> & { action: string; category: Category },
   ) => Promise<void>;
@@ -45,7 +51,6 @@ export function useApp(): AppState {
   return ctx;
 }
 
-// localStorage helpers
 function loadTasks(): Task[] {
   try {
     const raw = localStorage.getItem("uspevatel-tasks");
@@ -68,10 +73,38 @@ function loadProjects(): Project[] {
   }
 }
 
-// SQLite helpers for tasks
+function readIdSet(key: string): Set<string> {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || "[]");
+    return new Set(Array.isArray(value) ? value.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeIdSet(key: string, ids: Set<string>) {
+  localStorage.setItem(key, JSON.stringify([...ids]));
+}
+
+function addIds(key: string, ids: string[]) {
+  const current = readIdSet(key);
+  ids.forEach((id) => current.add(id));
+  writeIdSet(key, current);
+}
+
+function removeIds(key: string, ids: string[]) {
+  const current = readIdSet(key);
+  ids.forEach((id) => current.delete(id));
+  writeIdSet(key, current);
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function dbLoadTasks(): Promise<Task[]> {
   const db = getDb();
-  if (!db) return [];
+  if (!db) return loadTasks();
   const rows = await db.select<any[]>(
     "SELECT * FROM tasks ORDER BY created_at DESC",
   );
@@ -93,47 +126,85 @@ async function dbLoadTasks(): Promise<Task[]> {
     completedAt: r.completed_at || undefined,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
-    imageUri: r.image_data || undefined,
+    imageUri: typeof r.image_data === "string" ? r.image_data : undefined,
   }));
 }
 
-async function dbUpsertTask(t: Task) {
+const taskValues = (task: Task) => [
+  task.id,
+  task.subject,
+  task.action,
+  task.category,
+  task.contextCategory || null,
+  task.project || null,
+  task.notes,
+  task.startDate || null,
+  task.deadline || null,
+  task.reminderAt || null,
+  task.priority,
+  task.isRecurring ? 1 : 0,
+  task.recurDays ? JSON.stringify(task.recurDays) : null,
+  task.completed ? 1 : 0,
+  task.completedAt || null,
+  task.createdAt,
+  task.updatedAt,
+];
+
+async function dbInsertTask(task: Task): Promise<void> {
   const db = getDb();
   if (!db) return;
   await db.execute(
-    `INSERT OR REPLACE INTO tasks (id,subject,action,category,context_category,project,notes,start_date,deadline,reminder_at,priority,is_recurring,recur_days,completed,completed_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+    `INSERT INTO tasks
+      (id,subject,action,category,context_category,project,notes,start_date,deadline,reminder_at,priority,is_recurring,recur_days,completed,completed_at,created_at,updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+    taskValues(task),
+  );
+}
+
+async function dbUpdateTask(task: Task): Promise<number> {
+  const db = getDb();
+  if (!db) return 0;
+  const result = await db.execute(
+    `UPDATE tasks SET
+      subject=$1, action=$2, category=$3, context_category=$4, project=$5,
+      notes=$6, start_date=$7, deadline=$8, reminder_at=$9, priority=$10,
+      is_recurring=$11, recur_days=$12, completed=$13, completed_at=$14,
+      updated_at=$15
+     WHERE id=$16`,
     [
-      t.id,
-      t.subject,
-      t.action,
-      t.category,
-      t.contextCategory || null,
-      t.project || null,
-      t.notes,
-      t.startDate || null,
-      t.deadline || null,
-      t.reminderAt || null,
-      t.priority,
-      t.isRecurring ? 1 : 0,
-      t.recurDays ? JSON.stringify(t.recurDays) : null,
-      t.completed ? 1 : 0,
-      t.completedAt || null,
-      t.createdAt,
-      t.updatedAt,
+      task.subject,
+      task.action,
+      task.category,
+      task.contextCategory || null,
+      task.project || null,
+      task.notes,
+      task.startDate || null,
+      task.deadline || null,
+      task.reminderAt || null,
+      task.priority,
+      task.isRecurring ? 1 : 0,
+      task.recurDays ? JSON.stringify(task.recurDays) : null,
+      task.completed ? 1 : 0,
+      task.completedAt || null,
+      task.updatedAt,
+      task.id,
     ],
   );
+  return result.rowsAffected;
+}
+
+async function dbMergeTask(task: Task): Promise<void> {
+  if ((await dbUpdateTask(task)) === 0) await dbInsertTask(task);
 }
 
 async function dbDeleteTask(id: string) {
   const db = getDb();
-  if (!db) return;
-  await db.execute("DELETE FROM tasks WHERE id=$1", [id]);
+  if (db) await db.execute("DELETE FROM tasks WHERE id=$1", [id]);
 }
 
-// SQLite helpers for projects
 async function dbLoadProjects(): Promise<Project[]> {
   const db = getDb();
-  if (!db) return [];
+  if (!db) return loadProjects();
   const rows = await db.select<any[]>("SELECT * FROM projects");
   return rows.map((r) => ({
     id: r.id,
@@ -143,143 +214,209 @@ async function dbLoadProjects(): Promise<Project[]> {
   }));
 }
 
-async function dbUpsertProject(p: Project) {
+async function dbUpsertProject(project: Project) {
   const db = getDb();
   if (!db) return;
   await db.execute(
-    "INSERT OR REPLACE INTO projects (id,name,is_current,notes) VALUES ($1,$2,$3,$4)",
-    [p.id, p.name, p.isCurrent ? 1 : 0, p.notes],
+    `INSERT INTO projects (id,name,is_current,notes) VALUES ($1,$2,$3,$4)
+     ON CONFLICT(id) DO UPDATE SET
+       name=excluded.name, is_current=excluded.is_current, notes=excluded.notes`,
+    [project.id, project.name, project.isCurrent ? 1 : 0, project.notes],
   );
 }
 
 async function dbDeleteProject(id: string) {
   const db = getDb();
-  if (!db) return;
-  await db.execute("DELETE FROM projects WHERE id=$1", [id]);
+  if (db) await db.execute("DELETE FROM projects WHERE id=$1", [id]);
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
+  const { ready: databaseReady } = useDatabase();
   const settings = useSettings();
-  const [tasks, setTasksRaw] = useState<Task[]>(loadTasks);
-  const [projects, setProjects] = useState<Project[]>(loadProjects);
-  const [loading, setLoading] = useState(false);
+  const [tasks, setTasksRaw] = useState<Task[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [hydrated, setHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [syncFolder, setSyncFolder] = useState<string | null>(
-    getSyncFolderSetting(),
-  );
-  const syncUrl = settings.syncUrl;
-
-  // Keep a ref to always have current tasks (avoids stale closure issues)
   const tasksRef = useRef(tasks);
+  const pushQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pushGenerationRef = useRef(new Map<string, number>());
   tasksRef.current = tasks;
 
-  // Wrapper that persists to localStorage (or SQLite is handled per-operation)
   const setTasks = useCallback(
     (updater: Task[] | ((prev: Task[]) => Task[])) => {
       setTasksRaw((prev) => {
         const next = typeof updater === "function" ? updater(prev) : updater;
-        if (!syncFolder) saveTasks(next);
+        if (!getDb()) saveTasks(next);
         return next;
       });
     },
-    [syncFolder],
+    [],
   );
 
-  // Persist projects to localStorage (skip if SQLite mode)
   useEffect(() => {
-    if (!syncFolder) {
+    if (!getDb()) {
       localStorage.setItem("uspevatel-projects", JSON.stringify(projects));
     }
-  }, [projects, syncFolder]);
-
-  useEffect(() => {
-    const unsubscribe = onSyncFolderChanged((folder) => {
-      setSyncFolder(folder);
-    });
-    return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    if (syncFolder && getDb()) {
-      dbLoadTasks().then(setTasksRaw);
-      dbLoadProjects().then(setProjects);
-      return;
-    }
-    setTasksRaw(loadTasks());
-    setProjects(loadProjects());
-  }, [syncFolder]);
-
-  // Track in-flight pushes to avoid refresh wiping them
-  const pushingRef = useRef(0);
+  }, [projects]);
 
   const refresh = useCallback(async () => {
-    if (syncFolder && getDb()) {
-      // SQLite mode: reload from DB
-      setLoading(true);
-      try {
-        const [t, p] = await Promise.all([dbLoadTasks(), dbLoadProjects()]);
-        setTasksRaw(t);
-        setProjects(p);
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-    if (!syncUrl) {
-      setError("Укажите URL в настройках");
-      return;
-    }
-    // Don't refresh while pushes are in-flight
-    if (pushingRef.current > 0) {
-      console.log(
-        "[SYNC] skipping refresh, pushes in flight:",
-        pushingRef.current,
-      );
-      return;
-    }
     setLoading(true);
     setError(null);
     try {
-      const remote = await fetchRemoteTasks(syncUrl);
-      const remoteIds = new Set(remote.map((t) => t.id));
-      const localOnly = tasksRef.current.filter((t) => !remoteIds.has(t.id));
-      const merged = [...remote, ...localOnly];
-      setTasks(merged);
+      const [nextTasks, nextProjects] = await Promise.all([
+        dbLoadTasks(),
+        dbLoadProjects(),
+      ]);
+      setTasksRaw(nextTasks);
+      setProjects(nextProjects);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      throw err;
     } finally {
       setLoading(false);
     }
-  }, [syncFolder, syncUrl, setTasks]);
+  }, []);
 
-  // Auto-fetch on syncUrl change
   useEffect(() => {
-    if (syncUrl) refresh();
-  }, [syncUrl]);
+    let cancelled = false;
+    if (!databaseReady) {
+      setHydrated(false);
+      setLoading(true);
+      return () => {
+        cancelled = true;
+      };
+    }
 
-  // Push helper with in-flight tracking
+    setHydrated(false);
+    void refresh()
+      .then(() => {
+        if (!cancelled) setHydrated(true);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [databaseReady, refresh]);
+
   const safePush = useCallback(
-    async (upsert: Task[], deleteIds: string[]) => {
-      if (!syncUrl) return;
-      pushingRef.current++;
-      try {
-        await pushChanges(syncUrl, upsert, deleteIds);
-      } catch (err) {
-        console.error("[PUSH ERROR]", err);
-        setError(
-          `Ошибка отправки: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      } finally {
-        pushingRef.current--;
+    (upsert: Task[], deleteIds: string[]): Promise<void> => {
+      if (upsert.length === 0 && deleteIds.length === 0) {
+        return Promise.resolve();
       }
+      const upsertIds = upsert.map((task) => task.id);
+      const touchedIds = [...new Set([...upsertIds, ...deleteIds])];
+      const generations = new Map<string, number>();
+      for (const id of touchedIds) {
+        const generation = (pushGenerationRef.current.get(id) ?? 0) + 1;
+        pushGenerationRef.current.set(id, generation);
+        generations.set(id, generation);
+      }
+      removeIds(TOMBSTONES_KEY, upsertIds);
+      removeIds(DIRTY_TASKS_KEY, deleteIds);
+      addIds(DIRTY_TASKS_KEY, upsertIds);
+      addIds(TOMBSTONES_KEY, deleteIds);
+      if (!settings.syncUrl) return Promise.resolve();
+
+      const execute = async () => {
+        try {
+          await pushChanges(settings.syncUrl, upsert, deleteIds);
+          for (const id of upsertIds) {
+            if (pushGenerationRef.current.get(id) === generations.get(id)) {
+              removeIds(DIRTY_TASKS_KEY, [id]);
+            }
+          }
+          for (const id of deleteIds) {
+            if (pushGenerationRef.current.get(id) === generations.get(id)) {
+              removeIds(TOMBSTONES_KEY, [id]);
+            }
+          }
+          setError(null);
+        } catch (err) {
+          const surfaced = new RemoteSyncError(
+            `Изменение сохранено локально, но синхронизация не выполнена: ${messageOf(err)}`,
+          );
+          setError(surfaced.message);
+          throw surfaced;
+        }
+      };
+
+      const queued = pushQueueRef.current.then(execute, execute);
+      pushQueueRef.current = queued.catch(() => undefined);
+      return queued;
     },
-    [syncUrl],
+    [settings.syncUrl],
   );
+
+  const syncRemote = useCallback(async () => {
+    if (!databaseReady || !hydrated) {
+      const error = new Error("Локальная база ещё загружается");
+      setError(error.message);
+      throw error;
+    }
+    const syncUrl = settings.syncUrl;
+    if (!syncUrl) {
+      const error = new Error("Укажите URL в настройках");
+      setError(error.message);
+      throw error;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      await pushQueueRef.current;
+      const dirtyIds = readIdSet(DIRTY_TASKS_KEY);
+      const tombstones = readIdSet(TOMBSTONES_KEY);
+      const pendingUpserts = tasksRef.current.filter((task) =>
+        dirtyIds.has(task.id),
+      );
+      if (pendingUpserts.length || tombstones.size) {
+        await safePush(pendingUpserts, [...tombstones]);
+      }
+
+      const remote = await fetchRemoteTasks(syncUrl);
+      const current = tasksRef.current;
+      const hasRemoteBaseline =
+        localStorage.getItem(SYNC_BASELINE_KEY) === syncUrl;
+      const merge = mergeRemoteTasks(
+        remote,
+        current,
+        readIdSet(DIRTY_TASKS_KEY),
+        readIdSet(TOMBSTONES_KEY),
+        hasRemoteBaseline,
+      );
+
+      const mergedIds = new Set(merge.tasks.map((task) => task.id));
+      for (const local of current) {
+        if (!mergedIds.has(local.id)) await dbDeleteTask(local.id);
+      }
+      for (const task of merge.tasks) await dbMergeTask(task);
+      setTasks(merge.tasks);
+
+      if (merge.retryUpserts.length) {
+        await safePush(merge.retryUpserts, []);
+      }
+      localStorage.setItem(SYNC_BASELINE_KEY, syncUrl);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [databaseReady, hydrated, safePush, setTasks, settings.syncUrl]);
+
+  useEffect(() => {
+    if (databaseReady && hydrated && settings.syncUrl) {
+      void syncRemote().catch(() => undefined);
+    }
+  }, [databaseReady, hydrated, settings.syncUrl, syncRemote]);
 
   const addTask = useCallback(
     async (data: Partial<Task> & { action: string; category: Category }) => {
       const now = new Date().toISOString();
-      const newTask: Task = {
+      const task: Task = {
         id: crypto.randomUUID(),
         subject: data.subject || "",
         action: data.action,
@@ -296,126 +433,154 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         createdAt: now,
         updatedAt: now,
       };
-      // Use functional update to always get latest state
-      setTasks((prev) => [...prev, newTask]);
-      if (syncFolder) await dbUpsertTask(newTask);
-      else await safePush([newTask], []);
+      setTasks((prev) => [...prev, task]);
+      try {
+        if (getDb()) await dbInsertTask(task);
+      } catch (error) {
+        setTasks((prev) => prev.filter((item) => item.id !== task.id));
+        const surfaced = new Error(
+          `Не удалось сохранить задачу локально: ${messageOf(error)}`,
+        );
+        setError(surfaced.message);
+        throw surfaced;
+      }
+      await safePush([task], []);
     },
-    [setTasks, safePush, syncFolder],
+    [safePush, setTasks],
   );
 
   const updateTask = useCallback(
     async (id: string, updates: Partial<Task>) => {
-      const now = new Date().toISOString();
-      let updated: Task | undefined;
-      setTasks((prev) => {
-        const next = prev.map((t) => {
-          if (t.id === id) {
-            updated = { ...t, ...updates, updatedAt: now };
-            return updated;
-          }
-          return t;
-        });
-        return next;
-      });
-      // Wait a tick for state to settle, then push
-      if (updated) {
-        if (syncFolder) await dbUpsertTask(updated);
-        else await safePush([updated], []);
+      const current = tasksRef.current.find((task) => task.id === id);
+      if (!current) return;
+      const updated: Task = {
+        ...current,
+        ...updates,
+        updatedAt: new Date().toISOString(),
+      };
+      setTasks((prev) =>
+        prev.map((task) => (task.id === id ? updated : task)),
+      );
+      try {
+        if (getDb() && (await dbUpdateTask(updated)) === 0) {
+          throw new Error("задача отсутствует в SQLite");
+        }
+      } catch (error) {
+        setTasks((prev) =>
+          prev.map((task) =>
+            task.id === id && task.updatedAt === updated.updatedAt
+              ? current
+              : task,
+          ),
+        );
+        const surfaced = new Error(
+          `Не удалось обновить задачу локально: ${messageOf(error)}`,
+        );
+        setError(surfaced.message);
+        throw surfaced;
       }
+      await safePush([updated], []);
     },
-    [setTasks, safePush, syncFolder],
+    [safePush, setTasks],
   );
 
   const deleteTask = useCallback(
     async (id: string) => {
-      setTasks((prev) => prev.filter((t) => t.id !== id));
-      if (syncFolder) await dbDeleteTask(id);
-      else await safePush([], [id]);
+      const current = tasksRef.current.find((task) => task.id === id);
+      const currentIndex = tasksRef.current.findIndex((task) => task.id === id);
+      setTasks((prev) => prev.filter((task) => task.id !== id));
+      try {
+        await dbDeleteTask(id);
+      } catch (error) {
+        if (current) {
+          setTasks((prev) => {
+            if (prev.some((task) => task.id === id)) return prev;
+            const next = [...prev];
+            next.splice(Math.max(0, currentIndex), 0, current);
+            return next;
+          });
+        }
+        const surfaced = new Error(
+          `Не удалось удалить задачу локально: ${messageOf(error)}`,
+        );
+        setError(surfaced.message);
+        throw surfaced;
+      }
+      await safePush([], [id]);
     },
-    [setTasks, safePush, syncFolder],
+    [safePush, setTasks],
   );
 
   const moveTask = useCallback(
-    async (id: string, category: Category) => {
-      await updateTask(id, { category });
-    },
+    async (id: string, category: Category) => updateTask(id, { category }),
     [updateTask],
   );
 
   const completeTask = useCallback(
-    async (id: string) => {
-      await updateTask(id, {
+    async (id: string) =>
+      updateTask(id, {
         completed: true,
         completedAt: new Date().toISOString(),
-      });
-    },
+      }),
     [updateTask],
   );
 
   const uncompleteTask = useCallback(
-    async (id: string) => {
-      await updateTask(id, { completed: false, completedAt: undefined });
-    },
+    async (id: string) =>
+      updateTask(id, { completed: false, completedAt: undefined }),
     [updateTask],
   );
 
-  // Project management
-  const addProject = useCallback(
-    (name: string, isCurrent = true) => {
-      const p: Project = {
-        id: crypto.randomUUID(),
-        name: name.toUpperCase(),
-        isCurrent,
-        notes: "",
-      };
-      setProjects((prev) => [...prev, p]);
-      if (syncFolder) void dbUpsertProject(p);
-    },
-    [syncFolder],
-  );
+  const addProject = useCallback((name: string, isCurrent = true) => {
+    const project: Project = {
+      id: crypto.randomUUID(),
+      name: name.toUpperCase(),
+      isCurrent,
+      notes: "",
+    };
+    setProjects((prev) => [...prev, project]);
+    void dbUpsertProject(project);
+  }, []);
 
   const updateProject = useCallback(
     (id: string, updates: Partial<Project>) => {
       setProjects((prev) => {
-        const next = prev.map((p) =>
-          p.id === id
+        const next = prev.map((project) =>
+          project.id === id
             ? {
-                ...p,
+                ...project,
                 ...updates,
-                name: updates.name ? updates.name.toUpperCase() : p.name,
+                name: updates.name
+                  ? updates.name.toUpperCase()
+                  : project.name,
               }
-            : p,
+            : project,
         );
-        const updated = next.find((p) => p.id === id);
-        if (updated && syncFolder) void dbUpsertProject(updated);
+        const updated = next.find((project) => project.id === id);
+        if (updated) void dbUpsertProject(updated);
         return next;
       });
     },
-    [syncFolder],
+    [],
   );
 
-  const deleteProject = useCallback(
-    (id: string) => {
-      setProjects((prev) => prev.filter((p) => p.id !== id));
-      if (syncFolder) void dbDeleteProject(id);
-    },
-    [syncFolder],
-  );
+  const deleteProject = useCallback((id: string) => {
+    setProjects((prev) => prev.filter((project) => project.id !== id));
+    void dbDeleteProject(id);
+  }, []);
 
-  const toggleProjectCurrent = useCallback(
-    (id: string) => {
-      setProjects((prev) => {
-        const next = prev.map((p) =>
-          p.id === id ? { ...p, isCurrent: !p.isCurrent } : p,
-        );
-        const updated = next.find((p) => p.id === id);
-        if (updated && syncFolder) void dbUpsertProject(updated);
-        return next;
-      });
-    },
-    [syncFolder],
-  );
+  const toggleProjectCurrent = useCallback((id: string) => {
+    setProjects((prev) => {
+      const next = prev.map((project) =>
+        project.id === id
+          ? { ...project, isCurrent: !project.isCurrent }
+          : project,
+      );
+      const updated = next.find((project) => project.id === id);
+      if (updated) void dbUpsertProject(updated);
+      return next;
+    });
+  }, []);
 
   return (
     <AppContext.Provider
@@ -426,6 +591,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         error,
         settings,
         refresh,
+        syncRemote,
         addTask,
         updateTask,
         deleteTask,

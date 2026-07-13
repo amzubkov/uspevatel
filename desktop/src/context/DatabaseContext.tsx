@@ -9,8 +9,10 @@ import React, {
 import {
   openDatabase,
   getDb,
-  getSyncFolderSetting,
-  onSyncFolderChanged,
+  getSnapshotSourceSetting,
+  migrateLegacyDesktopDataToDb,
+  chooseAndReplaceLocalDatabaseWithSnapshot,
+  type SnapshotImportResult,
 } from "../services/db";
 import type { SportEntry, SportType } from "../hooks/useSport";
 import type { Exercise, WorkoutLog } from "../hooks/useExercises";
@@ -20,7 +22,8 @@ import type { CheckItem } from "../hooks/useChecklist";
 
 interface DbState {
   ready: boolean;
-  syncFolder: string | null;
+  snapshotSource: string | null;
+  importMobileSnapshot: () => Promise<SnapshotImportResult | null>;
   // Sport
   sportEntries: SportEntry[];
   addSportEntry: (
@@ -97,8 +100,8 @@ function nowTs() {
 
 export function DatabaseProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
-  const [syncFolder, setSyncFolder] = useState<string | null>(
-    getSyncFolderSetting(),
+  const [snapshotSource, setSnapshotSource] = useState<string | null>(
+    getSnapshotSourceSetting(),
   );
   const [sportEntries, setSportEntries] = useState<SportEntry[]>([]);
   const [exercises, setExercises] = useState<Exercise[]>([]);
@@ -109,6 +112,8 @@ export function DatabaseProvider({ children }: { children: React.ReactNode }) {
     [],
   );
   const [checkItems, setCheckItems] = useState<CheckItem[]>([]);
+  const routineToggleLocks = useRef(new Set<string>());
+  const checkToggleLocks = useRef(new Set<string>());
 
   const loadAll = useCallback(async () => {
     const db = getDb();
@@ -147,7 +152,10 @@ export function DatabaseProvider({ children }: { children: React.ReactNode }) {
         description: r.description || null,
         tag: r.tag || null,
         weightType: r.weight_type ?? 10,
-        imageUri: r.image_uri || undefined,
+        imageUri:
+          typeof r.image_data === "string"
+            ? r.image_data
+            : r.image_uri || undefined,
       })),
     );
     setWorkoutLogs(
@@ -191,13 +199,8 @@ export function DatabaseProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const folder = getSyncFolderSetting();
-    if (!folder) {
-      setReady(true);
-      return;
-    }
-    setSyncFolder(folder);
-    openDatabase(folder)
+    openDatabase()
+      .then(() => migrateLegacyDesktopDataToDb())
       .then(() => loadAll())
       .then(() => setReady(true))
       .catch((e) => {
@@ -206,30 +209,20 @@ export function DatabaseProvider({ children }: { children: React.ReactNode }) {
       });
   }, [loadAll]);
 
-  useEffect(() => {
-    return onSyncFolderChanged((folder) => {
-      setSyncFolder(folder);
-      if (!folder) {
-        setSportEntries([]);
-        setExercises([]);
-        setWorkoutLogs([]);
-        setFlights([]);
-        setRoutineItems([]);
-        setRoutineCompletedToday([]);
-        setCheckItems([]);
-        setReady(true);
-        return;
-      }
+  const importMobileSnapshot = useCallback(
+    async () => {
       setReady(false);
-      openDatabase(folder)
-        .then(() => loadAll())
-        .then(() => setReady(true))
-        .catch((e) => {
-          console.error("DB switch error:", e);
-          setReady(true);
-        });
-    });
-  }, [loadAll]);
+      try {
+        const result = await chooseAndReplaceLocalDatabaseWithSnapshot();
+        if (result) setSnapshotSource(result.sourcePath);
+        await loadAll();
+        return result;
+      } finally {
+        setReady(true);
+      }
+    },
+    [loadAll],
+  );
 
   // Sport
   const addSportEntry = useCallback(
@@ -460,24 +453,36 @@ export function DatabaseProvider({ children }: { children: React.ReactNode }) {
   const toggleRoutineComplete = useCallback(
     async (id: string) => {
       const today = todayStr();
-      setRoutineCompletedToday((p) =>
-        p.includes(id) ? p.filter((x) => x !== id) : [...p, id],
-      );
       const db = getDb();
       if (!db) return;
-      const has = routineCompletedToday.includes(id);
-      if (has)
-        await db.execute(
-          "DELETE FROM routine_completions WHERE routine_id=$1 AND date=$2",
+      if (routineToggleLocks.current.has(id)) return;
+      routineToggleLocks.current.add(id);
+      try {
+        const rows = await db.select<{ present: number }[]>(
+          "SELECT 1 AS present FROM routine_completions WHERE routine_id=$1 AND date=$2 LIMIT 1",
           [id, today],
         );
-      else
-        await db.execute(
-          "INSERT OR IGNORE INTO routine_completions (routine_id,date) VALUES ($1,$2)",
-          [id, today],
-        );
+        const has = rows.length > 0;
+        if (has) {
+          await db.execute(
+            "DELETE FROM routine_completions WHERE routine_id=$1 AND date=$2",
+            [id, today],
+          );
+          setRoutineCompletedToday((p) => p.filter((x) => x !== id));
+        } else {
+          await db.execute(
+            "INSERT OR IGNORE INTO routine_completions (routine_id,date) VALUES ($1,$2)",
+            [id, today],
+          );
+          setRoutineCompletedToday((p) =>
+            p.includes(id) ? p : [...p, id],
+          );
+        }
+      } finally {
+        routineToggleLocks.current.delete(id);
+      }
     },
-    [routineCompletedToday],
+    [],
   );
   const reorderRoutine = useCallback(
     async (fromIdx: number, toIdx: number) => {
@@ -517,19 +522,28 @@ export function DatabaseProvider({ children }: { children: React.ReactNode }) {
   }, []);
   const toggleCheckItem = useCallback(
     async (id: string) => {
-      setCheckItems((p) =>
-        p.map((i) => (i.id === id ? { ...i, done: !i.done } : i)),
-      );
       const db = getDb();
       if (!db) return;
-      const item = checkItems.find((i) => i.id === id);
-      if (item)
-        await db.execute("UPDATE checklist SET done=$1 WHERE id=$2", [
-          item.done ? 0 : 1,
-          id,
-        ]);
+      if (checkToggleLocks.current.has(id)) return;
+      checkToggleLocks.current.add(id);
+      try {
+        await db.execute(
+          "UPDATE checklist SET done=CASE WHEN done=0 THEN 1 ELSE 0 END WHERE id=$1",
+          [id],
+        );
+        const rows = await db.select<{ done: number }[]>(
+          "SELECT done FROM checklist WHERE id=$1",
+          [id],
+        );
+        const nextDone = !!rows[0]?.done;
+        setCheckItems((p) =>
+          p.map((item) => (item.id === id ? { ...item, done: nextDone } : item)),
+        );
+      } finally {
+        checkToggleLocks.current.delete(id);
+      }
     },
-    [checkItems],
+    [],
   );
   const updateCheckItem = useCallback(async (id: string, title: string) => {
     setCheckItems((p) => p.map((i) => (i.id === id ? { ...i, title } : i)));
@@ -548,7 +562,8 @@ export function DatabaseProvider({ children }: { children: React.ReactNode }) {
 
   const value: DbState = {
     ready,
-    syncFolder,
+    snapshotSource,
+    importMobileSnapshot,
     sportEntries,
     addSportEntry,
     removeSportEntry,

@@ -21,7 +21,7 @@ export function applyFilters(
 }
 
 export function sortByPriorityDeadline(tasks: Task[]): Task[] {
-  const priorityOrder = { high: 0, normal: 1, low: 2 };
+  const priorityOrder = { super: 0, high: 1, normal: 2, low: 3 };
   return [...tasks].sort((a, b) => {
     const pa = priorityOrder[a.priority] ?? 1;
     const pb = priorityOrder[b.priority] ?? 1;

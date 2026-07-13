@@ -23,8 +23,8 @@ import { ChecklistScreen } from './screens/ChecklistScreen';
 
 export default function App() {
   return (
-    <AppProvider>
-      <DatabaseProvider>
+    <DatabaseProvider>
+      <AppProvider>
       <HashRouter>
         <div style={{ display: 'flex', height: '100vh', width: '100vw' }}>
           <Sidebar />
@@ -51,7 +51,7 @@ export default function App() {
           </main>
         </div>
       </HashRouter>
-      </DatabaseProvider>
-    </AppProvider>
+      </AppProvider>
+    </DatabaseProvider>
   );
 }

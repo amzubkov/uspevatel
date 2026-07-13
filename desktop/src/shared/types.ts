@@ -9,7 +9,7 @@ export interface Task {
   project?: string;
   notes: string;
   startDate?: string;
-  priority: 'high' | 'normal' | 'low';
+  priority: 'super' | 'high' | 'normal' | 'low';
   isRecurring: boolean;
   recurDays?: number[];
   completed: boolean;

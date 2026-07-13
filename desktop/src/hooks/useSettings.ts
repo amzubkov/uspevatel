@@ -3,11 +3,13 @@ import {
   AppSettings,
   DEFAULT_APP_SETTINGS,
   loadAppSettings,
-  onSyncFolderChanged,
+  onSnapshotChanged,
   saveAppSettings,
 } from "../services/db";
+import { useDatabase } from "../context/DatabaseContext";
 
 export function useSettings() {
+  const { ready } = useDatabase();
   const [settings, setSettingsState] =
     useState<AppSettings>(DEFAULT_APP_SETTINGS);
 
@@ -19,8 +21,8 @@ export function useSettings() {
       if (!cancelled) setSettingsState(next);
     };
 
-    load();
-    const unsubscribe = onSyncFolderChanged(() => {
+    if (ready) void load();
+    const unsubscribe = onSnapshotChanged(() => {
       load();
     });
 
@@ -28,7 +30,7 @@ export function useSettings() {
       cancelled = true;
       unsubscribe();
     };
-  }, []);
+  }, [ready]);
 
   const update = useCallback((partial: Partial<AppSettings>) => {
     setSettingsState((prev) => {

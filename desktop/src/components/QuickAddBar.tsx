@@ -4,7 +4,7 @@ import { colors } from '../styles/theme';
 
 interface Props {
   placeholder: string;
-  onAdd: (action: string) => void;
+  onAdd: (action: string) => void | Promise<void>;
 }
 
 export function QuickAddBar({ placeholder, onAdd }: Props) {
@@ -15,8 +15,11 @@ export function QuickAddBar({ placeholder, onAdd }: Props) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!value.trim()) return;
-    onAdd(value.trim());
+    const action = value.trim();
     setValue('');
+    void Promise.resolve(onAdd(action)).catch((error) => {
+      alert(error instanceof Error ? error.message : String(error));
+    });
   };
 
   return (

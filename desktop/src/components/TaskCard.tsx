@@ -6,11 +6,11 @@ import { colors } from '../styles/theme';
 interface Props {
   task: Task;
   onPress: () => void;
-  onComplete?: () => void;
+  onComplete?: () => void | Promise<void>;
   showCategory?: boolean;
   onSubjectPress?: (subject: string) => void;
   onProjectPress?: (project: string) => void;
-  actions?: { label: string; color: string; onClick: () => void }[];
+  actions?: { label: string; color: string; onClick: () => void | Promise<void> }[];
 }
 
 export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPress, onProjectPress, actions }: Props) {
@@ -22,6 +22,12 @@ export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPre
   const formatDate = (iso: string) => {
     const d = new Date(iso);
     return `${d.getDate()}/${d.getMonth() + 1}`;
+  };
+
+  const runMutation = (mutation: () => void | Promise<void>) => {
+    void Promise.resolve(mutation()).catch((error) => {
+      alert(error instanceof Error ? error.message : String(error));
+    });
   };
 
   return (
@@ -36,7 +42,7 @@ export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPre
     >
       {onComplete && (
         <div
-          onClick={(e) => { e.stopPropagation(); onComplete(); }}
+          onClick={(e) => { e.stopPropagation(); runMutation(onComplete); }}
           style={{
             width: 22, height: 22, borderRadius: 11,
             border: `2px solid ${task.completed ? c.success : c.textSecondary}`,
@@ -56,8 +62,8 @@ export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPre
               [{CATEGORY_SHORT[task.category]}]
             </span>
           )}
-          {task.priority === 'high' && (
-            <span style={{ color: '#DC2626', fontSize: smallFs }}>●</span>
+          {(task.priority === 'super' || task.priority === 'high') && (
+            <span style={{ color: task.priority === 'super' ? '#7C3AED' : '#DC2626', fontSize: smallFs }}>●</span>
           )}
           {task.deadline && (
             <span style={{ color: c.danger, fontSize: smallFs, fontWeight: 600 }}>
@@ -110,7 +116,7 @@ export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPre
           {actions.map((a) => (
             <button
               key={a.label}
-              onClick={(e) => { e.stopPropagation(); a.onClick(); }}
+              onClick={(e) => { e.stopPropagation(); runMutation(a.onClick); }}
               style={{
                 padding: '4px 8px', borderRadius: 4, fontSize: 11,
                 fontWeight: 600, color: '#fff', backgroundColor: a.color,

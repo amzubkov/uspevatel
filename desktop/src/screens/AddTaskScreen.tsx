@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useApp } from '../context/AppContext';
+import { RemoteSyncError, useApp } from '../context/AppContext';
 import { colors } from '../styles/theme';
 import { Category, CATEGORY_LABELS } from '../shared/types';
 
 const CATEGORIES: Category[] = ['IN', 'DAY', 'LATER', 'CONTROL', 'MAYBE'];
-const PRIORITIES = ['high', 'normal', 'low'] as const;
+const PRIORITIES = ['super', 'high', 'normal', 'low'] as const;
 
 export function AddTaskScreen() {
   const navigate = useNavigate();
@@ -23,27 +23,36 @@ export function AddTaskScreen() {
   const [contextCategory, setContextCategory] = useState<string | undefined>();
   const [startDate, setStartDate] = useState('');
   const [notes, setNotes] = useState('');
-  const [priority, setPriority] = useState<'high' | 'normal' | 'low'>('normal');
+  const [priority, setPriority] = useState<'super' | 'high' | 'normal' | 'low'>('normal');
+  const [saving, setSaving] = useState(false);
   const [deadline, setDeadline] = useState<string | undefined>();
   const [showDeadlinePicker, setShowDeadlinePicker] = useState(false);
   const [customDeadlineDate, setCustomDeadlineDate] = useState('');
   const [customDeadlineTime, setCustomDeadlineTime] = useState('');
 
-  const handleSave = () => {
-    if (!action.trim()) return;
-    addTask({
-      subject: subject.trim(),
-      action: action.trim(),
-      category,
-      project,
-      contextCategory,
-      startDate: startDate || undefined,
-      deadline,
-      notes,
-      priority,
-      isRecurring: false,
-    });
-    navigate(-1);
+  const handleSave = async () => {
+    if (!action.trim() || saving) return;
+    setSaving(true);
+    try {
+      await addTask({
+        subject: subject.trim(),
+        action: action.trim(),
+        category,
+        project,
+        contextCategory,
+        startDate: startDate || undefined,
+        deadline,
+        notes,
+        priority,
+        isRecurring: false,
+      });
+      navigate(-1);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+      if (error instanceof RemoteSyncError) navigate(-1);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const chipStyle = (active: boolean, activeColor: string) => ({
@@ -86,8 +95,8 @@ export function AddTaskScreen() {
       <label style={{ fontSize: 13, fontWeight: 600, color: c.textSecondary, display: 'block', marginTop: 16, marginBottom: 6 }}>Приоритет</label>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         {PRIORITIES.map((p) => (
-          <button key={p} onClick={() => setPriority(p)} style={chipStyle(priority === p, p === 'high' ? '#DC2626' : p === 'normal' ? '#16A34A' : '#EAB308')}>
-            {p === 'high' ? 'Высокий' : p === 'normal' ? 'Обычный' : 'Низкий'}
+          <button key={p} onClick={() => setPriority(p)} style={chipStyle(priority === p, p === 'super' ? '#7C3AED' : p === 'high' ? '#DC2626' : p === 'normal' ? '#16A34A' : '#EAB308')}>
+            {p === 'super' ? 'Супер' : p === 'high' ? 'Высокий' : p === 'normal' ? 'Обычный' : 'Низкий'}
           </button>
         ))}
       </div>
@@ -156,15 +165,15 @@ export function AddTaskScreen() {
       />
 
       <button
-        onClick={handleSave}
-        disabled={!action.trim()}
+        onClick={() => void handleSave()}
+        disabled={!action.trim() || saving}
         style={{
           marginTop: 24, marginBottom: 40, width: '100%', padding: 16, borderRadius: 12,
           backgroundColor: c.primary, color: '#fff', fontSize: 17, fontWeight: 700,
-          opacity: action.trim() ? 1 : 0.5,
+          opacity: action.trim() && !saving ? 1 : 0.5,
         }}
       >
-        Сохранить
+        {saving ? 'Сохранение...' : 'Сохранить'}
       </button>
 
       {/* Custom deadline modal */}
