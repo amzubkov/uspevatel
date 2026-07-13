@@ -276,11 +276,18 @@ export function DayReviewScreen() {
       <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.navigate('Nutrition')} style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={[s.sectionTitle, { color: c.textSecondary }]}>Еда ›</Text>
-          {foodData.count > 0 && (
-            <Text style={{ color: goalKcal > 0 && foodData.totals.kcal > goalKcal ? '#EF4444' : '#22C55E', fontSize: 12, fontWeight: '600' }}>
-              🍽️ {Math.round(foodData.totals.kcal)}{goalKcal > 0 ? ` / ${Math.round(goalKcal)}` : ''} ккал
-            </Text>
-          )}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {foodData.fastingMin != null && (
+              <Text style={{ color: c.textSecondary, fontSize: 12, fontWeight: '600' }}>
+                🌙 {Math.floor(foodData.fastingMin / 60)}ч {foodData.fastingMin % 60}м
+              </Text>
+            )}
+            {foodData.count > 0 && (
+              <Text style={{ color: goalKcal > 0 && foodData.totals.kcal > goalKcal ? '#EF4444' : '#22C55E', fontSize: 12, fontWeight: '600' }}>
+                🍽️ {Math.round(foodData.totals.kcal)}{goalKcal > 0 ? ` / ${Math.round(goalKcal)}` : ''} ккал
+              </Text>
+            )}
+          </View>
         </View>
         {foodData.count > 0 ? (
           <Text style={{ color: c.text, fontSize: 14, marginTop: 4 }}>
@@ -288,11 +295,6 @@ export function DayReviewScreen() {
           </Text>
         ) : (
           <Text style={{ color: c.textSecondary, fontSize: 13, marginTop: 4 }}>Ничего не записано</Text>
-        )}
-        {foodData.fastingMin != null && (
-          <Text style={{ color: c.textSecondary, fontSize: 13, marginTop: 2 }}>
-            🌙→🌅 Ночное окно: {Math.floor(foodData.fastingMin / 60)}ч {foodData.fastingMin % 60}м
-          </Text>
         )}
       </TouchableOpacity>
 

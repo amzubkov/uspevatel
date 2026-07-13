@@ -141,6 +141,16 @@ export function NutritionScreen() {
   );
   const totals = useMemo(() => sumNutrition(dayEntries), [dayEntries]);
 
+  // Overnight fasting window: last meal today -> first meal next day.
+  const fastingMin = useMemo(() => {
+    const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    const nextDay = entries.filter((e) => e.date === shiftDateStr(date, 1));
+    if (!dayEntries.length || !nextDay.length) return null;
+    const lastToday = Math.max(...dayEntries.map((e) => toMin(e.time)));
+    const firstNext = Math.min(...nextDay.map((e) => toMin(e.time)));
+    return 24 * 60 - lastToday + firstNext;
+  }, [entries, dayEntries, date]);
+
   const groupedEntries = useMemo(() => {
     const result = new Map<MealType, NutritionEntry[]>();
     for (const meal of MEALS) {
@@ -546,6 +556,12 @@ export function NutritionScreen() {
         <Text style={[styles.dietBarText, { color: c.textSecondary }]}>Диета: <Text style={{ color: c.text, fontWeight: '700' }}>{getDiet(goalDiet).name}</Text></Text>
         <Text style={[styles.dietMenuBtnText, { color: c.primary }]}>Меню на день →</Text>
       </TouchableOpacity>
+
+      {fastingMin != null && (
+        <Text style={[styles.fastingText, { color: c.textSecondary }]}>
+          🌙→🌅 Ночное окно: {Math.floor(fastingMin / 60)}ч {fastingMin % 60}м
+        </Text>
+      )}
 
       <ScrollView contentContainerStyle={styles.listContent}>
         {dayEntries.length === 0 ? (
@@ -974,6 +990,7 @@ const styles = StyleSheet.create({
   nutTab: { flex: 1, alignItems: 'center', paddingVertical: 9, borderBottomWidth: 2 },
   dietBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: 12, marginTop: 8 },
   dietBarText: { fontSize: 13 },
+  fastingText: { fontSize: 12, marginHorizontal: 12, marginTop: 6 },
   dietMenuBtn: { borderWidth: 1, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 7, borderStyle: 'dashed' },
   dietMenuBtnText: { fontSize: 13, fontWeight: '700' },
   macroRingsRow: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 10 },

@@ -3,7 +3,7 @@
     "name": "uspevatel-app",
     "slug": "uspevatel-app",
     "scheme": "uspevatel",
-    "version": "8.33",
+    "version": "8.36",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -23,7 +23,7 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "versionCode": 54,
+      "versionCode": 57,
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "CAMERA",
