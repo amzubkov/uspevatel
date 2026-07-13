@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -13,10 +13,11 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import { toAiBase64 } from '../utils/aiImage';
 import { DatePickerField } from '../components/DatePickerField';
 import { TimePickerField } from '../components/TimePickerField';
 import { parseFoodPhoto, lookupFoodByName, ParsedFood } from '../services/aiNutritionService';
-import { searchFood, FoodHit } from '../services/foodDatabase';
+import { listLocalFoods, searchFood, FoodHit } from '../services/foodDatabase';
 import { DIETS, getDiet, macrosForKcal } from '../utils/diets';
 import { MenuPlan } from './nutrition/MenuPlan';
 import { ShoppingList } from './nutrition/ShoppingList';
@@ -29,11 +30,17 @@ import {
 import { useSettingsStore } from '../store/settingsStore';
 import { useNutritionGoalStore, NutritionGoals } from '../store/nutritionGoalStore';
 import { ProgressRing } from '../components/ProgressRing';
-import { calculateEntryNutrition, estimateKcalFromMacros, sumNutrition } from '../utils/nutrition';
+import {
+  calculateEntryNutrition,
+  estimateKcalFromMacros,
+  FoodSuggestion,
+  suggestFoodsForDay,
+  sumNutrition,
+} from '../utils/nutrition';
 import { shiftDateStr, toDateStr, WEEKDAYS_SUN } from '../utils/date';
 import { colors } from '../utils/theme';
 
-const SOURCE_COLORS: Record<string, string> = { RU: '#EF4444', USDA: '#3B82F6', OFF: '#F59E0B' };
+const SOURCE_COLORS: Record<string, string> = { RU: '#EF4444', USDA: '#3B82F6', OFF: '#F59E0B', FS: '#10B981' };
 
 const MEALS: { key: MealType; label: string; icon: string }[] = [
   { key: 'breakfast', label: 'Завтрак', icon: '🌅' },
@@ -112,6 +119,7 @@ export function NutritionScreen() {
   const insets = useSafeAreaInsets();
   const entries = useNutritionStore((state) => state.entries);
   const addEntry = useNutritionStore((state) => state.addEntry);
+  const addEntries = useNutritionStore((state) => state.addEntries);
   const updateEntry = useNutritionStore((state) => state.updateEntry);
   const removeEntry = useNutritionStore((state) => state.removeEntry);
   const goalKcal = useNutritionGoalStore((state) => state.kcal);
@@ -132,14 +140,106 @@ export function NutritionScreen() {
   const [looking, setLooking] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<FoodHit[] | null>(null);
+  const [catalogFoods, setCatalogFoods] = useState<FoodHit[]>([]);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<FoodSuggestion<FoodHit>[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [addingSuggestion, setAddingSuggestion] = useState<string | null>(null);
   const [showGoals, setShowGoals] = useState(false);
   const [goalForm, setGoalForm] = useState({ kcal: '', protein: '', fat: '', carbs: '', diet: goalDiet });
+
+  useEffect(() => {
+    let active = true;
+    listLocalFoods()
+      .then((foods) => {
+        if (!active) return;
+        setCatalogFoods(foods);
+        setCatalogError(null);
+        setCatalogLoaded(true);
+      })
+      .catch((error: any) => {
+        if (!active) return;
+        setCatalogFoods([]);
+        setCatalogError(String(error?.message || error));
+        setCatalogLoaded(true);
+      });
+    return () => { active = false; };
+  }, []);
 
   const dayEntries = useMemo(
     () => entries.filter((entry) => entry.date === date),
     [entries, date],
   );
   const totals = useMemo(() => sumNutrition(dayEntries), [dayEntries]);
+  const nutritionGoals = useMemo(() => ({
+    kcal: goalKcal,
+    protein: goalProtein,
+    fat: goalFat,
+    carbs: goalCarbs,
+  }), [goalKcal, goalProtein, goalFat, goalCarbs]);
+  const remaining = useMemo(() => ({
+    protein: Math.max(0, goalProtein - totals.protein),
+    fat: Math.max(0, goalFat - totals.fat),
+    carbs: Math.max(0, goalCarbs - totals.carbs),
+  }), [goalProtein, goalFat, goalCarbs, totals]);
+  const macroGoalsClosed = remaining.protein <= Math.max(2, goalProtein * 0.03)
+    && remaining.fat <= Math.max(1, goalFat * 0.03)
+    && remaining.carbs <= Math.max(3, goalCarbs * 0.03);
+  const macroGoalsExactlyClosed = remaining.protein === 0 && remaining.fat === 0 && remaining.carbs === 0;
+  const largeRemainder = (goalProtein > 0 && remaining.protein >= goalProtein * 0.6)
+    || (goalFat > 0 && remaining.fat >= goalFat * 0.6)
+    || (goalCarbs > 0 && remaining.carbs >= goalCarbs * 0.6);
+
+  useEffect(() => {
+    let active = true;
+    if (dayEntries.length === 0 || catalogFoods.length === 0 || macroGoalsClosed || largeRemainder) {
+      setSuggestions([]);
+      setSuggestionsLoading(false);
+      return () => { active = false; };
+    }
+
+    setSuggestionsLoading(true);
+    // The beam search below blocks the JS thread for hundreds of ms on a phone.
+    // Debounce past the mount/tap window and wait for an idle slot so touches
+    // (FAB, 📷) are handled first.
+    const idle = (cb: () => void) =>
+      typeof (global as any).requestIdleCallback === 'function'
+        ? (global as any).requestIdleCallback(cb)
+        : setTimeout(cb, 0);
+    const timer = setTimeout(() => {
+      idle(() => {
+        if (!active) return;
+        const next = suggestFoodsForDay(catalogFoods, nutritionGoals, totals);
+        if (active) {
+          setSuggestions(next);
+          setSuggestionsLoading(false);
+        }
+      });
+    }, 300);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [catalogFoods, dayEntries.length, largeRemainder, macroGoalsClosed, nutritionGoals, totals]);
+
+  const suggestedTotals = useMemo(
+    () => sumNutrition(suggestions.map((suggestion) => ({
+      ...suggestion.food,
+      amountGrams: suggestion.amountGrams,
+    }))),
+    [suggestions],
+  );
+  const remainingAfterSuggestions = useMemo(() => ({
+    protein: Math.max(0, remaining.protein - suggestedTotals.protein),
+    fat: Math.max(0, remaining.fat - suggestedTotals.fat),
+    carbs: Math.max(0, remaining.carbs - suggestedTotals.carbs),
+  }), [remaining, suggestedTotals]);
+  const suggestionsCloseGoals = remainingAfterSuggestions.protein <= Math.max(2, goalProtein * 0.03)
+    && remainingAfterSuggestions.fat <= Math.max(1, goalFat * 0.03)
+    && remainingAfterSuggestions.carbs <= Math.max(3, goalCarbs * 0.03);
+  const projectedKcal = totals.kcal + suggestedTotals.kcal;
+  const projectedKcalOver = Math.max(0, projectedKcal - goalKcal);
 
   // Overnight fasting window: last meal today -> first meal next day.
   const fastingMin = useMemo(() => {
@@ -263,10 +363,11 @@ export function NutritionScreen() {
       return null;
     }
     const result = fromCamera
-      ? await ImagePicker.launchCameraAsync({ quality: 0.6, base64: true })
-      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.6, base64: true });
-    if (result.canceled || !result.assets[0]?.base64) return null;
-    return result.assets[0].base64;
+      ? await ImagePicker.launchCameraAsync({ quality: 1 })
+      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
+    const uri = result.canceled ? null : result.assets[0]?.uri;
+    if (!uri) return null;
+    return toAiBase64(uri, 1024);
   };
 
   const runScan = (apply: (food: ParsedFood) => void) => {
@@ -359,6 +460,102 @@ export function NutritionScreen() {
       fatPer100: numberInput(entry.fatPer100),
       carbsPer100: numberInput(entry.carbsPer100),
     }));
+  };
+
+  const openSuggestion = (suggestion: FoodSuggestion<FoodHit>) => {
+    const time = currentTime();
+    setEditing(null);
+    setForm({
+      name: suggestion.food.name,
+      date,
+      time,
+      mealType: inferMeal(time),
+      amountGrams: numberInput(suggestion.amountGrams),
+      kcalPer100: numberInput(suggestion.food.kcalPer100),
+      proteinPer100: numberInput(suggestion.food.proteinPer100),
+      fatPer100: numberInput(suggestion.food.fatPer100),
+      carbsPer100: numberInput(suggestion.food.carbsPer100),
+      notes: '',
+    });
+    setSearchResults(null);
+    setShowForm(true);
+  };
+
+  const retryCatalog = async () => {
+    setCatalogLoaded(false);
+    setCatalogError(null);
+    try {
+      const foods = await listLocalFoods();
+      setCatalogFoods(foods);
+    } catch (error: any) {
+      setCatalogFoods([]);
+      setCatalogError(String(error?.message || error));
+    } finally {
+      setCatalogLoaded(true);
+    }
+  };
+
+  const quickAddSuggestion = async (suggestion: FoodSuggestion<FoodHit>) => {
+    const key = `${suggestion.food.name}:${suggestion.amountGrams}`;
+    if (addingSuggestion) return;
+    const time = currentTime();
+    setAddingSuggestion(key);
+    try {
+      await addEntry({
+        name: suggestion.food.name,
+        date,
+        time,
+        mealType: inferMeal(time),
+        amountGrams: suggestion.amountGrams,
+        kcalPer100: suggestion.food.kcalPer100,
+        proteinPer100: suggestion.food.proteinPer100,
+        fatPer100: suggestion.food.fatPer100,
+        carbsPer100: suggestion.food.carbsPer100,
+        kcalAuto: false,
+        notes: '',
+      });
+    } catch (error: any) {
+      Alert.alert('Не удалось добавить', String(error?.message || error));
+    } finally {
+      setAddingSuggestion(null);
+    }
+  };
+
+  const quickAddAllSuggestions = () => {
+    if (addingSuggestion || suggestions.length === 0) return;
+    const list = suggestions.map((suggestion) => `• ${suggestion.food.name}, ${suggestion.amountGrams} г`).join('\n');
+    const kcalWarning = projectedKcalOver >= 10
+      ? `\n\nПосле добавления будет +${Math.round(projectedKcalOver)} ккал сверх цели.`
+      : '';
+    Alert.alert('Добавить весь набор?', `${list}${kcalWarning}`, [
+      { text: 'Отмена', style: 'cancel' },
+      {
+        text: 'Добавить',
+        onPress: async () => {
+          const time = currentTime();
+          setAddingSuggestion('all');
+          try {
+            await addEntries(suggestions.map((suggestion) => ({
+              name: suggestion.food.name,
+              date,
+              time,
+              mealType: inferMeal(time),
+              amountGrams: suggestion.amountGrams,
+              kcalPer100: suggestion.food.kcalPer100,
+              proteinPer100: suggestion.food.proteinPer100,
+              fatPer100: suggestion.food.fatPer100,
+              carbsPer100: suggestion.food.carbsPer100,
+              kcalAuto: false,
+              notes: '',
+            })));
+          } catch (error: any) {
+            Alert.alert('Не удалось добавить набор', String(error?.message || error));
+          } finally {
+            setAddingSuggestion(null);
+          }
+        },
+      },
+    ]);
   };
 
   const closeForm = () => {
@@ -564,6 +761,147 @@ export function NutritionScreen() {
       )}
 
       <ScrollView contentContainerStyle={styles.listContent}>
+        {dayEntries.length > 0 && !catalogLoaded && (
+          <View style={[styles.suggestionsCard, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Text style={[styles.suggestionsTitle, { color: c.text }]}>Подбираю продукты…</Text>
+            <Text style={[styles.suggestionsEmpty, { color: c.textSecondary }]}>Загружаю локальную базу.</Text>
+          </View>
+        )}
+
+        {dayEntries.length > 0 && catalogLoaded && catalogFoods.length === 0 && (
+          <View style={[styles.suggestionsCard, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Text style={[styles.suggestionsTitle, { color: c.text }]}>База продуктов недоступна</Text>
+            <Text style={[styles.suggestionsEmpty, { color: c.textSecondary }]}>
+              {catalogError ? 'Не удалось прочитать локальный каталог.' : 'В локальном каталоге пока нет продуктов.'}
+            </Text>
+            <TouchableOpacity style={styles.suggestionsMenuLink} onPress={retryCatalog}>
+              <Text style={[styles.suggestionsMenuLinkText, { color: c.primary }]}>Повторить загрузку</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {dayEntries.length > 0 && catalogFoods.length > 0 && (
+          largeRemainder && !macroGoalsClosed ? (
+            <View style={[styles.suggestionsCard, { backgroundColor: c.card, borderColor: c.border }]}>
+              <Text style={[styles.suggestionsTitle, { color: c.text }]}>До цели ещё много</Text>
+              <Text style={[styles.suggestionsRemaining, { color: c.textSecondary }]}>
+                Осталось: Б {formatMacro(remaining.protein)} · Ж {formatMacro(remaining.fat)} · У {formatMacro(remaining.carbs)} г
+              </Text>
+              <Text style={[styles.suggestionsEmpty, { color: c.textSecondary }]}>
+                Добор отдельными продуктами получится слишком объёмным — лучше составить полноценное меню.
+              </Text>
+              <TouchableOpacity style={styles.suggestionsMenuLink} onPress={() => setNutTab('menu')}>
+                <Text style={[styles.suggestionsMenuLinkText, { color: c.primary }]}>Составить меню на день →</Text>
+              </TouchableOpacity>
+            </View>
+          ) : macroGoalsClosed ? (
+            <View style={[styles.suggestionsDone, { backgroundColor: c.successLight, borderColor: c.success }]}>
+              <Text style={[styles.suggestionsDoneText, { color: c.success }]}>
+                ✓ Цели по БЖУ на день {macroGoalsExactlyClosed ? 'закрыты' : 'практически закрыты'}
+              </Text>
+            </View>
+          ) : (
+            <View style={[styles.suggestionsCard, { backgroundColor: c.card, borderColor: c.border }]}>
+              <Text style={[styles.suggestionsTitle, { color: c.text }]}>Чем добрать день</Text>
+              <Text style={[styles.suggestionsRemaining, { color: c.textSecondary }]}>
+                Осталось: Б {formatMacro(remaining.protein)} · Ж {formatMacro(remaining.fat)} · У {formatMacro(remaining.carbs)} г
+              </Text>
+
+              {suggestionsLoading ? (
+                <Text style={[styles.suggestionsEmpty, { color: c.textSecondary }]}>Ищу подходящие порции…</Text>
+              ) : suggestions.length > 0 ? suggestions.map((suggestion) => {
+                const key = `${suggestion.food.name}:${suggestion.amountGrams}`;
+                const adding = addingSuggestion === key;
+                const itemKcalOver = Math.max(0, totals.kcal + suggestion.nutrition.kcal - goalKcal);
+                return (
+                  <View
+                    key={key}
+                    style={[
+                      styles.suggestionRow,
+                      { borderTopColor: c.border, borderTopWidth: StyleSheet.hairlineWidth },
+                    ]}
+                  >
+                    <TouchableOpacity
+                      style={styles.suggestionInfo}
+                      onPress={() => openSuggestion(suggestion)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Изменить порцию: ${suggestion.food.name}, ${suggestion.amountGrams} грамм`}
+                    >
+                      <View style={styles.suggestionNameRow}>
+                        <Text style={[styles.suggestionName, { color: c.text }]} numberOfLines={2}>{suggestion.food.name}</Text>
+                      </View>
+                      <Text style={[styles.suggestionPortion, { color: c.textSecondary }]}>
+                        {suggestion.amountGrams} г · {Math.round(suggestion.nutrition.kcal)} ккал
+                      </Text>
+                      <Text style={[styles.suggestionMacros, { color: c.textSecondary }]}>
+                        + Б {formatMacro(suggestion.nutrition.protein)} · Ж {formatMacro(suggestion.nutrition.fat)} · У {formatMacro(suggestion.nutrition.carbs)} г
+                      </Text>
+                      {itemKcalOver >= 10 && (
+                        <Text style={[styles.suggestionWarning, { color: c.warning }]}>
+                          ⚠ После продукта будет +{Math.round(itemKcalOver)} ккал сверх цели
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.suggestionAdd, { backgroundColor: c.primary, opacity: addingSuggestion && !adding ? 0.5 : 1 }]}
+                      onPress={() => quickAddSuggestion(suggestion)}
+                      disabled={addingSuggestion !== null}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Добавить ${suggestion.food.name}, ${suggestion.amountGrams} грамм`}
+                    >
+                      <Text style={styles.suggestionAddText}>{adding ? '…' : `+ ${suggestion.amountGrams} г`}</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              }) : (
+                <Text style={[styles.suggestionsEmpty, { color: c.textSecondary }]}>
+                  Для такого остатка не нашлось разумного набора порций.
+                </Text>
+              )}
+
+              {!suggestionsLoading && suggestions.length > 0 ? (
+                <>
+                  {projectedKcalOver >= 10 && (
+                    <View style={[styles.suggestionsWarningBox, { backgroundColor: c.warningLight }]}>
+                      <Text style={[styles.suggestionsWarningText, { color: c.warning }]}>
+                        ⚠ Весь набор превысит цель на {Math.round(projectedKcalOver)} ккал
+                      </Text>
+                    </View>
+                  )}
+                  {suggestions.length > 1 && (
+                    <TouchableOpacity
+                      style={[styles.suggestionsAddAll, { backgroundColor: c.primary, opacity: addingSuggestion && addingSuggestion !== 'all' ? 0.5 : 1 }]}
+                      onPress={quickAddAllSuggestions}
+                      disabled={addingSuggestion !== null}
+                      accessibilityRole="button"
+                      accessibilityLabel="Добавить весь предложенный набор"
+                    >
+                      <Text style={styles.suggestionsAddAllText}>{addingSuggestion === 'all' ? 'Добавляю…' : 'Добавить весь набор'}</Text>
+                    </TouchableOpacity>
+                  )}
+                  <Text style={[styles.suggestionsHint, { color: c.textSecondary }]}>
+                    {suggestionsCloseGoals
+                      ? 'Набор максимально приблизит БЖУ к цели.'
+                      : `Подбор частичный: после всего останется Б ${formatMacro(remainingAfterSuggestions.protein)} · Ж ${formatMacro(remainingAfterSuggestions.fat)} · У ${formatMacro(remainingAfterSuggestions.carbs)} г.`}{' '}
+                    {suggestions.length > 1
+                      ? 'Можно добавить весь набор или продукт по одному; после одиночного добавления подсказки обновятся.'
+                      : 'После добавления продукта подсказки обновятся.'}
+                  </Text>
+                  {!suggestionsCloseGoals && (
+                    <TouchableOpacity style={styles.suggestionsMenuLink} onPress={() => setNutTab('menu')}>
+                      <Text style={[styles.suggestionsMenuLinkText, { color: c.primary }]}>Составить полное меню →</Text>
+                    </TouchableOpacity>
+                  )}
+                </>
+              ) : !suggestionsLoading ? (
+                <TouchableOpacity style={styles.suggestionsMenuLink} onPress={() => setNutTab('menu')}>
+                  <Text style={[styles.suggestionsMenuLinkText, { color: c.primary }]}>Составить меню на день →</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          )
+        )}
+
         {dayEntries.length === 0 ? (
           <View style={styles.empty}>
             <Text style={styles.emptyIcon}>🍽️</Text>
@@ -1005,6 +1343,28 @@ const styles = StyleSheet.create({
   goalsBtn: { flex: 1, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
   goalsBtnText: { fontSize: 15, fontWeight: '700' },
   listContent: { padding: 12, paddingTop: 6, paddingBottom: 80, flexGrow: 1 },
+  suggestionsCard: { borderWidth: 1, borderRadius: 14, padding: 12, marginBottom: 16 },
+  suggestionsTitle: { fontSize: 16, fontWeight: '800' },
+  suggestionsRemaining: { fontSize: 12, marginTop: 3, marginBottom: 8 },
+  suggestionRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
+  suggestionInfo: { flex: 1, paddingRight: 10 },
+  suggestionNameRow: { flexDirection: 'row', alignItems: 'center' },
+  suggestionName: { flex: 1, fontSize: 14, fontWeight: '700' },
+  suggestionPortion: { fontSize: 11, marginTop: 4 },
+  suggestionMacros: { fontSize: 11, marginTop: 2 },
+  suggestionWarning: { fontSize: 10, fontWeight: '600', marginTop: 3 },
+  suggestionAdd: { minWidth: 76, borderRadius: 10, paddingHorizontal: 9, paddingVertical: 10, alignItems: 'center' },
+  suggestionAddText: { color: '#FFF', fontSize: 12, fontWeight: '800' },
+  suggestionsWarningBox: { borderRadius: 9, paddingHorizontal: 10, paddingVertical: 8, marginTop: 4 },
+  suggestionsWarningText: { fontSize: 11, fontWeight: '700' },
+  suggestionsAddAll: { borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 9 },
+  suggestionsAddAllText: { color: '#FFF', fontSize: 13, fontWeight: '800' },
+  suggestionsHint: { fontSize: 11, lineHeight: 16, marginTop: 3 },
+  suggestionsEmpty: { fontSize: 12, lineHeight: 18, marginTop: 5 },
+  suggestionsMenuLink: { alignSelf: 'flex-start', paddingVertical: 8, marginTop: 2 },
+  suggestionsMenuLinkText: { fontSize: 13, fontWeight: '700' },
+  suggestionsDone: { borderWidth: 1, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 14 },
+  suggestionsDoneText: { fontSize: 13, fontWeight: '700', textAlign: 'center' },
   empty: { alignItems: 'center', justifyContent: 'flex-start', paddingTop: 12, paddingHorizontal: 32 },
   emptyIcon: { fontSize: 44, marginBottom: 8 },
   emptyTitle: { fontSize: 18, fontWeight: '700', textAlign: 'center' },

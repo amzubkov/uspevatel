@@ -4,13 +4,10 @@ import { useTaskStore } from '../store/taskStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
 import { StatsChart } from '../components/StatsChart';
+import { parseLocalDate, startOfLocalWeek } from '../utils/date';
 
 function getWeekStart() {
-  const now = new Date();
-  const d = new Date(now);
-  d.setDate(now.getDate() - now.getDay() + 1);
-  d.setHours(0, 0, 0, 0);
-  return d;
+  return startOfLocalWeek();
 }
 
 export function StatsScreen() {
@@ -50,10 +47,10 @@ export function StatsScreen() {
       {weekStats.length > 0 && (
         <View style={styles.diarySection}>
           <Text style={[styles.sectionTitle, { color: c.text }]}>Дневник достижений</Text>
-          {[...weekStats].reverse().map((week, idx) => (
-            <View key={idx} style={[styles.diaryEntry, { backgroundColor: c.card, borderColor: c.border }]}>
+          {[...weekStats].reverse().map((week) => (
+            <View key={week.weekStart} style={[styles.diaryEntry, { backgroundColor: c.card, borderColor: c.border }]}>
               <Text style={[styles.diaryDate, { color: c.textSecondary }]}>
-                Неделя с {new Date(week.weekStart).toLocaleDateString('ru-RU')}
+                Неделя с {parseLocalDate(week.weekStart.slice(0, 10)).toLocaleDateString('ru-RU')}
               </Text>
               <Text style={[styles.diaryStats, { color: c.textSecondary }]}>
                 {week.totalCompleted} задач, {Math.round(week.ratio * 100)}% по проектам

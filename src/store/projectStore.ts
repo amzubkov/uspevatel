@@ -8,10 +8,10 @@ interface ProjectState {
   loaded: boolean;
 
   load: () => Promise<void>;
-  addProject: (name: string, isCurrent?: boolean) => void;
-  updateProject: (id: string, updates: Partial<Project>) => void;
-  deleteProject: (id: string) => void;
-  toggleCurrent: (id: string) => void;
+  addProject: (name: string, isCurrent?: boolean) => Promise<void>;
+  updateProject: (id: string, updates: Partial<Project>) => Promise<void>;
+  deleteProject: (id: string) => Promise<void>;
+  toggleCurrent: (id: string) => Promise<void>;
   getCurrentProjects: () => Project[];
   getFutureProjects: () => Project[];
 }
@@ -33,39 +33,39 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
 
   addProject: async (name, isCurrent = true) => {
     const project: Project = { id: Crypto.randomUUID(), name: name.toUpperCase(), isCurrent, notes: '' };
-    set((s) => ({ projects: [...s.projects, project] }));
     const db = await getDb();
     await db.runAsync('INSERT INTO projects (id, name, is_current, notes) VALUES (?, ?, ?, ?)',
       [project.id, project.name, isCurrent ? 1 : 0, '']);
+    set((s) => ({ projects: [...s.projects, project] }));
   },
 
   updateProject: async (id, updates) => {
-    set((s) => ({
-      projects: s.projects.map((p) =>
-        p.id === id ? { ...p, ...updates, name: updates.name ? updates.name.toUpperCase() : p.name } : p
-      ),
-    }));
-    const project = get().projects.find((p) => p.id === id);
-    if (!project) return;
+    const previous = get().projects.find((p) => p.id === id);
+    if (!previous) return;
+    const project = {
+      ...previous,
+      ...updates,
+      name: updates.name ? updates.name.toUpperCase() : previous.name,
+    };
     const db = await getDb();
     await db.runAsync('UPDATE projects SET name=?, is_current=?, notes=? WHERE id=?',
       [project.name, project.isCurrent ? 1 : 0, project.notes, id]);
+    set((s) => ({ projects: s.projects.map((p) => p.id === id ? project : p) }));
   },
 
   deleteProject: async (id) => {
-    set((s) => ({ projects: s.projects.filter((p) => p.id !== id) }));
     const db = await getDb();
     await db.runAsync('DELETE FROM projects WHERE id = ?', [id]);
+    set((s) => ({ projects: s.projects.filter((p) => p.id !== id) }));
   },
 
   toggleCurrent: async (id) => {
-    set((s) => ({
-      projects: s.projects.map((p) => p.id === id ? { ...p, isCurrent: !p.isCurrent } : p),
-    }));
-    const project = get().projects.find((p) => p.id === id);
-    if (!project) return;
+    const previous = get().projects.find((p) => p.id === id);
+    if (!previous) return;
+    const project = { ...previous, isCurrent: !previous.isCurrent };
     const db = await getDb();
     await db.runAsync('UPDATE projects SET is_current = ? WHERE id = ?', [project.isCurrent ? 1 : 0, id]);
+    set((s) => ({ projects: s.projects.map((p) => p.id === id ? project : p) }));
   },
 
   getCurrentProjects: () => get().projects.filter((p) => p.isCurrent),

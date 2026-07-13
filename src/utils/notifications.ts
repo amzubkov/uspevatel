@@ -1,5 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import { isValidDateStr, isValidTimeStr } from './date';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -80,7 +81,7 @@ export async function scheduleFlightReminder(
   departDate: string,
   departTime?: string,
 ): Promise<string | null> {
-  if (!departTime) return null;
+  if (!isValidDateStr(departDate) || !departTime || !isValidTimeStr(departTime)) return null;
 
   const departure = new Date(`${departDate}T${departTime}`);
   if (isNaN(departure.getTime())) return null;
@@ -125,7 +126,7 @@ export async function schedulePaymentReminders(
   dueDate: string,
 ): Promise<void> {
   await cancelPaymentReminders(id);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return;
+  if (!isValidDateStr(dueDate)) return;
   const granted = await requestPermissions();
   if (!granted) return;
 

@@ -23,6 +23,7 @@ const GENERIC_OG_RE = /(сайт отзывов|№\s*1\s+в\s+росси|prodoc
 const SPECIALTY_RE = /(врач[- ]|олог\b|хирург|терапевт|педиатр|стоматолог|невро|кардио|гастро|эндокри|психо|травма|уролог|гинеколог|отоларин|рентген|диетолог|сомнолог|косметолог|дерматолог|фтизиатр|онколог|нарколог|маммолог|нейро|сурдолог|логопед|ортодонт|массажист|фельдшер)/i;
 
 const CLOUDFLARE_RE = /just a moment|cloudflare|attention required|access denied|verifying you/i;
+const FETCH_TIMEOUT_MS = 15_000;
 
 function decodeEntities(s: string): string {
   return s
@@ -114,8 +115,11 @@ function parseProdoctorovTitle(raw: string): { name?: string; specialty?: string
 
 export async function fetchProdoctorov(url: string): Promise<ProdoctorovData | null> {
   if (!/prodoctorov\.ru/i.test(url)) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
+      signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 13; RMX3706) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -139,7 +143,12 @@ export async function fetchProdoctorov(url: string): Promise<ProdoctorovData | n
     }
     return { ...parsed, url, rawTitle: source };
   } catch (e: any) {
+    if (controller.signal.aborted) {
+      return { url, rawTitle: `timeout: ${FETCH_TIMEOUT_MS / 1000}s` };
+    }
     return { url, rawTitle: `error: ${e?.message || e}` };
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -20,8 +20,9 @@ export const BANK_LABELS: Record<string, string> = {
 };
 
 function excelDateToISO(serial: number): string {
-  const epoch = new Date(1899, 11, 30);
-  const d = new Date(epoch.getTime() + serial * 86400000);
+  // Excel serials are timezone-free calendar values; use a UTC epoch so a
+  // positive local offset cannot turn them into the previous date.
+  const d = new Date(Date.UTC(1899, 11, 30) + serial * 86400000);
   return d.toISOString().substring(0, 10);
 }
 

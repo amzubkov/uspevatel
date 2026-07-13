@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Modal, Alert, Platform } from 'react-native';
-import Voice, { SpeechResultsEvent, SpeechErrorEvent } from '@react-native-voice/voice';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Modal, Alert } from 'react-native';
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
 import { useTaskStore } from '../store/taskStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
@@ -20,62 +20,85 @@ export function QuickAddModal({ visible, mode, onClose }: Props) {
   const [text, setText] = useState('');
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const startedRef = useRef(false);
+  const visibleRef = useRef(visible);
+  const recognitionRequestRef = useRef(0);
+  const savingRef = useRef(false);
+
+  visibleRef.current = visible;
+
+  useSpeechRecognitionEvent('result', (event) => {
+    const transcript = event.results[0]?.transcript;
+    if (visible && transcript) setText(transcript);
+  });
+  useSpeechRecognitionEvent('end', () => {
+    if (visible) setListening(false);
+  });
+  useSpeechRecognitionEvent('error', (event) => {
+    if (!visible || event.error === 'aborted') return;
+    setListening(false);
+    setError(event.message || event.error || 'Ошибка распознавания');
+  });
 
   useEffect(() => {
     if (!visible) return;
     setText('');
     setError(null);
-
-    Voice.onSpeechResults = (e: SpeechResultsEvent) => {
-      if (e.value && e.value.length > 0) setText(e.value[0]);
-    };
-    Voice.onSpeechPartialResults = (e: SpeechResultsEvent) => {
-      if (e.value && e.value.length > 0) setText(e.value[0]);
-    };
-    Voice.onSpeechEnd = () => setListening(false);
-    Voice.onSpeechError = (e: SpeechErrorEvent) => {
-      setListening(false);
-      setError(e.error?.message || 'Ошибка распознавания');
-    };
+    savingRef.current = false;
+    setSaving(false);
 
     if (mode === 'voice' && !startedRef.current) {
       startedRef.current = true;
-      startListening();
+      void startListening();
     }
 
     return () => {
-      Voice.destroy().then(Voice.removeAllListeners).catch(() => {});
+      recognitionRequestRef.current += 1;
+      try { ExpoSpeechRecognitionModule.abort(); } catch {}
       startedRef.current = false;
+      setListening(false);
     };
   }, [visible, mode]);
 
   const startListening = async () => {
+    const request = ++recognitionRequestRef.current;
     try {
       setError(null);
+      const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (request !== recognitionRequestRef.current || !visibleRef.current) return;
+      if (!permission.granted) throw new Error('Нет разрешения на микрофон и распознавание речи');
       setListening(true);
-      // Offline preference passed via options (Android only)
-      await Voice.start('ru-RU', Platform.OS === 'android' ? {
-        EXTRA_PREFER_OFFLINE: true,
-        RECOGNIZER_ENGINE: 'GOOGLE',
-      } as any : undefined);
+      ExpoSpeechRecognitionModule.start({
+        lang: 'ru-RU',
+        interimResults: true,
+        continuous: false,
+        // Android may support on-device recognition while the ru-RU model is
+        // not installed. Network-backed recognition is the safe default.
+        requiresOnDeviceRecognition: false,
+      });
     } catch (e: any) {
+      if (request !== recognitionRequestRef.current || !visibleRef.current) return;
       setListening(false);
       setError(String(e?.message || e));
     }
   };
 
   const stopListening = async () => {
-    try { await Voice.stop(); } catch {}
+    recognitionRequestRef.current += 1;
+    try { ExpoSpeechRecognitionModule.stop(); } catch {}
     setListening(false);
   };
 
   const handleConfirm = async () => {
+    if (savingRef.current) return;
     const t = text.trim();
     if (!t) {
       onClose();
       return;
     }
+    savingRef.current = true;
+    setSaving(true);
     await stopListening();
     try {
       await addTask({
@@ -88,6 +111,8 @@ export function QuickAddModal({ visible, mode, onClose }: Props) {
         notes: '',
       } as any);
     } catch (e: any) {
+      savingRef.current = false;
+      setSaving(false);
       Alert.alert('Ошибка', String(e?.message || e));
       return;
     }
@@ -96,6 +121,7 @@ export function QuickAddModal({ visible, mode, onClose }: Props) {
   };
 
   const handleCancel = async () => {
+    if (savingRef.current) return;
     await stopListening();
     setText('');
     onClose();
@@ -127,7 +153,7 @@ export function QuickAddModal({ visible, mode, onClose }: Props) {
           {error && <Text style={[styles.error, { color: c.danger }]}>{error}</Text>}
 
           <View style={styles.buttons}>
-            <TouchableOpacity style={[styles.btn, styles.btnCancel, { borderColor: c.border }]} onPress={handleCancel}>
+            <TouchableOpacity disabled={saving} style={[styles.btn, styles.btnCancel, { borderColor: c.border, opacity: saving ? 0.5 : 1 }]} onPress={handleCancel}>
               <Text style={[styles.btnText, { color: c.danger }]}>✕</Text>
             </TouchableOpacity>
             {mode === 'voice' && (
@@ -139,7 +165,7 @@ export function QuickAddModal({ visible, mode, onClose }: Props) {
                 </Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity style={[styles.btn, styles.btnOk, { backgroundColor: c.primary }]} onPress={handleConfirm}>
+            <TouchableOpacity disabled={saving} style={[styles.btn, styles.btnOk, { backgroundColor: c.primary, opacity: saving ? 0.5 : 1 }]} onPress={handleConfirm}>
               <Text style={[styles.btnText, { color: '#FFF' }]}>✓</Text>
             </TouchableOpacity>
           </View>

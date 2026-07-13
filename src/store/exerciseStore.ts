@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import { Alert } from 'react-native';
+import * as Crypto from 'expo-crypto';
 import { File, Paths, Directory } from 'expo-file-system';
 import { todayStr } from '../utils/date';
 import { getDb, getImageBaseDir } from '../db/database';
+import { deleteStoredFile, safeFileExtension } from './attachmentStore';
 
 export interface Exercise {
   id: number;
@@ -77,6 +79,7 @@ interface ExerciseState {
   getExercisesForDay: (dayId: number) => Exercise[];
   addPlanItem: (date: string, exerciseId: number, target?: PlanTarget) => Promise<boolean>;
   removePlanItem: (id: number) => Promise<void>;
+  movePlanItem: (id: number, dir: -1 | 1) => Promise<void>;
   copyPlanFromDate: (srcDate: string, destDate: string) => Promise<number>;
   addProgram: (name: string) => Promise<number>;
   removeProgram: (id: number) => Promise<void>;
@@ -201,38 +204,43 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
 
   addExercise: async (name, weightType, tag, description, imageUri, caloriesPerRep) => {
     const db = await getDb();
-    let relPath: string | null = null;
-    let absUri: string | null = null;
+    const cpr = caloriesPerRep || 0;
     if (imageUri) {
+      let tmpDest: File | null = null;
+      let finalDest: File | null = null;
       try {
         const dir = new Directory(getImageBaseDir(), 'exercise_images');
         if (!dir.exists) dir.create();
-        const ext = imageUri.split('.').pop()?.split('?')[0] || 'jpg';
-        // Use temp name first, rename after we get the id
-        const tmpName = `tmp_${Date.now()}.${ext}`;
-        const tmpDest = new File(dir, tmpName);
+        const ext = safeFileExtension(imageUri, 'jpg');
+        tmpDest = new File(dir, `tmp_${Crypto.randomUUID()}.${ext}`);
+        const preparedFinal = new File(dir, `exercise-${Crypto.randomUUID()}.${ext}`);
+        finalDest = preparedFinal;
         const src = new File(imageUri);
-        if (src.exists) src.move(tmpDest);
-        // Insert first to get ID, then rename
-        const cpr = caloriesPerRep || 0;
-        const res = await db.runAsync(
-          'INSERT INTO exercises (name, weight_type, tag, description, image_data, calories_per_rep, is_preset) VALUES (?, ?, ?, ?, ?, ?, 0)',
-          [name, weightType, tag || null, description || null, null, cpr]
-        );
-        const id = res.lastInsertRowId;
-        const finalDest = new File(dir, `${id}.${ext}`);
-        if (tmpDest.exists) tmpDest.move(finalDest);
-        relPath = `exercise_images/${id}.${ext}`;
-        absUri = finalDest.uri;
-        await db.runAsync('UPDATE exercises SET image_data = ? WHERE id = ?', [relPath, id]);
-        const ex: Exercise = { id, name, weightType, caloriesPerRep: cpr, priority: 5, tag: tag || null, description: description || null, imageUri: null, imageBase64: absUri, orderNum: 0, mediaType: 'photo', isPreset: false };
+        if (!src.exists) throw new Error('Файл изображения не найден');
+        src.move(tmpDest);
+        if (!tmpDest.exists) throw new Error('Не удалось подготовить изображение');
+        let id = 0;
+        let relPath = '';
+        await db.withExclusiveTransactionAsync(async (tx) => {
+          const res = await tx.runAsync(
+            'INSERT INTO exercises (name, weight_type, tag, description, image_data, calories_per_rep, is_preset) VALUES (?, ?, ?, ?, NULL, ?, 0)',
+            [name, weightType, tag || null, description || null, cpr],
+          );
+          id = res.lastInsertRowId;
+          tmpDest!.move(preparedFinal);
+          if (!preparedFinal.exists) throw new Error('Не удалось сохранить изображение');
+          relPath = `exercise_images/${preparedFinal.name}`;
+          await tx.runAsync('UPDATE exercises SET image_data = ? WHERE id = ?', [relPath, id]);
+        });
+        const ex: Exercise = { id, name, weightType, caloriesPerRep: cpr, priority: 5, tag: tag || null, description: description || null, imageUri: null, imageBase64: preparedFinal.uri, orderNum: 0, mediaType: 'photo', isPreset: false };
         set((s) => ({ exercises: [...s.exercises, ex] }));
         return id;
       } catch (e: any) {
+        if (tmpDest?.exists) tmpDest.delete();
+        if (finalDest?.exists) finalDest.delete();
         Alert.alert('Ошибка картинки', String(e?.message || e));
       }
     }
-    const cpr = caloriesPerRep || 0;
     const res = await db.runAsync(
       'INSERT INTO exercises (name, weight_type, tag, description, image_data, calories_per_rep, is_preset) VALUES (?, ?, ?, ?, ?, ?, 0)',
       [name, weightType, tag || null, description || null, null, cpr]
@@ -246,49 +254,59 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
   updateExercise: async (id, updates) => {
     const prev = get().exercises.find((e) => e.id === id);
     if (!prev) return;
-    const merged = { ...prev, ...updates };
     const db = await getDb();
-
-    // Handle image update
-    if (updates.imageUri !== undefined) {
-      if (updates.imageUri) {
-        try {
+    const merged = { ...prev, ...updates, imageUri: prev.imageUri };
+    const oldImage = await db.getFirstAsync<{ image_data: string | null }>('SELECT image_data FROM exercises WHERE id = ?', [id]);
+    let newRelativePath: string | null | undefined;
+    let newFile: File | null = null;
+    try {
+      if (updates.imageUri !== undefined) {
+        if (updates.imageUri) {
           const dir = new Directory(getImageBaseDir(), 'exercise_images');
           if (!dir.exists) dir.create();
-          const ext = updates.imageUri.split('.').pop()?.split('?')[0] || 'jpg';
-          const relPath = `exercise_images/${id}.${ext}`;
-          const dest = new File(dir, `${id}.${ext}`);
+          const ext = safeFileExtension(updates.imageUri, 'jpg');
+          newFile = new File(dir, `${id}-${Crypto.randomUUID()}.${ext}`);
           const src = new File(updates.imageUri);
-          if (src.exists) src.move(dest);
-          merged.imageBase64 = dest.uri;
+          if (!src.exists) throw new Error('Файл изображения не найден');
+          src.move(newFile);
+          if (!newFile.exists) throw new Error('Не удалось сохранить изображение');
+          newRelativePath = `exercise_images/${newFile.name}`;
+          merged.imageBase64 = newFile.uri;
           merged.imageUri = null;
-          await db.runAsync('UPDATE exercises SET image_data = ? WHERE id = ?', [relPath, id]);
-        } catch (e: any) {
-          Alert.alert('Ошибка картинки', String(e?.message || e));
+        } else {
+          newRelativePath = null;
+          merged.imageBase64 = null;
+          merged.imageUri = null;
         }
-      } else {
-        merged.imageBase64 = null;
-        merged.imageUri = null;
-        await db.runAsync('UPDATE exercises SET image_data = NULL WHERE id = ?', [id]);
       }
+      await db.runAsync(
+        `UPDATE exercises SET name=?, weight_type=?, tag=?, description=?, calories_per_rep=?, priority=?
+          ${newRelativePath !== undefined ? ', image_data=?' : ''} WHERE id=?`,
+        [merged.name, merged.weightType, merged.tag, merged.description, merged.caloriesPerRep, merged.priority ?? 5,
+         ...(newRelativePath !== undefined ? [newRelativePath] : []), id],
+      );
+    } catch (error) {
+      if (newFile?.exists) newFile.delete();
+      throw error;
     }
-
-    set((s) => ({
-      exercises: s.exercises.map((e) => (e.id === id ? merged : e)),
-    }));
-    await db.runAsync(
-      'UPDATE exercises SET name=?, weight_type=?, tag=?, description=?, calories_per_rep=?, priority=? WHERE id=?',
-      [merged.name, merged.weightType, merged.tag, merged.description, merged.caloriesPerRep, merged.priority ?? 5, id]
-    );
+    set((s) => ({ exercises: s.exercises.map((e) => (e.id === id ? merged : e)) }));
+    if (newRelativePath !== undefined) deleteStoredFile(oldImage?.image_data);
   },
 
   removeExercise: async (id) => {
+    const db = await getDb();
+    let imagePath: string | null = null;
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      const row = await tx.getFirstAsync<{ image_data: string | null }>('SELECT image_data FROM exercises WHERE id = ?', [id]);
+      imagePath = typeof row?.image_data === 'string' ? row.image_data : null;
+      await tx.runAsync('DELETE FROM exercises WHERE id = ?', [id]);
+    });
     set((s) => ({
       exercises: s.exercises.filter((e) => e.id !== id),
       logs: s.logs.filter((l) => l.exerciseId !== id),
+      plan: s.plan.filter((item) => item.exerciseId !== id),
     }));
-    const db = await getDb();
-    await db.runAsync('DELETE FROM exercises WHERE id = ?', [id]);
+    deleteStoredFile(imagePath);
   },
 
   addLog: async (exerciseId, weight, reps, setNum) => {
@@ -345,6 +363,26 @@ export const useExerciseStore = create<ExerciseState>()((set, get) => ({
     set((s) => ({ plan: s.plan.filter((p) => p.id !== id) }));
     const db = await getDb();
     await db.runAsync('DELETE FROM workout_plan WHERE id = ?', [id]);
+  },
+
+  movePlanItem: async (id, dir) => {
+    const item = get().plan.find((p) => p.id === id);
+    if (!item) return;
+    const dayItems = get().plan
+      .filter((p) => p.date === item.date)
+      .sort((a, b) => a.orderNum - b.orderNum || a.id - b.id);
+    const idx = dayItems.findIndex((p) => p.id === id);
+    const j = idx + dir;
+    if (j < 0 || j >= dayItems.length) return;
+    [dayItems[idx], dayItems[j]] = [dayItems[j], dayItems[idx]];
+    const orderById = new Map(dayItems.map((p, i) => [p.id, i]));
+    set((s) => ({
+      plan: s.plan.map((p) => (orderById.has(p.id) ? { ...p, orderNum: orderById.get(p.id)! } : p)),
+    }));
+    const db = await getDb();
+    for (const [pid, orderNum] of orderById) {
+      await db.runAsync('UPDATE workout_plan SET order_num = ? WHERE id = ?', [orderNum, pid]);
+    }
   },
 
   addProgram: async (name) => {

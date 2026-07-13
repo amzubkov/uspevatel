@@ -10,7 +10,17 @@ const secureKey = (key: string) => `secret_${key}`;
 export async function getSecret(key: string): Promise<string> {
   try {
     const v = await SecureStore.getItemAsync(secureKey(key));
-    if (v) return v;
+    if (v) {
+      // A previous migration may have persisted the secure value but failed
+      // before removing its plaintext predecessor.
+      try {
+        const db = await getDb();
+        await db.runAsync('DELETE FROM settings WHERE key = ?', [key]);
+      } catch (error) {
+        console.warn(`Не удалось удалить legacy secret ${key}:`, error);
+      }
+      return v;
+    }
   } catch {}
   // migrate from the old plaintext settings row, then remove it
   const db = await getDb();
@@ -18,8 +28,15 @@ export async function getSecret(key: string): Promise<string> {
   if (row?.value) {
     try {
       await SecureStore.setItemAsync(secureKey(key), row.value);
+    } catch {
+      // Keep the plaintext row until a secure write actually succeeds.
+      return row.value;
+    }
+    try {
       await db.runAsync('DELETE FROM settings WHERE key = ?', [key]);
-    } catch {}
+    } catch (error) {
+      console.warn(`Не удалось удалить legacy secret ${key}:`, error);
+    }
     return row.value;
   }
   return '';
@@ -28,13 +45,17 @@ export async function getSecret(key: string): Promise<string> {
 export async function setSecret(key: string, value: string): Promise<void> {
   if (value.trim()) {
     await SecureStore.setItemAsync(secureKey(key), value.trim());
+    const db = await getDb();
+    await db.runAsync('DELETE FROM settings WHERE key = ?', [key]);
   } else {
     await deleteSecret(key);
   }
 }
 
 export async function deleteSecret(key: string): Promise<void> {
-  try { await SecureStore.deleteItemAsync(secureKey(key)); } catch {}
+  let secureError: unknown = null;
+  try { await SecureStore.deleteItemAsync(secureKey(key)); } catch (error) { secureError = error; }
   const db = await getDb();
   await db.runAsync('DELETE FROM settings WHERE key = ?', [key]);
+  if (secureError) throw secureError;
 }

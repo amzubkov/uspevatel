@@ -29,7 +29,7 @@ export function DoctorsContent({ activePerson, persons }: { activePerson: string
   const [expanded, setExpanded] = useState<string | null>(null);
   const [fullImg, setFullImg] = useState<string | null>(null);
   const [name, setName] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayStr());
   const [notes, setNotes] = useState('');
   const [personId, setPersonId] = useState<string>(activePerson || 'me');
   const [status, setStatus] = useState<VisitStatus>('done');
@@ -55,7 +55,7 @@ export function DoctorsContent({ activePerson, persons }: { activePerson: string
   );
 
   const resetForm = () => {
-    setName(''); setDate(new Date().toISOString().slice(0, 10)); setNotes('');
+    setName(''); setDate(todayStr()); setNotes('');
     setShowForm(false); setEditingId(null);
     setPersonId(activePerson || 'me'); setStatus('done');
   };

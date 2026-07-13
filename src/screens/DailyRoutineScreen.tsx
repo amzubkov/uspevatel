@@ -8,6 +8,7 @@ import { RoutineStep } from '../components/RoutineStep';
 import { TaskCard } from '../components/TaskCard';
 import { useNavigation } from '@react-navigation/native';
 import { Category } from '../types';
+import { startOfLocalWeek } from '../utils/date';
 
 const TOTAL_STEPS = 9;
 
@@ -34,12 +35,7 @@ export function DailyRoutineScreen() {
   const currentProjects = useMemo(() => projects.filter((p) => p.isCurrent), [projects]);
   const futureProjects = useMemo(() => projects.filter((p) => !p.isCurrent), [projects]);
 
-  const weekStart = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - d.getDay() + 1);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  }, []);
+  const weekStart = useMemo(() => startOfLocalWeek(), []);
   const completedThisWeek = useMemo(() =>
     allTasks.filter((t) => t.completed && t.completedAt && new Date(t.completedAt) >= weekStart),
     [allTasks, weekStart]);

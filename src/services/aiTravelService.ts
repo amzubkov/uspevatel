@@ -2,6 +2,7 @@
 // structured flight/hotel items ready for flightStore.
 
 import { ollamaChatJson, VISION_MODEL } from './ollamaClient';
+import { isValidDateStr, isValidTimeStr } from '../utils/date';
 
 export interface ParsedTravelItem {
   kind: 'flight' | 'hotel';
@@ -62,9 +63,29 @@ const PROMPT = `Ты распознаёшь фото проездных доку
 
 export async function parseTravelPhoto(base64Image: string): Promise<ParsedTravelItem[]> {
   const parsed = await ollamaChatJson({ model: VISION_MODEL, user: PROMPT, images: [base64Image], format: SCHEMA });
-  const items: ParsedTravelItem[] = (parsed.items || []).filter(
-    (i: any) => i && i.title && /^\d{4}-\d{2}-\d{2}$/.test(i.departDate || '') && (i.kind === 'flight' || i.kind === 'hotel')
-  );
+  const rawItems = Array.isArray(parsed?.items) ? parsed.items : [];
+  const items: ParsedTravelItem[] = rawItems.flatMap((raw: any) => {
+    const kind = raw?.kind;
+    const title = typeof raw?.title === 'string' ? raw.title.trim().slice(0, 300) : '';
+    if ((kind !== 'flight' && kind !== 'hotel') || !title || !isValidDateStr(raw?.departDate)) return [];
+    const price = raw?.price == null || raw.price === '' ? NaN : Number(raw.price);
+    return [{
+      kind,
+      title,
+      city: typeof raw.city === 'string' ? raw.city.trim().slice(0, 200) || undefined : undefined,
+      address: typeof raw.address === 'string' ? raw.address.trim().slice(0, 500) || undefined : undefined,
+      flightNumber: typeof raw.flightNumber === 'string' ? raw.flightNumber.trim().slice(0, 50) || undefined : undefined,
+      departDate: raw.departDate,
+      departTime: isValidTimeStr(raw.departTime) ? raw.departTime : undefined,
+      arriveDate: isValidDateStr(raw.arriveDate) ? raw.arriveDate : undefined,
+      arriveTime: isValidTimeStr(raw.arriveTime) ? raw.arriveTime : undefined,
+      price: Number.isFinite(price) && price >= 0 && price <= 1_000_000_000 ? price : undefined,
+      currency: typeof raw.currency === 'string' && /^[A-Za-zА-Яа-я]{2,8}$/.test(raw.currency.trim())
+        ? raw.currency.trim().toUpperCase()
+        : undefined,
+      notes: typeof raw.notes === 'string' ? raw.notes.trim().slice(0, 2000) || undefined : undefined,
+    }];
+  });
   if (items.length === 0) throw new Error('На фото не распознано билетов или броней');
   return items;
 }

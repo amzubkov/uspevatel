@@ -11,6 +11,7 @@ import { AttachmentList } from '../components/AttachmentList';
 import { DatePickerField } from '../components/DatePickerField';
 import { colors } from '../utils/theme';
 import { ZoomableImage } from '../components/ZoomableImage';
+import { calendarDayDiff, todayStr } from '../utils/date';
 
 /* ── Documents Tab ── */
 function DocsContent() {
@@ -200,7 +201,7 @@ function CarsContent() {
   const [showAddDoc, setShowAddDoc] = useState(false);
   const [newDocName, setNewDocName] = useState('');
   const [showAddService, setShowAddService] = useState(false);
-  const [svcDate, setSvcDate] = useState(new Date().toISOString().slice(0, 10));
+  const [svcDate, setSvcDate] = useState(todayStr());
   const [svcMileage, setSvcMileage] = useState('');
   const [svcNotes, setSvcNotes] = useState('');
   const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
@@ -480,7 +481,7 @@ function InsuranceContent() {
   };
 
   const daysUntil = (dateStr: string): number => {
-    return Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86400000);
+    return calendarDayDiff(dateStr, todayStr());
   };
 
   return (

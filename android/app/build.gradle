@@ -68,6 +68,13 @@ react {
  */
 def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBuilds') ?: false).toBoolean()
 
+// Release signing is opt-in. A checkout without production credentials produces
+// an unsigned, non-debuggable APK instead of silently shipping the debug key.
+def releaseStoreFile = findProperty('USPEVATEL_RELEASE_STORE_FILE') ?: System.getenv('USPEVATEL_RELEASE_STORE_FILE')
+def releaseStorePassword = findProperty('USPEVATEL_RELEASE_STORE_PASSWORD') ?: System.getenv('USPEVATEL_RELEASE_STORE_PASSWORD')
+def releaseKeyAlias = findProperty('USPEVATEL_RELEASE_KEY_ALIAS') ?: System.getenv('USPEVATEL_RELEASE_KEY_ALIAS')
+def releaseKeyPassword = findProperty('USPEVATEL_RELEASE_KEY_PASSWORD') ?: System.getenv('USPEVATEL_RELEASE_KEY_PASSWORD')
+
 /**
  * The preferred build flavor of JavaScriptCore (JSC)
  *
@@ -104,16 +111,26 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        if (releaseStoreFile && releaseStorePassword && releaseKeyAlias && releaseKeyPassword) {
+            release {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
-            debuggable true // personal device: enables run-as DB pull/push from desktop
+            def productionSigning = signingConfigs.findByName('release')
+            if (productionSigning != null) signingConfig productionSigning
+            else signingConfig signingConfigs.debug
+            // Personal-device builds (no production credentials) stay debuggable so
+            // scripts/db-pull.sh / db-push.sh keep working via adb run-as.
+            debuggable productionSigning == null
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds

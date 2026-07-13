@@ -112,8 +112,8 @@ scripts/db-push.sh [in.db]                # Push DB back (force-stops the app)
 ## Important Notes
 
 - UI strings are in Russian
-- Android: `com.uspevatel.app`; release is signed with the debug keystore AND built `debuggable true` — intentional, enables `run-as` DB access from desktop for the personal-device workflow
-- DB migrations are incremental (v0->v47); real failures propagate (schema_version only advances on success), duplicate-column re-runs are ignored
+- Android: `com.uspevatel.app`; with `USPEVATEL_RELEASE_*` credentials release is production-signed and non-debuggable. Without them (personal devices) release falls back to debug-keystore signing and stays debuggable so `scripts/db-pull.sh`/`db-push.sh` (`run-as`) keep working. Plain `assembleDebug` does NOT embed the JS bundle (needs Metro) — ship `assembleRelease`.
+- DB migrations are incremental (v0→v49); real failures propagate (schema_version only advances on success), duplicate-column re-runs are ignored
 - `tsc --noEmit` is clean — keep it that way
 - Two phones run this app (owner + family member); data is per-device, no sync between them. DB changes via scripts must respect whichever phone is connected
 - Google Sheets sync is dead (removed v8.12); folder sync is disabled in current builds

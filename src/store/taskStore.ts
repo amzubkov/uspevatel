@@ -4,6 +4,14 @@ import * as Crypto from 'expo-crypto';
 import { File, Paths, Directory } from 'expo-file-system';
 import { Task, Category, WeekStats } from '../types';
 import { getDb, getImageBaseDir } from '../db/database';
+import { startOfLocalWeek, startOfLocalWeekStr } from '../utils/date';
+import {
+  deleteEntityAttachmentsInTransaction,
+  deleteStoredFile,
+  evictEntityAttachments,
+  safeFileExtension,
+} from './attachmentStore';
+import { cancelTaskReminder, scheduleTaskReminder } from '../utils/notifications';
 
 function resolveImageUri(val: any): string | undefined {
   if (!val) return undefined;
@@ -20,18 +28,18 @@ interface TaskState {
   loaded: boolean;
 
   load: () => Promise<void>;
-  addTask: (task: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'completed' | 'completedAt'>) => void;
-  updateTask: (id: string, updates: Partial<Task>) => void;
-  deleteTask: (id: string) => void;
-  moveTask: (id: string, category: Category) => void;
-  completeTask: (id: string) => void;
-  uncompleteTask: (id: string) => void;
-  importTask: (task: Task) => void;
+  addTask: (task: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'completed' | 'completedAt'>) => Promise<void>;
+  updateTask: (id: string, updates: Partial<Task>) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
+  moveTask: (id: string, category: Category) => Promise<void>;
+  completeTask: (id: string) => Promise<void>;
+  uncompleteTask: (id: string) => Promise<void>;
+  importTask: (task: Task) => Promise<void>;
   getTasksByCategory: (category: Category) => Task[];
   getTasksByProject: (projectName: string) => Task[];
   getTasksByContext: (context: string) => Task[];
   getCompletedThisWeek: () => Task[];
-  addWeekStats: (stats: Omit<WeekStats, 'weekStart'>) => void;
+  addWeekStats: (stats: Omit<WeekStats, 'weekStart'>) => Promise<void>;
   addImageToTask: (id: string, imageUri: string) => Promise<void>;
   removeImageFromTask: (id: string) => Promise<void>;
 }
@@ -108,14 +116,13 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
     if (get().loaded) return;
     const db = await getDb();
     const rows = await db.getAllAsync('SELECT * FROM tasks');
-    const wsRows = await db.getAllAsync('SELECT * FROM week_stats ORDER BY week_start DESC');
+    const wsRows = await db.getAllAsync('SELECT * FROM week_stats ORDER BY week_start ASC');
     set({ tasks: rows.map(rowToTask), weekStats: wsRows.map(rowToWeekStats), loaded: true });
   },
 
   addTask: async (taskData) => {
     const now = new Date().toISOString();
     const task: Task = { ...taskData, id: Crypto.randomUUID(), completed: false, createdAt: now, updatedAt: now };
-    set((s) => ({ tasks: [...s.tasks, task] }));
     const db = await getDb();
     await db.runAsync(
       `INSERT INTO tasks (id, subject, action, category, context_category, project, notes, start_date, deadline, reminder_at, priority, is_recurring, recur_days, completed, completed_at, created_at, updated_at, goal_type)
@@ -124,13 +131,14 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
        task.notes, task.startDate || null, task.deadline || null, task.reminderAt || null,
        task.priority, task.isRecurring ? 1 : 0, task.recurDays ? JSON.stringify(task.recurDays) : null, now, now, task.goalType || null]
     );
+    set((s) => ({ tasks: [...s.tasks, task] }));
   },
 
   updateTask: async (id, updates) => {
     const now = new Date().toISOString();
-    set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, ...updates, updatedAt: now } : t) }));
-    const task = get().tasks.find((t) => t.id === id);
-    if (!task) return;
+    const previous = get().tasks.find((task) => task.id === id);
+    if (!previous) return;
+    const task = { ...previous, ...updates, updatedAt: now };
     const db = await getDb();
     await db.runAsync(
       `UPDATE tasks SET subject=?, action=?, category=?, context_category=?, project=?, notes=?, start_date=?, deadline=?, reminder_at=?, priority=?, is_recurring=?, recur_days=?, completed=?, completed_at=?, updated_at=?, goal_type=? WHERE id=?`,
@@ -139,41 +147,67 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
        task.priority, task.isRecurring ? 1 : 0, task.recurDays ? JSON.stringify(task.recurDays) : null,
        task.completed ? 1 : 0, task.completedAt || null, now, task.goalType || null, id]
     );
+    set((s) => ({ tasks: s.tasks.map((candidate) => candidate.id === id ? task : candidate) }));
+    if (previous.action !== task.action && task.reminderAt && !task.completed) {
+      const reminder = new Date(task.reminderAt);
+      if (Number.isFinite(reminder.getTime()) && reminder.getTime() > Date.now()) {
+        try {
+          await cancelTaskReminder(id);
+          await scheduleTaskReminder(id, task.action, reminder);
+        } catch {
+          // The DB is authoritative; restore reconciliation retries reminders.
+        }
+      }
+    }
   },
 
   deleteTask: async (id) => {
-    set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id) }));
     const db = await getDb();
-    await db.runAsync('DELETE FROM tasks WHERE id = ?', [id]);
+    let imagePath: string | null = null;
+    let attachmentPaths: string[] = [];
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      const row = await tx.getFirstAsync<{ image_data: string | null }>('SELECT image_data FROM tasks WHERE id = ?', [id]);
+      imagePath = row?.image_data || null;
+      attachmentPaths = await deleteEntityAttachmentsInTransaction(tx, 'task', id);
+      await tx.runAsync('DELETE FROM tasks WHERE id = ?', [id]);
+    });
+    set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id) }));
+    evictEntityAttachments('task', id);
+    deleteStoredFile(imagePath);
+    attachmentPaths.forEach(deleteStoredFile);
+    await cancelTaskReminder(id);
   },
 
   moveTask: async (id, category) => {
     const now = new Date().toISOString();
-    set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, category, updatedAt: now } : t) }));
     const db = await getDb();
     await db.runAsync('UPDATE tasks SET category = ?, updated_at = ? WHERE id = ?', [category, now, id]);
+    set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, category, updatedAt: now } : t) }));
   },
 
   completeTask: async (id) => {
     const now = new Date().toISOString();
-    set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, completed: true, completedAt: now, updatedAt: now } : t) }));
     const db = await getDb();
     await db.runAsync('UPDATE tasks SET completed = 1, completed_at = ?, updated_at = ? WHERE id = ?', [now, now, id]);
+    set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, completed: true, completedAt: now, updatedAt: now } : t) }));
+    await cancelTaskReminder(id);
   },
 
   uncompleteTask: async (id) => {
     const now = new Date().toISOString();
-    set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, completed: false, completedAt: undefined, updatedAt: now } : t) }));
     const db = await getDb();
     await db.runAsync('UPDATE tasks SET completed = 0, completed_at = NULL, updated_at = ? WHERE id = ?', [now, id]);
+    set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, completed: false, completedAt: undefined, updatedAt: now } : t) }));
+    const task = get().tasks.find((candidate) => candidate.id === id);
+    if (task?.reminderAt) {
+      const reminder = new Date(task.reminderAt);
+      if (Number.isFinite(reminder.getTime()) && reminder.getTime() > Date.now()) {
+        await scheduleTaskReminder(id, task.action, reminder).catch(() => null);
+      }
+    }
   },
 
   importTask: async (task) => {
-    set((s) => {
-      const idx = s.tasks.findIndex((t) => t.id === task.id);
-      if (idx >= 0) { const u = [...s.tasks]; u[idx] = task; return { tasks: u }; }
-      return { tasks: [...s.tasks, task] };
-    });
     const db = await getDb();
     await db.runAsync(
       `INSERT OR REPLACE INTO tasks (id, subject, action, category, context_category, project, notes, start_date, deadline, reminder_at, priority, is_recurring, recur_days, completed, completed_at, created_at, updated_at, goal_type)
@@ -183,6 +217,11 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
        task.priority, task.isRecurring ? 1 : 0, task.recurDays ? JSON.stringify(task.recurDays) : null,
        task.completed ? 1 : 0, task.completedAt || null, task.createdAt, task.updatedAt, task.goalType || null]
     );
+    set((s) => {
+      const idx = s.tasks.findIndex((t) => t.id === task.id);
+      if (idx >= 0) { const u = [...s.tasks]; u[idx] = task; return { tasks: u }; }
+      return { tasks: [...s.tasks, task] };
+    });
   },
 
   getTasksByCategory: (category) => get().tasks.filter((t) => t.category === category && !t.completed),
@@ -190,10 +229,7 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
   getTasksByContext: (context) => get().tasks.filter((t) => t.contextCategory === context && !t.completed),
 
   getCompletedThisWeek: () => {
-    const now = new Date();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay() + 1);
-    startOfWeek.setHours(0, 0, 0, 0);
+    const startOfWeek = startOfLocalWeek();
     return get().tasks.filter((t) => t.completed && t.completedAt && new Date(t.completedAt) >= startOfWeek);
   },
 
@@ -201,7 +237,7 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
     try {
       const dir = new Directory(getImageBaseDir(), 'task_images');
       if (!dir.exists) dir.create();
-      const ext = imageUri.split('.').pop()?.split('?')[0] || 'jpg';
+      const ext = safeFileExtension(imageUri, 'jpg');
       const relPath = `task_images/${id}.${ext}`;
       const dest = new File(dir, `${id}.${ext}`);
       const src = new File(imageUri);
@@ -216,22 +252,23 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
   },
 
   removeImageFromTask: async (id) => {
-    set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, imageBase64: undefined } : t) }));
     const db = await getDb();
+    const row = await db.getFirstAsync<{ image_data: string | null }>('SELECT image_data FROM tasks WHERE id = ?', [id]);
     await db.runAsync('UPDATE tasks SET image_data = NULL WHERE id = ?', [id]);
+    set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, imageBase64: undefined } : t) }));
+    deleteStoredFile(row?.image_data);
   },
 
   addWeekStats: async (statsData) => {
-    const now = new Date();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay() + 1);
-    startOfWeek.setHours(0, 0, 0, 0);
-    const stats: WeekStats = { ...statsData, weekStart: startOfWeek.toISOString() };
-    set((s) => ({ weekStats: [...s.weekStats, stats] }));
+    const stats: WeekStats = { ...statsData, weekStart: `${startOfLocalWeekStr()}T00:00:00` };
     const db = await getDb();
     await db.runAsync(
       'INSERT OR REPLACE INTO week_stats (week_start, total_completed, project_completed, ratio, diary_entry) VALUES (?, ?, ?, ?, ?)',
       [stats.weekStart, stats.totalCompleted, stats.projectCompleted, stats.ratio, stats.diaryEntry]
     );
+    set((s) => ({
+      weekStats: [...s.weekStats.filter((week) => week.weekStart !== stats.weekStart), stats]
+        .sort((a, b) => a.weekStart.localeCompare(b.weekStart)),
+    }));
   },
 }));

@@ -83,9 +83,6 @@ export function ArchiveContent({ activePerson, persons }: { activePerson: string
       { text: 'Отмена', style: 'cancel' },
       {
         text: 'Удалить', style: 'destructive', onPress: async () => {
-          for (const a of filesFor(r.id)) {
-            try { await removeAttachment(a.id); } catch {}
-          }
           await removeRecord(r.id);
         },
       },

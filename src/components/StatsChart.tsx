@@ -3,6 +3,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { WeekStats } from '../types';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
+import { parseLocalDate } from '../utils/date';
 
 interface Props {
   stats: WeekStats[];
@@ -19,13 +20,13 @@ export function StatsChart({ stats }: Props) {
     <View style={[styles.container, { backgroundColor: c.card, borderColor: c.border }]}>
       <Text style={[styles.title, { color: c.text }]}>Выполнено за неделю</Text>
       <View style={styles.chart}>
-        {lastWeeks.map((week, idx) => {
+        {lastWeeks.map((week) => {
           const totalH = (week.totalCompleted / maxVal) * 120;
           const projH = (week.projectCompleted / maxVal) * 120;
-          const date = new Date(week.weekStart);
+          const date = parseLocalDate(week.weekStart.slice(0, 10));
           const label = `${date.getDate()}/${date.getMonth() + 1}`;
           return (
-            <View key={idx} style={styles.barGroup}>
+            <View key={week.weekStart} style={styles.barGroup}>
               <View style={styles.barContainer}>
                 <View style={[styles.bar, { height: totalH, backgroundColor: c.primary }]}>
                   <View style={[styles.barInner, { height: projH, backgroundColor: c.success }]} />

@@ -42,6 +42,13 @@ yarn-error.*
 
 # generated native folders
 /ios
-/android
+/android/*
+!/android/app/
+/android/app/*
+!/android/app/src/
+/android/app/src/*
+!/android/app/src/main/
+/android/app/src/main/*
+!/android/app/src/main/AndroidManifest.xml
 desktop/src-tauri/target/
 desktop/src-tauri/gen/

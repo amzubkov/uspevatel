@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, ScrollView, KeyboardAvoidingView, Platform, StyleSheet, Alert } from 'react-native';
 import { useMoneyStore, Account, Transaction, BankType } from '../store/moneyStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -9,20 +9,23 @@ import { parseBankFile, parseBankFileXlsx, BANK_LABELS, ParsedTransaction } from
 import * as DocumentPicker from 'expo-document-picker';
 import * as LegacyFS from 'expo-file-system/legacy';
 import * as PdfTextExtract from 'expo-pdf-text-extract';
+import * as Crypto from 'expo-crypto';
+import { filterAlreadyImportedTransactions, timestampForEditedDate } from '../utils/moneyLogic';
+import { shiftDateStr, todayStr, toDateStr } from '../utils/date';
 
 const CURRENCIES = ['RUB', 'EUR', 'USD', 'USDT'];
 const ACC_COLORS = ['#EF4444', '#F59E0B', '#22C55E', '#3B82F6', '#8B5CF6', '#EC4899', '#06B6D4', '#6B7280'];
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 function dayOffset(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().substring(0, 10);
+  return shiftDateStr(todayStr(), -n);
 }
-const DATE_QUICK = [
-  { key: 'today', label: 'Сегодня', date: dayOffset(0) },
-  { key: 'yesterday', label: 'Вчера', date: dayOffset(1) },
-  { key: 'before', label: 'Пзвчера', date: dayOffset(2) },
-];
+function getDateQuick() {
+  return [
+    { key: 'today', label: 'Сегодня', date: dayOffset(0) },
+    { key: 'yesterday', label: 'Вчера', date: dayOffset(1) },
+    { key: 'before', label: 'Пзвчера', date: dayOffset(2) },
+  ];
+}
 
 function fmtDate(d: string): string {
   const [y, m, day] = d.split('-').map(Number);
@@ -56,7 +59,7 @@ export function triggerAddAccount() { _showAddAccount?.(); }
 export function MoneyScreen() {
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
-  const { accounts, addAccount, updateAccount, removeAccount, addTransaction, updateTransaction, removeTransaction, addCorrection, getCorrection, getCorrectionDate, getBalance, getTransactionsForAccount, getLastTxDate, getAllCategories, getAllTags } = useMoneyStore();
+  const { accounts, addAccount, updateAccount, removeAccount, addTransaction, addTransactionsBatch, addTransfer, updateTransaction, removeTransaction, removeTransactions, addCorrection, getCorrection, getCorrectionDate, getBalance, getTransactionsForAccount, getLastTxDate, getAllCategories, getAllTags } = useMoneyStore();
 
   const [mainTab, setMainTab] = useState<'accounts' | 'upcoming'>('accounts');
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
@@ -94,11 +97,16 @@ export function MoneyScreen() {
   const [txMode, setTxMode] = useState<'expense' | 'income' | 'transfer'>('expense');
   const [txTargetAccountId, setTxTargetAccountId] = useState<string | null>(null);
   const [txTargetAmount, setTxTargetAmount] = useState('');
-  const [txDate, setTxDate] = useState(new Date().toISOString().substring(0, 10));
+  const [txDate, setTxDate] = useState(todayStr());
   const [showCustomDate, setShowCustomDate] = useState(false);
   const [txCategory, setTxCategory] = useState('');
   const [txTag, setTxTag] = useState('');
   const [txComment, setTxComment] = useState('');
+  const [savingTx, setSavingTx] = useState(false);
+  const editingTxOriginalRef = useRef<{ date: string; timestamp?: string } | null>(null);
+  // Keep one operation id while the form is open. If a post-commit UI refresh
+  // fails and the user retries, INSERT OR IGNORE cannot duplicate the transfer.
+  const transferOperationId = useRef(Crypto.randomUUID());
 
   const selectedAccount = useMemo(() => accounts.find((a) => a.id === selectedAccountId), [accounts, selectedAccountId]);
   const accountTxs = useMemo(() => selectedAccountId ? getTransactionsForAccount(selectedAccountId) : [], [selectedAccountId, useMoneyStore((s) => s.transactions)]);
@@ -128,10 +136,10 @@ export function MoneyScreen() {
     if (periodFilter) {
       const now = new Date();
       let cutoff: string;
-      if (periodFilter === 'today') cutoff = now.toISOString().substring(0, 10);
-      else if (periodFilter === 'week') { const d = new Date(now); d.setDate(d.getDate() - 7); cutoff = d.toISOString().substring(0, 10); }
-      else if (periodFilter === 'month') { const d = new Date(now); d.setMonth(d.getMonth() - 1); cutoff = d.toISOString().substring(0, 10); }
-      else if (periodFilter === 'year') { const d = new Date(now); d.setFullYear(d.getFullYear() - 1); cutoff = d.toISOString().substring(0, 10); }
+      if (periodFilter === 'today') cutoff = toDateStr(now);
+      else if (periodFilter === 'week') { const d = new Date(now); d.setDate(d.getDate() - 7); cutoff = toDateStr(d); }
+      else if (periodFilter === 'month') { const d = new Date(now); d.setMonth(d.getMonth() - 1); cutoff = toDateStr(d); }
+      else if (periodFilter === 'year') { const d = new Date(now); d.setFullYear(d.getFullYear() - 1); cutoff = toDateStr(d); }
       else cutoff = '0000';
       txs = txs.filter((t) => t.date >= cutoff);
     }
@@ -210,9 +218,13 @@ export function MoneyScreen() {
   const handleDeleteAccount = (acc: Account) => {
     Alert.alert('Удалить счёт?', `"${acc.name}" и все транзакции будут удалены`, [
       { text: 'Отмена', style: 'cancel' },
-      { text: 'Удалить', style: 'destructive', onPress: () => {
-        if (selectedAccountId === acc.id) setSelectedAccountId(null);
-        removeAccount(acc.id);
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        try {
+          await removeAccount(acc.id);
+          if (selectedAccountId === acc.id) setSelectedAccountId(null);
+        } catch (e: any) {
+          Alert.alert('Не удалось удалить счёт', String(e?.message || e));
+        }
       }},
     ]);
   };
@@ -226,7 +238,10 @@ export function MoneyScreen() {
       { text: 'Удалить все', style: 'destructive', onPress: () => {
         Alert.alert('Точно удалить?', `Все ${count} транзакций будут удалены безвозвратно`, [
           { text: 'Отмена', style: 'cancel' },
-          { text: 'Да, удалить всё', style: 'destructive', onPress: () => clearTransactions(acc.id) },
+          { text: 'Да, удалить всё', style: 'destructive', onPress: async () => {
+            try { await clearTransactions(acc.id); }
+            catch (e: any) { Alert.alert('Не удалось удалить', String(e?.message || e)); }
+          } },
         ]);
       }},
     ]);
@@ -243,12 +258,37 @@ export function MoneyScreen() {
 
   const resetTxForm = () => {
     setTxAmount(''); setTxMode('expense'); setTxTargetAccountId(null); setTxTargetAmount('');
-    setTxDate(new Date().toISOString().substring(0, 10)); setShowCustomDate(false);
+    setTxDate(todayStr()); setShowCustomDate(false);
     setTxCategory(''); setTxTag(''); setTxComment(''); setShowTxForm(false); setEditingTxId(null);
+    editingTxOriginalRef.current = null;
+    transferOperationId.current = Crypto.randomUUID();
+  };
+
+  const confirmDeleteCorrection = (tx: Transaction) => {
+    Alert.alert(
+      'Удалить коррекцию баланса?',
+      'После удаления баланс снова будет рассчитан только по обычным транзакциям.',
+      [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Удалить',
+          style: 'destructive',
+          onPress: async () => {
+            try { await removeTransaction(tx.id); }
+            catch (e: any) { Alert.alert('Не удалось удалить', String(e?.message || e)); }
+          },
+        },
+      ],
+    );
   };
 
   const startEditTx = (tx: Transaction) => {
+    if (tx.isCorrection) {
+      confirmDeleteCorrection(tx);
+      return;
+    }
     setEditingTxId(tx.id);
+    editingTxOriginalRef.current = { date: tx.date, timestamp: tx.timestamp };
     setTxAmount(String(Math.abs(tx.amount)));
     setTxMode(tx.amount >= 0 ? 'income' : 'expense');
     setTxDate(tx.date);
@@ -264,47 +304,64 @@ export function MoneyScreen() {
   const needsConversion = txMode === 'transfer' && selectedAccount && targetAccount && selectedAccount.currency !== targetAccount.currency;
 
   const handleSaveTx = async () => {
+    if (savingTx) return;
     const num = parseFloat(txAmount.replace(',', '.'));
     if (!num || !selectedAccountId) { Alert.alert('Введите сумму'); return; }
+    if (txMode === 'transfer' && !txTargetAccountId) { Alert.alert('Выберите счёт назначения'); return; }
+    if (txMode === 'transfer' && txTargetAccountId === selectedAccountId) { Alert.alert('Нельзя перевести на тот же счёт'); return; }
+    const targetNum = needsConversion ? parseFloat(txTargetAmount.replace(',', '.')) : num;
+    if (txMode === 'transfer' && !targetNum) { Alert.alert('Введите сумму в валюте получателя'); return; }
 
-    if (editingTxId) {
-      await updateTransaction(editingTxId, {
-        amount: txMode === 'expense' ? -Math.abs(num) : Math.abs(num),
-        date: txDate,
-        category: txCategory.trim(),
-        tag: txTag.trim(),
-        comment: txComment.trim(),
-      });
+    setSavingTx(true);
+    try {
+      if (editingTxId) {
+        const original = editingTxOriginalRef.current;
+        const nextTimestamp = original
+          ? timestampForEditedDate(original.date, original.timestamp, txDate)
+          : undefined;
+        const timestampUpdate = nextTimestamp ? { timestamp: nextTimestamp } : {};
+        await updateTransaction(editingTxId, {
+          amount: txMode === 'expense' ? -Math.abs(num) : Math.abs(num),
+          date: txDate,
+          ...timestampUpdate,
+          category: txCategory.trim(),
+          tag: txTag.trim(),
+          comment: txComment.trim(),
+        });
+      } else if (txMode === 'transfer' && txTargetAccountId) {
+        await addTransfer({
+          fromAccountId: selectedAccountId,
+          toAccountId: txTargetAccountId,
+          fromAmount: Math.abs(num),
+          toAmount: Math.abs(targetNum),
+          date: txDate,
+          tag: txTag.trim(),
+          fromComment: txComment.trim() || `→ ${targetAccount?.name}`,
+          toComment: txComment.trim() || `← ${selectedAccount?.name}`,
+          operationId: transferOperationId.current,
+        });
+      } else {
+        await addTransaction({
+          accountId: selectedAccountId,
+          amount: txMode === 'expense' ? -Math.abs(num) : Math.abs(num),
+          date: txDate,
+          category: txCategory.trim(),
+          tag: txTag.trim(),
+          comment: txComment.trim(),
+        });
+      }
       resetTxForm();
-      return;
+    } catch (e: any) {
+      Alert.alert('Не удалось сохранить', String(e?.message || e));
+    } finally {
+      setSavingTx(false);
     }
-
-    if (txMode === 'transfer') {
-      if (!txTargetAccountId) { Alert.alert('Выберите счёт назначения'); return; }
-      if (txTargetAccountId === selectedAccountId) { Alert.alert('Нельзя перевести на тот же счёт'); return; }
-      const targetNum = needsConversion ? parseFloat(txTargetAmount.replace(',', '.')) : num;
-      if (!targetNum) { Alert.alert('Введите сумму в валюте получателя'); return; }
-      const comment = txComment.trim() || `→ ${targetAccount?.name}`;
-      const commentBack = txComment.trim() || `← ${selectedAccount?.name}`;
-      await addTransaction({ accountId: selectedAccountId, amount: -Math.abs(num), date: txDate, category: 'Перевод', tag: txTag.trim(), comment });
-      await addTransaction({ accountId: txTargetAccountId, amount: Math.abs(targetNum), date: txDate, category: 'Перевод', tag: txTag.trim(), comment: commentBack });
-    } else {
-      await addTransaction({
-        accountId: selectedAccountId,
-        amount: txMode === 'expense' ? -Math.abs(num) : Math.abs(num),
-        date: txDate,
-        category: txCategory.trim(),
-        tag: txTag.trim(),
-        comment: txComment.trim(),
-      });
-    }
-    resetTxForm();
   };
 
   const handleCopyTx = (tx: Transaction) => {
     setTxAmount(String(Math.abs(tx.amount)));
     setTxMode(tx.amount >= 0 ? 'income' : 'expense');
-    setTxDate(new Date().toISOString().substring(0, 10));
+    setTxDate(todayStr());
     setTxCategory(tx.category);
     setTxTag(tx.tag);
     setTxComment(tx.comment);
@@ -329,13 +386,18 @@ export function MoneyScreen() {
   };
 
   const confirmDeleteSelected = () => {
-    const count = selectedForDelete.size;
+    const ids = [...selectedForDelete];
+    const count = ids.length;
     Alert.alert(`Удалить ${count} транзакций?`, '', [
       { text: 'Отмена', style: 'cancel' },
-      { text: 'Удалить', style: 'destructive', onPress: () => {
-        for (const id of selectedForDelete) removeTransaction(id);
-        setDeleteMode(false);
-        setSelectedForDelete(new Set());
+      { text: 'Удалить', style: 'destructive', onPress: async () => {
+        try {
+          await removeTransactions(ids);
+          setDeleteMode(false);
+          setSelectedForDelete(new Set());
+        } catch (e: any) {
+          Alert.alert('Не удалось удалить', String(e?.message || e));
+        }
       }},
     ]);
   };
@@ -347,6 +409,10 @@ export function MoneyScreen() {
 
   const handleTxLongPress = (tx: Transaction) => {
     if (deleteMode) return;
+    if (tx.isCorrection) {
+      confirmDeleteCorrection(tx);
+      return;
+    }
     Alert.alert('Транзакция', `${fmtAmount(tx.amount, selectedAccount?.currency || '')} ${tx.comment}`, [
       { text: 'Копировать', onPress: () => handleCopyTx(tx) },
       { text: 'Выбрать для удаления', style: 'destructive', onPress: () => enterDeleteMode(tx.id) },
@@ -470,7 +536,7 @@ export function MoneyScreen() {
 
           <Text style={[st.label, { color: c.textSecondary }]}>Дата</Text>
           <View style={st.chipRow}>
-            {DATE_QUICK.map((dq) => {
+            {getDateQuick().map((dq) => {
               const active = txDate === dq.date;
               return (
                 <TouchableOpacity key={dq.key}
@@ -528,8 +594,8 @@ export function MoneyScreen() {
             value={txComment} onChangeText={setTxComment} placeholder="Описание" placeholderTextColor={c.textSecondary} />
 
           <View style={st.formBtns}>
-            <TouchableOpacity style={[st.btn, { backgroundColor: c.primary, flex: 1 }]} onPress={handleSaveTx}>
-              <Text style={{ color: '#FFF', fontWeight: '700' }}>{editingTxId ? 'Сохранить' : 'Добавить'}</Text>
+            <TouchableOpacity style={[st.btn, { backgroundColor: c.primary, flex: 1, opacity: savingTx ? 0.6 : 1 }]} onPress={handleSaveTx} disabled={savingTx}>
+              <Text style={{ color: '#FFF', fontWeight: '700' }}>{savingTx ? 'Сохраняю…' : editingTxId ? 'Сохранить' : 'Добавить'}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[st.btn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border, flex: 1 }]} onPress={resetTxForm}>
               <Text style={{ color: c.text, fontWeight: '600' }}>Отмена</Text>
@@ -539,7 +605,10 @@ export function MoneyScreen() {
             <TouchableOpacity style={[st.btn, { marginTop: 8 }]} onPress={() => {
               Alert.alert('Удалить транзакцию?', '', [
                 { text: 'Отмена', style: 'cancel' },
-                { text: 'Удалить', style: 'destructive', onPress: () => { removeTransaction(editingTxId); resetTxForm(); } },
+                { text: 'Удалить', style: 'destructive', onPress: async () => {
+                  try { await removeTransaction(editingTxId); resetTxForm(); }
+                  catch (e: any) { Alert.alert('Не удалось удалить', String(e?.message || e)); }
+                } },
               ]);
             }}>
               <Text style={{ color: c.danger, fontWeight: '600', fontSize: 14 }}>Удалить транзакцию</Text>
@@ -575,11 +644,10 @@ export function MoneyScreen() {
         Alert.alert('Импорт', 'Не удалось найти транзакции в файле');
         return;
       }
-      // Filter out duplicates (same date + amount + comment)
-      const existingKeys = new Set(
-        getTransactionsForAccount(selectedAccountId).map((t) => `${t.date}|${t.amount}|${t.comment}`)
+      const newTxs = filterAlreadyImportedTransactions(
+        getTransactionsForAccount(selectedAccountId),
+        parsed,
       );
-      const newTxs = parsed.filter((t) => !existingKeys.has(`${t.date}|${t.amount}|${t.comment}`));
       if (newTxs.length === 0) {
         Alert.alert('Импорт', `Найдено ${parsed.length} транзакций, все уже импортированы`);
         return;
@@ -590,8 +658,8 @@ export function MoneyScreen() {
         [
           { text: 'Отмена', style: 'cancel' },
           { text: `Импорт ${newTxs.length}`, onPress: async () => {
-            for (const t of newTxs) {
-              await addTransaction({
+            try {
+              await addTransactionsBatch(newTxs.map((t) => ({
                 accountId: selectedAccountId,
                 amount: t.amount,
                 date: t.date,
@@ -599,9 +667,11 @@ export function MoneyScreen() {
                 category: t.category,
                 tag: t.tag,
                 comment: t.comment,
-              });
+              })));
+              Alert.alert('Готово', `Импортировано ${newTxs.length} транзакций`);
+            } catch (e: any) {
+              Alert.alert('Ошибка импорта', String(e?.message || e));
             }
-            Alert.alert('Готово', `Импортировано ${newTxs.length} транзакций`);
           }},
         ]
       );

@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import * as Crypto from 'expo-crypto';
 import { getDb } from '../db/database';
+import {
+  deleteEntityAttachmentsInTransaction,
+  deleteStoredFile,
+  evictEntityAttachments,
+} from './attachmentStore';
 
 export interface Doctor {
   id: string;
@@ -127,9 +132,15 @@ export const useDoctorContactStore = create<DoctorContactState>()((set, get) => 
   },
 
   removeDoctor: async (id) => {
-    set((s) => ({ doctors: s.doctors.filter((d) => d.id !== id) }));
     const db = await getDb();
-    await db.runAsync('DELETE FROM doctors WHERE id = ?', [id]);
+    let attachmentPaths: string[] = [];
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      attachmentPaths = await deleteEntityAttachmentsInTransaction(tx, 'doctor', id);
+      await tx.runAsync('DELETE FROM doctors WHERE id = ?', [id]);
+    });
+    set((s) => ({ doctors: s.doctors.filter((d) => d.id !== id) }));
+    evictEntityAttachments('doctor', id);
+    attachmentPaths.forEach(deleteStoredFile);
   },
 
   mergeRemoteDoctor: async (remote) => {

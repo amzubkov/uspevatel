@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import * as Crypto from 'expo-crypto';
 import { getDb } from '../db/database';
+import { useFlightStore } from './flightStore';
 
 export interface Traveler {
   id: string;
@@ -68,10 +69,19 @@ export const useTravelerStore = create<TravelerState>()((set, get) => ({
   },
 
   removeTraveler: async (id) => {
-    set((s) => ({ travelers: s.travelers.filter((t) => t.id !== id) }));
     const db = await getDb();
-    // Unlink flights from removed traveler
-    await db.runAsync('UPDATE flights SET traveler_id = NULL WHERE traveler_id = ?', [id]);
-    await db.runAsync('DELETE FROM travelers WHERE id = ?', [id]);
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      // Keep both the current many-to-many relation and the legacy column clean.
+      await tx.runAsync('DELETE FROM flight_travelers WHERE traveler_id = ?', [id]);
+      await tx.runAsync('UPDATE flights SET traveler_id = NULL WHERE traveler_id = ?', [id]);
+      await tx.runAsync('DELETE FROM travelers WHERE id = ?', [id]);
+    });
+    set((s) => ({ travelers: s.travelers.filter((t) => t.id !== id) }));
+    useFlightStore.setState((state) => ({
+      flights: state.flights.map((flight) => ({
+        ...flight,
+        travelerIds: flight.travelerIds.filter((travelerId) => travelerId !== id),
+      })),
+    }));
   },
 }));

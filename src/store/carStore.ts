@@ -3,6 +3,7 @@ import { Alert } from 'react-native';
 import * as Crypto from 'expo-crypto';
 import { File, Directory } from 'expo-file-system';
 import { getDb, getImageBaseDir } from '../db/database';
+import { deleteStoredFile, safeFileExtension } from './attachmentStore';
 
 export interface Car {
   id: string;
@@ -98,6 +99,23 @@ export const useCarStore = create<CarState>()((set, get) => ({
   },
 
   removeCar: async (id) => {
+    const db = await getDb();
+    let imagePaths: string[] = [];
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      const rows = await tx.getAllAsync<{ image_path: string }>(
+        `SELECT i.image_path FROM car_document_images i
+         JOIN car_documents d ON d.id = i.car_document_id WHERE d.car_id = ?`,
+        [id],
+      );
+      imagePaths = rows.map((row) => row.image_path).filter(Boolean);
+      await tx.runAsync(
+        'DELETE FROM car_document_images WHERE car_document_id IN (SELECT id FROM car_documents WHERE car_id = ?)',
+        [id],
+      );
+      await tx.runAsync('DELETE FROM car_documents WHERE car_id = ?', [id]);
+      await tx.runAsync('DELETE FROM car_services WHERE car_id = ?', [id]);
+      await tx.runAsync('DELETE FROM cars WHERE id = ?', [id]);
+    });
     set((s) => ({
       cars: s.cars.filter((c) => c.id !== id),
       carDocuments: s.carDocuments.filter((d) => d.carId !== id),
@@ -107,8 +125,7 @@ export const useCarStore = create<CarState>()((set, get) => ({
       }),
       services: s.services.filter((sv) => sv.carId !== id),
     }));
-    const db = await getDb();
-    await db.runAsync('DELETE FROM cars WHERE id = ?', [id]);
+    imagePaths.forEach(deleteStoredFile);
   },
 
   addCarDocument: async (carId, name) => {
@@ -121,12 +138,19 @@ export const useCarStore = create<CarState>()((set, get) => ({
   },
 
   removeCarDocument: async (id) => {
+    const db = await getDb();
+    let imagePaths: string[] = [];
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      const rows = await tx.getAllAsync<{ image_path: string }>('SELECT image_path FROM car_document_images WHERE car_document_id = ?', [id]);
+      imagePaths = rows.map((row) => row.image_path).filter(Boolean);
+      await tx.runAsync('DELETE FROM car_document_images WHERE car_document_id = ?', [id]);
+      await tx.runAsync('DELETE FROM car_documents WHERE id = ?', [id]);
+    });
     set((s) => ({
       carDocuments: s.carDocuments.filter((d) => d.id !== id),
       carDocImages: s.carDocImages.filter((i) => i.carDocumentId !== id),
     }));
-    const db = await getDb();
-    await db.runAsync('DELETE FROM car_documents WHERE id = ?', [id]);
+    imagePaths.forEach(deleteStoredFile);
   },
 
   addCarDocImage: async (carDocId, imageUri) => {
@@ -134,7 +158,7 @@ export const useCarStore = create<CarState>()((set, get) => ({
       const dir = new Directory(getImageBaseDir(), 'car_doc_images');
       if (!dir.exists) dir.create();
       const imgId = Crypto.randomUUID();
-      const ext = imageUri.split('.').pop()?.split('?')[0] || 'jpg';
+      const ext = safeFileExtension(imageUri, 'jpg');
       const relPath = `car_doc_images/${imgId}.${ext}`;
       const dest = new File(dir, `${imgId}.${ext}`);
       const src = new File(imageUri);
@@ -151,9 +175,11 @@ export const useCarStore = create<CarState>()((set, get) => ({
   },
 
   removeCarDocImage: async (id) => {
-    set((s) => ({ carDocImages: s.carDocImages.filter((i) => i.id !== id) }));
     const db = await getDb();
+    const row = await db.getFirstAsync<{ image_path: string | null }>('SELECT image_path FROM car_document_images WHERE id = ?', [id]);
     await db.runAsync('DELETE FROM car_document_images WHERE id = ?', [id]);
+    set((s) => ({ carDocImages: s.carDocImages.filter((i) => i.id !== id) }));
+    deleteStoredFile(row?.image_path);
   },
 
   addService: async (sv) => {

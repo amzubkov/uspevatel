@@ -39,7 +39,7 @@ export interface ParsedDoc {
 
 export interface ParsedHealth {
   type: 'health';
-  results: { name: string; value: number; date?: string }[];
+  results: { name: string; value: number; unit?: string; refMin?: number; refMax?: number; date?: string }[];
   metrics: { name: string; unit: string; refMin?: number; refMax?: number }[];
   date?: string;
   msgDate: number;
@@ -81,21 +81,64 @@ export interface ParsedDoctor {
 export type ParsedItem = ParsedTask | ParsedFlight | ParsedDoc | ParsedHealth | ParsedRef | ParsedTx | ParsedNote | ParsedDoctor;
 
 // Normalise date: "14.04.2026" → "2026-04-14", "2026-04-14" stays as is
+function isCalendarDate(year: number, month: number, day: number): boolean {
+  const d = new Date(year, month - 1, day);
+  return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day;
+}
+
 function normaliseDate(s: string): string | null {
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (iso) return s;
+  if (iso) {
+    const [, y, m, d] = iso.map(Number);
+    return isCalendarDate(y, m, d) ? s : null;
+  }
   const dmy = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  if (dmy) {
+    const day = Number(dmy[1]);
+    const month = Number(dmy[2]);
+    const year = Number(dmy[3]);
+    if (isCalendarDate(year, month, day)) {
+      return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+    }
+  }
   return null;
 }
 
 // Parse "14.04.2026 14:30" or "2026-04-14 14:30" or just date
 function parseDatetime(s: string): { date: string; time?: string } | null {
   const parts = s.trim().split(/\s+/);
+  if (parts.length > 2) return null;
   const date = normaliseDate(parts[0]);
   if (!date) return null;
-  const timeMatch = parts[1]?.match(/^(\d{1,2}):(\d{2})$/);
-  return { date, time: timeMatch ? `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}` : undefined };
+  const time = parts[1] ? normaliseTime(parts[1]) : undefined;
+  if (parts[1] && !time) return null;
+  return { date, time: time || undefined };
+}
+
+function normaliseTime(s: string): string | null {
+  const timeMatch = s.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!timeMatch || Number(timeMatch[1]) > 23 || Number(timeMatch[2]) > 59) return null;
+  return `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`;
+}
+
+function looksLikeDateOrTime(value: string): boolean {
+  return /^\d{1,4}[.-]\d{1,2}(?:[.-]\d{1,4})?(?:\s|$)/.test(value.trim())
+    || /^\d{1,2}:\d{2}(?:\s|$)/.test(value.trim());
+}
+
+// Semicolon/tab is the unambiguous format and preserves locale decimal commas.
+// Comma-only input remains supported for backwards compatibility.
+function splitFields(value: string): string[] {
+  const delimiter = value.includes(';') ? /;/ : value.includes('\t') ? /\t/ : /,/;
+  return value.split(delimiter).map((part) => part.trim());
+}
+
+function parseLocaleNumber(value?: string): number | undefined {
+  if (!value) return undefined;
+  const normalized = value.replace(/\s/g, '').replace(',', '.');
+  if (!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(normalized)) return undefined;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 // Parse text (or caption) + optional photo
@@ -126,6 +169,7 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
       if (dt) {
         return { type: 'task', subject: body.substring(0, lastComma).trim(), project, deadline: dt.date, photoFileId, msgDate };
       }
+      if (looksLikeDateOrTime(maybeDateStr)) return null;
     }
     return { type: 'task', subject: body, project, photoFileId, msgDate };
   }
@@ -140,11 +184,14 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
     const isHotel = !!hotelMatch;
     const isEvent = !!eventMatch;
     const body = (flightMatch || hotelMatch || eventMatch)![1];
-    const parts = body.split(',').map((p) => p.trim());
+    const parts = splitFields(body);
     if (parts.length < 2) return null;
     let dateIdx = -1;
     for (let i = 1; i < parts.length; i++) {
       if (parseDatetime(parts[i])) { dateIdx = i; break; }
+      // Do not silently absorb an invalid date into the route/hotel name and
+      // then accept a later valid date.
+      if (looksLikeDateOrTime(parts[i])) return null;
     }
     if (dateIdx === -1) return null;
 
@@ -158,7 +205,14 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
     }
     const depart = parseDatetime(parts[dateIdx]);
     if (!depart || !title) return null;
-    const arrive = parts[dateIdx + 1] ? parseDatetime(parts[dateIdx + 1]) : undefined;
+    const arriveCandidate = parts[dateIdx + 1];
+    let arrive = arriveCandidate ? parseDatetime(arriveCandidate) : undefined;
+    if (isEvent && arriveCandidate && !arrive) {
+      const endTime = normaliseTime(arriveCandidate);
+      if (endTime) arrive = { date: depart.date, time: endTime };
+    }
+    if (arriveCandidate && !arrive && looksLikeDateOrTime(arriveCandidate)) return null;
+    if (isHotel && !arrive) return null;
     // Everything after dates: check for fn:XXX (flight number), price, rest goes to notes
     const notesStartIdx = dateIdx + (arrive ? 2 : 1);
     const tail = parts.slice(notesStartIdx);
@@ -173,10 +227,15 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
         continue;
       }
       const priceMatch = p.match(/^(\d+(?:[.,]\d+)?)\s*([€₽]|EUR|RUB)?$/i);
-      if (priceMatch && !price) {
-        price = parseFloat(priceMatch[1].replace(',', '.'));
+      if (priceMatch && price == null) {
+        price = parseLocaleNumber(priceMatch[1]);
         const cur = (priceMatch[2] || '').toUpperCase();
         currency = cur === '₽' || cur === 'RUB' ? 'RUB' : cur === '€' || cur === 'EUR' ? 'EUR' : undefined;
+      } else if (priceMatch) {
+        // In comma-delimited legacy input, a locale decimal such as 12,5 is
+        // split into two price-looking fields. Reject it instead of importing
+        // the corrupted integer part; semicolon/tab input is unambiguous.
+        return null;
       } else {
         notesParts.push(p);
       }
@@ -202,16 +261,18 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
     return { type: 'note', text, tags, photoFileId, msgDate };
   }
 
-  // /tx <account>, <amount>[, <category>[, <tag>[, <comment>[, <date>]]]]
+  // /tx <account>; <amount>[; <category>[; <tag>[; <comment>[; <date>]]]]
+  // Commas are still accepted as legacy field separators, but use semicolons
+  // whenever a number itself contains a decimal comma.
   // amount: "150" or "-150" or "+150", negative = expense by default
   const txMatch = trimmed.match(/^\/tx\s+(.+)/i);
   if (txMatch) {
-    const parts = txMatch[1].split(',').map((p) => p.trim());
+    const parts = splitFields(txMatch[1]);
     if (parts.length >= 2) {
       const account = parts[0];
       const amountStr = parts[1].replace(/\s/g, '');
-      const num = parseFloat(amountStr.replace(',', '.'));
-      if (!isNaN(num) && account) {
+      const num = parseLocaleNumber(amountStr);
+      if (num != null && account) {
         // -amount = expense, +amount or no sign = income
         const amount = amountStr.startsWith('-') ? -Math.abs(num) : Math.abs(num);
         const category = parts[2]?.trim() || '';
@@ -219,12 +280,14 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
         const comment = parts[4]?.trim() || '';
         const dateStr = parts[5]?.trim();
         const dt = dateStr ? parseDatetime(dateStr) : undefined;
+        if (dateStr && !dt) return null;
         return { type: 'tx', account, amount, category, tag, comment, date: dt?.date, time: dt?.time, msgDate };
       }
     }
   }
 
-  // /health - multi-line: each line "name, value[, unit, refMin, refMax]"
+  // /health - multi-line: each line "name; value[; unit; refMin; refMax; date]"
+  // Semicolons preserve decimal commas. Legacy comma-separated lines are accepted.
   // optional last line with date (YYYY-MM-DD or DD.MM.YYYY)
   const healthMatch = trimmed.match(/^\/health\s+([\s\S]+)/i);
   if (healthMatch) {
@@ -234,20 +297,34 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
     let date: string | undefined;
     for (const line of lines) {
       if (line === '---') continue;
-      const parts = line.split(/[,;\t]/).map((p) => p.trim());
+      const parts = splitFields(line);
       const maybeDate = normaliseDate(parts[0]);
       if (maybeDate && parts.length === 1) { date = maybeDate; continue; }
+      if (parts.length === 1 && looksLikeDateOrTime(parts[0])) return null;
       if (parts.length < 2) continue;
-      const maybeValue = parseFloat(parts[1].replace(',', '.'));
-      if (!isNaN(maybeValue)) {
-        // Result: name, value[, date]
-        const inlineDate = parts[2] ? normaliseDate(parts[2]) : undefined;
-        results.push({ name: parts[0], value: maybeValue, date: inlineDate || undefined });
+      const maybeValue = parseLocaleNumber(parts[1]);
+      if (maybeValue != null) {
+        // Legacy third field may be a date; otherwise it is the unit.
+        const legacyDate = parts[2] ? normaliseDate(parts[2]) : null;
+        if (parts[2] && looksLikeDateOrTime(parts[2]) && !legacyDate) return null;
+        const refMin = legacyDate ? undefined : parseLocaleNumber(parts[3]);
+        const refMax = legacyDate ? undefined : parseLocaleNumber(parts[4]);
+        const explicitDate = parts[5] ? normaliseDate(parts[5]) : null;
+        if (parts[5] && !explicitDate) return null;
+        const inlineDate = legacyDate || explicitDate;
+        results.push({
+          name: parts[0],
+          value: maybeValue,
+          unit: legacyDate ? undefined : (parts[2] || undefined),
+          refMin,
+          refMax,
+          date: inlineDate || undefined,
+        });
       } else {
         // Metric def: name, unit, refMin, refMax
-        const refMin = parts[2] ? parseFloat(parts[2].replace(',', '.')) : undefined;
-        const refMax = parts[3] ? parseFloat(parts[3].replace(',', '.')) : undefined;
-        metrics.push({ name: parts[0], unit: parts[1], refMin: isNaN(refMin as any) ? undefined : refMin, refMax: isNaN(refMax as any) ? undefined : refMax });
+        const refMin = parseLocaleNumber(parts[2]);
+        const refMax = parseLocaleNumber(parts[3]);
+        metrics.push({ name: parts[0], unit: parts[1], refMin, refMax });
       }
     }
     if (results.length > 0 || metrics.length > 0) {
@@ -265,12 +342,12 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
     for (const line of lines) {
       const srcMatch = line.match(/^source:(\S+)$/i);
       if (srcMatch) { source = srcMatch[1].toUpperCase(); continue; }
-      const parts = line.split(/[,;\t]/).map((p) => p.trim());
+      const parts = splitFields(line);
       if (parts.length < 3) continue;
-      const refMin = parseFloat(parts[1].replace(',', '.'));
-      const refMax = parseFloat(parts[2].replace(',', '.'));
+      const refMin = parseLocaleNumber(parts[1]);
+      const refMax = parseLocaleNumber(parts[2]);
       const periodDays = parts[3] ? parseInt(parts[3]) : undefined;
-      if (isNaN(refMin) || isNaN(refMax)) continue;
+      if (refMin == null || refMax == null) continue;
       refs.push({ name: parts[0], refMin, refMax, periodDays: isNaN(periodDays as any) ? undefined : periodDays });
     }
     if (source && refs.length > 0) {
@@ -283,16 +360,31 @@ export function parseMessage(text: string, msgDate: number, photoFileId?: string
 
 /** Parse a message that may contain multiple /tx lines. Returns array of items. */
 export function parseMessages(text: string, msgDate: number, photoFileId?: string, docFileId?: string, docFileName?: string, docMimeType?: string): ParsedItem[] {
+  return parseMessagesDetailed(text, msgDate, photoFileId, docFileId, docFileName, docMimeType).items;
+}
+
+export interface ParsedMessagesResult {
+  items: ParsedItem[];
+  errors: string[];
+}
+
+/** Parse every command and retain per-line errors instead of silently dropping them. */
+export function parseMessagesDetailed(text: string, msgDate: number, photoFileId?: string, docFileId?: string, docFileName?: string, docMimeType?: string): ParsedMessagesResult {
   const lines = text.trim().split('\n');
-  const txLines = lines.filter((l) => /^\/tx\s+/i.test(l.trim()));
+  const txLines = lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) => /^\/tx\s+/i.test(line.trim()));
   if (txLines.length > 1) {
     const results: ParsedItem[] = [];
-    for (const line of txLines) {
+    const errors: string[] = [];
+    for (const { line, index } of txLines) {
       const item = parseMessage(line, msgDate);
       if (item) results.push(item);
+      else errors.push(`Строка ${index + 1}: некорректная /tx команда`);
     }
-    return results;
+    return { items: results, errors };
   }
   const item = parseMessage(text, msgDate, photoFileId, docFileId, docFileName, docMimeType);
-  return item ? [item] : [];
+  const isKnownCommand = /^\/(?:task|flight|hotel|event|doc|note|tx|health|ref)\b/i.test(text.trim());
+  return { items: item ? [item] : [], errors: !item && isKnownCommand ? ['Команда содержит некорректные поля'] : [] };
 }

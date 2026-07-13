@@ -7,6 +7,7 @@ import { colors } from '../utils/theme';
 import { RoutineStep } from '../components/RoutineStep';
 import { TaskCard } from '../components/TaskCard';
 import { useNavigation } from '@react-navigation/native';
+import { startOfLocalWeek } from '../utils/date';
 
 const TOTAL_STEPS = 5;
 
@@ -23,9 +24,7 @@ export function WeeklyRoutineScreen() {
   const maybeTasks = tasks.filter((t) => t.category === 'MAYBE' && !t.completed);
   const currentProjects = projects.filter((p) => p.isCurrent);
   const futureProjects = projects.filter((p) => !p.isCurrent);
-  const weekStart = new Date();
-  weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
-  weekStart.setHours(0, 0, 0, 0);
+  const weekStart = startOfLocalWeek();
   const completedThisWeek = tasks.filter(
     (t) => t.completed && t.completedAt && new Date(t.completedAt) >= weekStart
   );

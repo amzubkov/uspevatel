@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import * as Crypto from 'expo-crypto';
 import { getDb } from '../db/database';
+import {
+  deleteEntityAttachmentsInTransaction,
+  deleteStoredFile,
+  evictEntityAttachments,
+} from './attachmentStore';
 
 export type LabStatus = 'planned' | 'done';
 
@@ -71,8 +76,14 @@ export const useLabArchiveStore = create<LabArchiveState>()((set, get) => ({
   },
 
   removeRecord: async (id) => {
-    set((s) => ({ records: s.records.filter((r) => r.id !== id) }));
     const db = await getDb();
-    await db.runAsync('DELETE FROM lab_archive WHERE id = ?', [id]);
+    let attachmentPaths: string[] = [];
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      attachmentPaths = await deleteEntityAttachmentsInTransaction(tx, 'lab_archive', id);
+      await tx.runAsync('DELETE FROM lab_archive WHERE id = ?', [id]);
+    });
+    set((s) => ({ records: s.records.filter((r) => r.id !== id) }));
+    evictEntityAttachments('lab_archive', id);
+    attachmentPaths.forEach(deleteStoredFile);
   },
 }));

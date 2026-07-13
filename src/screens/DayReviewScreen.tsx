@@ -1,4 +1,4 @@
-import { todayStr, shiftDateStr, WEEKDAYS_SUN_LOWER } from '../utils/date';
+import { parseLocalDate, todayStr, shiftDateStr, WEEKDAYS_SUN_LOWER } from '../utils/date';
 import React, { useState, useMemo, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, FlatList, StyleSheet, Alert } from 'react-native';
 import { useSettingsStore } from '../store/settingsStore';
@@ -20,7 +20,7 @@ function fmtDate(d: string): string {
   return `${day} ${MONTHS[m - 1]}`;
 }
 function fmtDateFull(d: string): string {
-  const dt = new Date(d);
+  const dt = parseLocalDate(d);
   const day = dt.getDate();
   const month = MONTHS[dt.getMonth()];
   const wd = WEEKDAYS[dt.getDay()];
@@ -186,9 +186,7 @@ export function DayReviewScreen() {
   };
 
   const changeDate = (offset: number) => {
-    const d = new Date(date);
-    d.setDate(d.getDate() + offset);
-    setDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    setDate(shiftDateStr(date, offset));
   };
 
   const hasSport = sportData.pullups > 0 || sportData.abs > 0 || sportData.triceps > 0 || sportData.squats > 0;
@@ -336,7 +334,7 @@ export function DayReviewScreen() {
             <TouchableOpacity style={[s.historyRow, { borderColor: c.border }]}
               onPress={() => { setDate(log.date); setShowHistory(false); }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={{ color: c.text, fontSize: 13, fontWeight: '600', width: 70 }}>{fmtDate(log.date)}, {WEEKDAYS[new Date(log.date).getDay()]}</Text>
+                <Text style={{ color: c.text, fontSize: 13, fontWeight: '600', width: 70 }}>{fmtDate(log.date)}, {WEEKDAYS[parseLocalDate(log.date).getDay()]}</Text>
                 {log.dayRating != null && <Text style={{ color: '#8B5CF6', fontSize: 13, fontWeight: '700' }}>📊{log.dayRating}</Text>}
                 {log.sleepHours != null && <Text style={{ color: c.textSecondary, fontSize: 12 }}>😴{log.sleepHours}</Text>}
                 {log.sleepQuality != null && <Text style={{ color: '#3B82F6', fontSize: 12 }}>💤{log.sleepQuality}%</Text>}

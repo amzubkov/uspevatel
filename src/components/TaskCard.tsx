@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { Task, Category } from '../types';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
+import { parseStoredDate } from '../utils/date';
 
 const CATEGORY_EMOJI: Record<Category, string> = {
   IN: '📥', DAY: '☀️', LATER: '📋', CONTROL: '👁', MAYBE: '💭',
@@ -45,7 +46,7 @@ export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPre
         <View style={styles.content}>
           <View style={styles.topRow}>
             <Text style={[styles.action, { color: isSuper ? '#FFF' : c.text, fontSize }, task.completed && styles.completedText]} numberOfLines={2}>
-              {task.goalType ? '🎯 ' : ''}{showCategory ? CATEGORY_EMOJI[task.category] : ''}{dayAge > 2 ? <Text style={{ color: c.danger, fontSize: smallFont }}>{dayAge}д </Text> : ''}{task.deadline ? <Text style={{ color: c.danger }}>{new Date(task.deadline).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} </Text> : null}{task.project ? <Text style={{ color: c.primary }}>{task.project} </Text> : null}{task.subject ? <Text style={{ color: c.textSecondary }}>{task.subject} </Text> : null}{task.action}
+              {task.goalType ? '🎯 ' : ''}{showCategory ? CATEGORY_EMOJI[task.category] : ''}{dayAge > 2 ? <Text style={{ color: c.danger, fontSize: smallFont }}>{dayAge}д </Text> : ''}{task.deadline ? <Text style={{ color: c.danger }}>{parseStoredDate(task.deadline).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} </Text> : null}{task.project ? <Text style={{ color: c.primary }}>{task.project} </Text> : null}{task.subject ? <Text style={{ color: c.textSecondary }}>{task.subject} </Text> : null}{task.action}
             </Text>
             {(task.priority === 'high' || task.priority === 'super') && <View style={[styles.priorityDot, { backgroundColor: isSuper ? '#FFF' : c.danger }]} />}
           </View>
@@ -60,7 +61,7 @@ export function TaskCard({ task, onPress, onComplete, showCategory, onSubjectPre
             )}
             {task.startDate && (
               <Text style={[styles.tagInline, { color: c.textSecondary, fontSize: smallFont }]}>
-                📅{new Date(task.startDate).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+                📅{parseStoredDate(task.startDate).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
               </Text>
             )}
           </View>

@@ -1,6 +1,6 @@
 import 'react-native-gesture-handler';
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Linking, TouchableOpacity } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { AppNavigator } from './src/navigation';
@@ -52,6 +52,8 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
 
 function AppLoader() {
   const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
   const theme = useSettingsStore((s) => s.theme);
   const loadSettings = useSettingsStore((s) => s.load);
   const loadTasks = useTaskStore((s) => s.load);
@@ -81,43 +83,71 @@ function AppLoader() {
   const loadShopping = useShoppingStore((s) => s.load);
 
   useEffect(() => {
+    let cancelled = false;
+    setReady(false);
+    setLoadError(null);
     (async () => {
-      // Load sync folder BEFORE anything opens the DB
-      await loadSyncFolder();
-      // Settings first (theme needed for UI), then rest in parallel
-      await loadSettings();
-      await Promise.all([
-        loadTasks(),
-        loadProjects(),
-        loadRoutines(),
-        loadChecklist(),
-        loadSport(),
-        loadExercises(),
-        loadFlights(),
-        loadHealth(),
-        loadAttachments(),
-        loadDoctors(),
-        loadDoctorContacts(),
-        loadContacts(),
-        loadPersons(),
-        loadLabArchive(),
-        loadTravelers(),
-        loadDocuments(),
-        loadCars(),
-        loadNotes(),
-        loadMoney(),
-        loadDailyLogs(),
-        loadNutrition(),
-        loadNutritionGoals(),
-        loadRecurringPayments(),
-        loadNutritionPlan(),
-        loadShopping(),
-      ]);
-      setReady(true);
+      try {
+        // Load sync folder BEFORE anything opens the DB
+        await loadSyncFolder();
+        // Settings first (theme needed for UI), then rest in parallel. Wait for
+        // every loader so retry never races still-running startup work.
+        await loadSettings();
+        const results = await Promise.allSettled([
+          loadTasks(),
+          loadProjects(),
+          loadRoutines(),
+          loadChecklist(),
+          loadSport(),
+          loadExercises(),
+          loadFlights(),
+          loadHealth(),
+          loadAttachments(),
+          loadDoctors(),
+          loadDoctorContacts(),
+          loadContacts(),
+          loadPersons(),
+          loadLabArchive(),
+          loadTravelers(),
+          loadDocuments(),
+          loadCars(),
+          loadNotes(),
+          loadMoney(),
+          loadDailyLogs(),
+          loadNutrition(),
+          loadNutritionGoals(),
+          loadRecurringPayments(),
+          loadNutritionPlan(),
+          loadShopping(),
+        ]);
+        const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+        if (failures.length > 0) {
+          throw new Error(failures.map((failure) => String(failure.reason?.message || failure.reason)).join('\n'));
+        }
+        if (!cancelled) setReady(true);
+      } catch (e: any) {
+        if (!cancelled) setLoadError(String(e?.message || e || 'Неизвестная ошибка'));
+      }
     })();
-  }, []);
+    return () => { cancelled = true; };
+  }, [retryToken]);
 
   if (!ready) {
+    if (loadError) {
+      return (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: theme === 'dark' ? '#1A1A1A' : '#FFF' }}>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: theme === 'dark' ? '#FFF' : '#222', marginBottom: 10 }}>Не удалось запустить приложение</Text>
+          <Text style={{ fontSize: 13, textAlign: 'center', color: theme === 'dark' ? '#BBB' : '#555', marginBottom: 18 }}>{loadError}</Text>
+          <TouchableOpacity
+            accessibilityRole="button"
+            style={{ backgroundColor: '#3B82F6', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 12 }}
+            onPress={() => setRetryToken((token) => token + 1)}
+          >
+            <Text style={{ color: '#FFF', fontWeight: '700' }}>Повторить</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme === 'dark' ? '#1A1A1A' : '#FFF' }}>
         <ActivityIndicator size="large" />

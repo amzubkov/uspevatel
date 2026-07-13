@@ -1,5 +1,6 @@
 import { StyleSheet } from 'react-native';
 import { Flight, FlightStatus, FlightKind } from '../../store/flightStore';
+import { calendarDayDiff } from '../../utils/date';
 
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 
@@ -40,9 +41,7 @@ export function fmtHotelDate(f: Flight): string {
   if (f.arriveDate) {
     s += `  →  ${fmtDate(f.arriveDate, f.arriveTime)}`;
     // calc nights
-    const d1 = new Date(f.departDate);
-    const d2 = new Date(f.arriveDate);
-    const nights = Math.round((d2.getTime() - d1.getTime()) / 86400000);
+    const nights = calendarDayDiff(f.arriveDate, f.departDate);
     if (nights > 0) s += ` (${nights} ноч.)`;
   }
   return s;

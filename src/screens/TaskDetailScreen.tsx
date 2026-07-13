@@ -54,6 +54,7 @@ export function TaskDetailScreen() {
   const [showReminderTimePicker, setShowReminderTimePicker] = useState(false);
   const [reminderPickerDate, setReminderPickerDate] = useState(new Date());
   const deletedRef = useRef(false);
+  const leavingRef = useRef(false);
 
   // Unique subjects from all tasks
   const knownSubjects = useMemo(() => {
@@ -72,16 +73,48 @@ export function TaskDetailScreen() {
     return projects.filter((p) => p.name.toLowerCase().includes(q));
   }, [projects, project]);
 
-  // Auto-save when leaving the screen
+  const persistTaskEdits = React.useCallback(async () => {
+    const trimmedProject = project?.trim();
+    const existingProject = trimmedProject
+      ? projects.find((candidate) => candidate.name.toLowerCase() === trimmedProject.toLowerCase())
+      : undefined;
+    let canonicalProject = existingProject?.name;
+    if (trimmedProject && !existingProject) {
+      await addProject(trimmedProject);
+      canonicalProject = trimmedProject.toUpperCase();
+    }
+    await updateTask(taskId, {
+      subject,
+      action,
+      notes,
+      category,
+      priority,
+      goalType,
+      project: canonicalProject,
+      contextCategory: contextCategory || undefined,
+      deadline: deadline || undefined,
+    });
+  }, [action, addProject, category, contextCategory, deadline, goalType, notes, priority, project, projects, subject, taskId, updateTask]);
+
+  // Persist before every navigation path, including gestures and the Android back button.
   useEffect(() => {
-    const unsubscribe = navigation.addListener('beforeRemove', () => {
-      if (!deletedRef.current && task) {
-        ensureProjectExists(project);
-        updateTask(taskId, { subject, action, notes, category, priority, goalType, project: project || undefined, contextCategory: contextCategory || undefined, deadline: deadline || undefined });
-      }
+    const unsubscribe = navigation.addListener('beforeRemove', (event: any) => {
+      if (deletedRef.current || !task) return;
+      event.preventDefault();
+      if (leavingRef.current) return;
+      leavingRef.current = true;
+      void persistTaskEdits()
+        .then(() => {
+          deletedRef.current = true;
+          navigation.dispatch(event.data.action);
+        })
+        .catch((error) => {
+          leavingRef.current = false;
+          Alert.alert('Ошибка', error instanceof Error ? error.message : 'Не удалось сохранить задачу');
+        });
     });
     return unsubscribe;
-  }, [navigation, taskId, subject, action, notes, category, project, contextCategory, deadline]);
+  }, [navigation, persistTaskEdits, task]);
 
   if (!task) {
     return (
@@ -91,24 +124,46 @@ export function TaskDetailScreen() {
     );
   }
 
-  const ensureProjectExists = (name: string | undefined) => {
-    if (!name?.trim()) return;
-    const exists = projects.some((p) => p.name.toLowerCase() === name.trim().toLowerCase());
-    if (!exists) addProject(name.trim());
+  const handleSave = async () => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    try {
+      await persistTaskEdits();
+      deletedRef.current = true;
+      navigation.goBack();
+    } catch (error) {
+      leavingRef.current = false;
+      Alert.alert('Ошибка', error instanceof Error ? error.message : 'Не удалось сохранить задачу');
+    }
   };
 
-  const handleSave = () => {
-    deletedRef.current = true;
-    ensureProjectExists(project);
-    updateTask(taskId, { subject, action, notes, category, priority, goalType, project: project || undefined, contextCategory: contextCategory || undefined, deadline: deadline || undefined });
-    navigation.goBack();
+  const handleToggleCompleted = async () => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    const wasCompleted = task.completed;
+    try {
+      await persistTaskEdits();
+      if (wasCompleted) await uncompleteTask(taskId);
+      else await completeTask(taskId);
+      deletedRef.current = true;
+      navigation.goBack();
+    } catch (error) {
+      leavingRef.current = false;
+      Alert.alert('Ошибка', error instanceof Error ? error.message : 'Не удалось изменить статус задачи');
+    }
   };
 
   const doDelete = async () => {
-    deletedRef.current = true;
-    await cancelTaskReminder(taskId);
-    deleteTask(taskId);
-    navigation.goBack();
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    try {
+      await deleteTask(taskId);
+      deletedRef.current = true;
+      navigation.goBack();
+    } catch (error) {
+      leavingRef.current = false;
+      Alert.alert('Ошибка', error instanceof Error ? error.message : 'Не удалось удалить задачу');
+    }
   };
 
   const handleDelete = () => {
@@ -124,16 +179,26 @@ export function TaskDetailScreen() {
     }
   };
 
+  const saveReminder = async (date: Date, label: string) => {
+    let scheduled = false;
+    try {
+      const id = await scheduleTaskReminder(taskId, action || task.action, date);
+      if (!id) {
+        Alert.alert('Ошибка', 'Нет разрешения на уведомления');
+        return;
+      }
+      scheduled = true;
+      await updateTask(taskId, { reminderAt: date.toISOString() });
+      Alert.alert('🔔 Напоминание', label);
+    } catch (error) {
+      if (scheduled) await cancelTaskReminder(taskId).catch(() => {});
+      Alert.alert('Ошибка', error instanceof Error ? error.message : 'Не удалось установить напоминание');
+    }
+  };
+
   const handleSetReminder = (minutes: number, label: string) => {
     const date = new Date(Date.now() + minutes * 60 * 1000);
-    scheduleTaskReminder(taskId, task.action, date).then((id) => {
-      if (id) {
-        updateTask(taskId, { reminderAt: date.toISOString() });
-        Alert.alert('🔔 Напоминание', `Установлено: ${label}`);
-      } else {
-        Alert.alert('Ошибка', 'Нет разрешения на уведомления');
-      }
-    });
+    void saveReminder(date, `Установлено: ${label}`);
   };
 
   const openCustomReminder = () => {
@@ -144,9 +209,13 @@ export function TaskDetailScreen() {
   };
 
   const handleCancelReminder = async () => {
-    await cancelTaskReminder(taskId);
-    updateTask(taskId, { reminderAt: undefined });
-    Alert.alert('Напоминание снято');
+    try {
+      await cancelTaskReminder(taskId);
+      await updateTask(taskId, { reminderAt: undefined });
+      Alert.alert('Напоминание снято');
+    } catch (error) {
+      Alert.alert('Ошибка', error instanceof Error ? error.message : 'Не удалось снять напоминание');
+    }
   };
 
   return (
@@ -155,7 +224,7 @@ export function TaskDetailScreen() {
       <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
         <TouchableOpacity
           style={[styles.topBtn, { backgroundColor: task.completed ? c.warning : c.success, flex: 1 }]}
-          onPress={() => { task.completed ? uncompleteTask(taskId) : completeTask(taskId); navigation.goBack(); }}
+          onPress={handleToggleCompleted}
         >
           <Text style={styles.topBtnText}>{task.completed ? 'Вернуть' : 'Выполнено'}</Text>
         </TouchableOpacity>
@@ -427,12 +496,7 @@ export function TaskDetailScreen() {
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
             tomorrow.setHours(10, 0, 0, 0);
-            scheduleTaskReminder(taskId, task.action, tomorrow).then((id) => {
-              if (id) {
-                updateTask(taskId, { reminderAt: tomorrow.toISOString() });
-                Alert.alert('🔔', 'Завтра 10:00');
-              }
-            });
+            void saveReminder(tomorrow, 'Завтра 10:00');
           }}>
             <Text style={[styles.chipSmText, { color: c.text }]}>Завтра</Text>
           </TouchableOpacity>
@@ -471,10 +535,7 @@ export function TaskDetailScreen() {
       <View style={styles.actions}>
         <TouchableOpacity
           style={[styles.actionBtn, { backgroundColor: task.completed ? c.warning : c.success }]}
-          onPress={() => {
-            task.completed ? uncompleteTask(taskId) : completeTask(taskId);
-            navigation.goBack();
-          }}
+          onPress={handleToggleCompleted}
         >
           <Text style={styles.actionBtnText}>{task.completed ? 'Вернуть' : 'Выполнено'}</Text>
         </TouchableOpacity>
@@ -543,12 +604,7 @@ export function TaskDetailScreen() {
             if (e.type === 'dismissed') return;
             if (date) {
               if (date <= new Date()) { Alert.alert('Ошибка', 'Дата должна быть в будущем'); return; }
-              scheduleTaskReminder(taskId, task.action, date).then((id) => {
-                if (id) {
-                  updateTask(taskId, { reminderAt: date.toISOString() });
-                  Alert.alert('🔔', date.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }));
-                }
-              });
+              void saveReminder(date, date.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }));
             }
           }}
         />

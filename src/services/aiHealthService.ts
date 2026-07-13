@@ -3,6 +3,7 @@
 
 import { useHealthStore } from '../store/healthStore';
 import { ollamaChatJson, getSetting, VISION_MODEL } from './ollamaClient';
+import { isValidDateStr, todayStr } from '../utils/date';
 
 export interface HealthAdviceItem {
   tests: string;   // what to take, e.g. "Липидограмма (ЛПНП, ЛПВП, ТГ)"
@@ -93,17 +94,33 @@ date — дата взятия/выдачи анализа с бланка в ф
 Ответ — только JSON: {"date":"YYYY-MM-DD","results":[{"name":"...","value":1.2,"unit":"...","refMin":0,"refMax":5}]}`;
 
 export async function parseLabPhoto(base64Image: string): Promise<ParsedLab> {
-  const parsed: ParsedLab = await ollamaChatJson({ model: VISION_MODEL, user: LAB_PROMPT, images: [base64Image], format: LAB_SCHEMA });
-  parsed.results = (parsed.results || []).filter((r) => r.name && typeof r.value === 'number' && isFinite(r.value));
-  if (parsed.results.length === 0) throw new Error('На фото не распознано ни одного показателя');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(parsed.date || '')) parsed.date = new Date().toISOString().slice(0, 10);
-  return parsed;
+  const raw: any = await ollamaChatJson({ model: VISION_MODEL, user: LAB_PROMPT, images: [base64Image], format: LAB_SCHEMA });
+  const results: ParsedLabResult[] = (Array.isArray(raw?.results) ? raw.results : []).flatMap((item: any) => {
+    const name = typeof item?.name === 'string' ? item.name.trim().slice(0, 300) : '';
+    const value = item?.value == null ? NaN : Number(String(item.value).replace(',', '.'));
+    if (!name || !Number.isFinite(value) || Math.abs(value) > 1e15) return [];
+    const refMin = item?.refMin == null ? NaN : Number(String(item.refMin).replace(',', '.'));
+    const refMax = item?.refMax == null ? NaN : Number(String(item.refMax).replace(',', '.'));
+    return [{
+      name,
+      value,
+      unit: typeof item.unit === 'string' ? item.unit.trim().slice(0, 100) || undefined : undefined,
+      refMin: Number.isFinite(refMin) ? refMin : undefined,
+      refMax: Number.isFinite(refMax) ? refMax : undefined,
+    }];
+  });
+  if (results.length === 0) throw new Error('На фото не распознано ни одного показателя');
+  return { date: isValidDateStr(raw?.date) ? raw.date : todayStr(), results };
 }
 
 export async function requestHealthAdvice(personId: string | null): Promise<HealthAdvice> {
   const sex = (await getSetting('aiSex')) || 'Мужской';
   const birthYear = await getSetting('aiBirthYear');
-  const age = birthYear ? new Date().getFullYear() - parseInt(birthYear) : null;
+  const currentYear = new Date().getFullYear();
+  const parsedBirthYear = Number(birthYear);
+  const age = Number.isInteger(parsedBirthYear) && parsedBirthYear >= 1900 && parsedBirthYear <= currentYear
+    ? currentYear - parsedBirthYear
+    : null;
 
   const st = useHealthStore.getState();
   if (!st.loaded) await st.load();
@@ -127,7 +144,7 @@ export async function requestHealthAdvice(personId: string | null): Promise<Heal
   }
 
   const context = `Пол: ${sex}. Возраст: ${age ?? 'не указан (уточни диапазон скринингов сам)'}.
-Сегодня: ${new Date().toISOString().slice(0, 10)}.
+Сегодня: ${todayStr()}.
 
 РЕЗУЛЬТАТЫ АНАЛИЗОВ (метрика [ед] референс: последнее значение (дата); история):
 ${lines.join('\n') || 'анализов в базе нет — предложи базовый чек-ап по возрасту и полу'}`;
@@ -140,8 +157,9 @@ ${lines.join('\n') || 'анализов в базе нет — предложи 
 
 // Models sometimes ignore the schema and answer with Russian keys — map them back.
 function normalizeAdvice(raw: any): HealthAdvice {
-  const items = raw.items || raw['рекомендации'] || raw['recommendations'] || raw['список'] || [];
-  const summary = raw.summary || raw['итог'] || raw['резюме'] || raw['общая_картина'] || '';
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const items = source.items || source['рекомендации'] || source['recommendations'] || source['список'] || [];
+  const summary = source.summary || source['итог'] || source['резюме'] || source['общая_картина'] || '';
   const normUrgency = (u: any): string => {
     const v = String(u || '').toLowerCase();
     if (v.includes('сроч') || v.includes('urgent')) return 'срочно';
@@ -149,11 +167,11 @@ function normalizeAdvice(raw: any): HealthAdvice {
     return 'планово';
   };
   return {
-    summary: String(summary),
+    summary: String(summary).trim().slice(0, 4000),
     items: (Array.isArray(items) ? items : []).map((it: any) => ({
-      tests: String(it.tests || it['анализ'] || it['анализы'] || it['название'] || it.name || ''),
-      why: String(it.why || it['обоснование'] || it['почему'] || it.reason || ''),
-      urgency: normUrgency(it.urgency || it['срочность']),
-    })).filter((it: HealthAdviceItem) => it.tests),
+      tests: String(it?.tests || it?.['анализ'] || it?.['анализы'] || it?.['название'] || it?.name || '').trim().slice(0, 1000),
+      why: String(it?.why || it?.['обоснование'] || it?.['почему'] || it?.reason || '').trim().slice(0, 2000),
+      urgency: normUrgency(it?.urgency || it?.['срочность']),
+    })).filter((it: HealthAdviceItem) => it.tests).slice(0, 20),
   };
 }

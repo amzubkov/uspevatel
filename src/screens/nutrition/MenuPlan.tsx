@@ -41,11 +41,12 @@ export function MenuPlan({ date, theme, formatDate }: { date: string; theme: 'li
   const insets = useSafeAreaInsets();
   const items = useNutritionPlanStore((s) => s.items);
   const addItem = useNutritionPlanStore((s) => s.addItem);
+  const addItems = useNutritionPlanStore((s) => s.addItems);
+  const replaceDate = useNutritionPlanStore((s) => s.replaceDate);
   const updateItem = useNutritionPlanStore((s) => s.updateItem);
   const toggleDone = useNutritionPlanStore((s) => s.toggleDone);
   const removeItem = useNutritionPlanStore((s) => s.removeItem);
-  const clearDate = useNutritionPlanStore((s) => s.clearDate);
-  const addEntry = useNutritionStore((s) => s.addEntry);
+  const addPlanEntries = useNutritionStore((s) => s.addPlanEntries);
   const goalKcal = useNutritionGoalStore((s) => s.kcal);
   const goalDiet = useNutritionGoalStore((s) => s.diet);
   const goalProtein = useNutritionGoalStore((s) => s.protein);
@@ -77,19 +78,20 @@ export function MenuPlan({ date, theme, formatDate }: { date: string; theme: 'li
     const fill = async (replace: boolean) => {
       setLoading(true);
       try {
-        if (replace) await clearDate(date);
         // Avoid dishes already planned on other days (and kept ones on this day) so future days differ.
         const avoid = Array.from(new Set(
           items.filter((i) => i.date !== date || !replace).map((i) => i.name.trim()).filter(Boolean),
         ));
         const menu = await generateDietMenu({ dietName: getDiet(goalDiet).name, kcal: goalKcal, protein: goalProtein, fat: goalFat, carbs: goalCarbs, avoid });
-        for (const m of menu) {
-          await addItem({
-            date, mealType: m.mealType, name: m.name, amountGrams: m.amountGrams,
-            kcalPer100: m.kcalPer100, proteinPer100: m.proteinPer100, fatPer100: m.fatPer100, carbsPer100: m.carbsPer100,
-            ingredients: m.ingredients,
-          });
-        }
+        const generated = menu.map((m) => ({
+          date, mealType: m.mealType, name: m.name, amountGrams: m.amountGrams,
+          kcalPer100: m.kcalPer100, proteinPer100: m.proteinPer100, fatPer100: m.fatPer100, carbsPer100: m.carbsPer100,
+          ingredients: m.ingredients,
+        }));
+        // Generation finishes before the existing plan is touched; replacement
+        // itself is one DB transaction, so a failed request cannot erase a day.
+        if (replace) await replaceDate(date, generated);
+        else await addItems(generated);
       } catch (e: any) {
         Alert.alert('AI-меню', String(e?.message || e));
       } finally {
@@ -171,15 +173,24 @@ export function MenuPlan({ date, theme, formatDate }: { date: string; theme: 'li
     Alert.alert('В дневник', `Записать ${done.length} отмеченных блюд в дневник на ${formatDate(date)}?`, [
       { text: 'Отмена', style: 'cancel' },
       { text: 'Записать', onPress: async () => {
-        for (const it of done) {
-          const meal = MEALS.find((m) => m.key === it.mealType);
-          await addEntry({
-            name: it.name, date, time: meal?.time || '12:00', mealType: it.mealType,
-            amountGrams: it.amountGrams, kcalPer100: it.kcalPer100, proteinPer100: it.proteinPer100,
-            fatPer100: it.fatPer100, carbsPer100: it.carbsPer100, kcalAuto: false, notes: '',
-          });
+        try {
+          const added = await addPlanEntries(done.map((it) => {
+            const meal = MEALS.find((m) => m.key === it.mealType);
+            return {
+              sourceId: it.id,
+              input: {
+                name: it.name, date, time: meal?.time || '12:00', mealType: it.mealType,
+                amountGrams: it.amountGrams, kcalPer100: it.kcalPer100, proteinPer100: it.proteinPer100,
+                fatPer100: it.fatPer100, carbsPer100: it.carbsPer100, kcalAuto: false, notes: '',
+              },
+            };
+          }));
+          Alert.alert('Готово', added > 0
+            ? `Записано ${added} блюд в дневник${added < done.length ? `, уже были: ${done.length - added}` : ''}`
+            : 'Все отмеченные блюда уже были записаны');
+        } catch (e: any) {
+          Alert.alert('Не удалось записать', String(e?.message || e));
         }
-        Alert.alert('Готово', `Записано ${done.length} блюд в дневник`);
       } },
     ]);
   };

@@ -3,6 +3,12 @@ import { Alert } from 'react-native';
 import * as Crypto from 'expo-crypto';
 import { File, Directory } from 'expo-file-system';
 import { getDb, getImageBaseDir } from '../db/database';
+import {
+  deleteEntityAttachmentsInTransaction,
+  deleteStoredFile,
+  evictEntityAttachments,
+  safeFileExtension,
+} from './attachmentStore';
 
 export interface Document {
   id: string;
@@ -74,12 +80,22 @@ export const useDocumentStore = create<DocumentState>()((set, get) => ({
   },
 
   removeDocument: async (id) => {
+    const db = await getDb();
+    let imagePaths: string[] = [];
+    let attachmentPaths: string[] = [];
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      const rows = await tx.getAllAsync<{ image_path: string }>('SELECT image_path FROM document_images WHERE document_id = ?', [id]);
+      imagePaths = rows.map((row) => row.image_path).filter(Boolean);
+      attachmentPaths = await deleteEntityAttachmentsInTransaction(tx, 'document', id);
+      await tx.runAsync('DELETE FROM document_images WHERE document_id = ?', [id]);
+      await tx.runAsync('DELETE FROM documents WHERE id = ?', [id]);
+    });
     set((s) => ({
       documents: s.documents.filter((d) => d.id !== id),
       images: s.images.filter((i) => i.documentId !== id),
     }));
-    const db = await getDb();
-    await db.runAsync('DELETE FROM documents WHERE id = ?', [id]);
+    evictEntityAttachments('document', id);
+    [...imagePaths, ...attachmentPaths].forEach(deleteStoredFile);
   },
 
   addImage: async (docId, imageUri) => {
@@ -87,7 +103,7 @@ export const useDocumentStore = create<DocumentState>()((set, get) => ({
       const dir = new Directory(getImageBaseDir(), 'document_images');
       if (!dir.exists) dir.create();
       const imgId = Crypto.randomUUID();
-      const ext = imageUri.split('.').pop()?.split('?')[0] || 'jpg';
+      const ext = safeFileExtension(imageUri, 'jpg');
       const relPath = `document_images/${imgId}.${ext}`;
       const dest = new File(dir, `${imgId}.${ext}`);
       const src = new File(imageUri);
@@ -104,8 +120,10 @@ export const useDocumentStore = create<DocumentState>()((set, get) => ({
   },
 
   removeImage: async (imageId) => {
-    set((s) => ({ images: s.images.filter((i) => i.id !== imageId) }));
     const db = await getDb();
+    const row = await db.getFirstAsync<{ image_path: string | null }>('SELECT image_path FROM document_images WHERE id = ?', [imageId]);
     await db.runAsync('DELETE FROM document_images WHERE id = ?', [imageId]);
+    set((s) => ({ images: s.images.filter((i) => i.id !== imageId) }));
+    deleteStoredFile(row?.image_path);
   },
 }));

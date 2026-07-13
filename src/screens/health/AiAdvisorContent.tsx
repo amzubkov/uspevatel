@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, Alert, ScrollView } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { toAiBase64 } from '../../utils/aiImage';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useHealthStore } from '../../store/healthStore';
 import { colors } from '../../utils/theme';
@@ -34,12 +35,15 @@ export function AiAdvisorContent({ activePerson }: { activePerson: string | null
       : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (perm.status !== 'granted') { Alert.alert('Нет доступа'); return; }
     const result = fromCamera
-      ? await ImagePicker.launchCameraAsync({ quality: 0.8, base64: true })
-      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8, base64: true });
-    if (result.canceled || !result.assets[0]?.base64) return;
+      ? await ImagePicker.launchCameraAsync({ quality: 1 })
+      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
+    const uri = result.canceled ? null : result.assets[0]?.uri;
+    if (!uri) return;
     setParsing(true);
     try {
-      setParsed(await parseLabPhoto(result.assets[0].base64));
+      const base64 = await toAiBase64(uri, 1600, 0.7);
+      if (!base64) throw new Error('Не удалось обработать фото');
+      setParsed(await parseLabPhoto(base64));
     } catch (e: any) {
       Alert.alert('Распознавание', String(e?.message || e));
     }

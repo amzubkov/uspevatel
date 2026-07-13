@@ -3,6 +3,7 @@ import { Alert } from 'react-native';
 import * as Crypto from 'expo-crypto';
 import { File, Directory } from 'expo-file-system';
 import { getDb, getImageBaseDir } from '../db/database';
+import { deleteStoredFile, safeFileExtension } from './attachmentStore';
 
 export type VisitStatus = 'planned' | 'done';
 
@@ -97,12 +98,19 @@ export const useDoctorStore = create<DoctorState>()((set, get) => ({
   },
 
   removeVisit: async (id) => {
+    const db = await getDb();
+    let imagePaths: string[] = [];
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      const rows = await tx.getAllAsync<{ image_path: string }>('SELECT image_path FROM doctor_visit_images WHERE visit_id = ?', [id]);
+      imagePaths = rows.map((row) => row.image_path).filter(Boolean);
+      await tx.runAsync('DELETE FROM doctor_visit_images WHERE visit_id = ?', [id]);
+      await tx.runAsync('DELETE FROM doctor_visits WHERE id = ?', [id]);
+    });
     set((s) => ({
       visits: s.visits.filter((v) => v.id !== id),
       images: s.images.filter((i) => i.visitId !== id),
     }));
-    const db = await getDb();
-    await db.runAsync('DELETE FROM doctor_visits WHERE id = ?', [id]);
+    imagePaths.forEach(deleteStoredFile);
   },
 
   addImage: async (visitId, imageUri) => {
@@ -110,7 +118,7 @@ export const useDoctorStore = create<DoctorState>()((set, get) => ({
       const dir = new Directory(getImageBaseDir(), 'doctor_images');
       if (!dir.exists) dir.create();
       const imgId = Crypto.randomUUID();
-      const ext = imageUri.split('.').pop()?.split('?')[0] || 'jpg';
+      const ext = safeFileExtension(imageUri, 'jpg');
       const relPath = `doctor_images/${imgId}.${ext}`;
       const dest = new File(dir, `${imgId}.${ext}`);
       const src = new File(imageUri);
@@ -132,8 +140,10 @@ export const useDoctorStore = create<DoctorState>()((set, get) => ({
   },
 
   removeImage: async (imageId) => {
-    set((s) => ({ images: s.images.filter((i) => i.id !== imageId) }));
     const db = await getDb();
+    const row = await db.getFirstAsync<{ image_path: string | null }>('SELECT image_path FROM doctor_visit_images WHERE id = ?', [imageId]);
     await db.runAsync('DELETE FROM doctor_visit_images WHERE id = ?', [imageId]);
+    set((s) => ({ images: s.images.filter((i) => i.id !== imageId) }));
+    deleteStoredFile(row?.image_path);
   },
 }));

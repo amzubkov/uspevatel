@@ -94,10 +94,9 @@ export function ExerciseDetailScreen() {
   const sportEntries = useSportStore((s) => s.entries);
   const todayCalories = useMemo(() => {
     if (!exercise) return 0;
-    const today = new Date().toISOString().slice(0, 10);
     const bw = getBodyWeightAt(sportEntries, today);
     return todayLogs.reduce((sum, l) => sum + exerciseKcal(exercise, l.reps * l.setNum, bw, l.weight), 0);
-  }, [todayLogs, exercise, sportEntries]);
+  }, [todayLogs, exercise, sportEntries, today]);
 
   if (!exercise) return <View style={[styles.container, { backgroundColor: c.background }]}><Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Упражнение не найдено</Text></View>;
 
@@ -135,7 +134,7 @@ export function ExerciseDetailScreen() {
     setImageChanged(true);
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editName.trim()) return;
     const updates: any = {
       name: editName.trim(),
@@ -148,8 +147,12 @@ export function ExerciseDetailScreen() {
     if (imageChanged) {
       updates.imageUri = editImageUri; // null = remove, uri = new image
     }
-    updateExercise(exercise.id, updates);
-    setEditing(false);
+    try {
+      await updateExercise(exercise.id, updates);
+      setEditing(false);
+    } catch (error: any) {
+      Alert.alert('Не удалось сохранить', String(error?.message || error));
+    }
   };
 
   const handleAdd = () => {

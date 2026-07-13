@@ -1,15 +1,18 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert, ScrollView } from 'react-native';
 import * as Crypto from 'expo-crypto';
-import { useFlightStore, Flight, FlightStatus, FlightKind } from '../../store/flightStore';
+import { reconcileFlightReminder, useFlightStore, Flight, FlightStatus, FlightKind } from '../../store/flightStore';
 import { ME_TRAVELER } from '../../store/travelerStore';
 import { getDb } from '../../db/database';
 import { s, KIND_EMOJI, KIND_LABEL, KINDS } from './shared';
+import { isValidDateStr, isValidTimeStr } from '../../utils/date';
 
 // ─── Import flights form ───
 export function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travelerId: string; onDone: (n: number) => void; onCancel: () => void; c: any }) {
   const [text, setText] = useState('');
   const [kind, setKind] = useState<FlightKind>('flight');
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   const parsed = useMemo(() => {
     // Split on newlines, semicolons, or boundary between end-of-date/time and start-of-title
@@ -24,8 +27,9 @@ export function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travele
       if (!t) return null;
 
       const parseDT = (s: string): { date: string; time?: string } | null => {
-        const m = s.trim().match(/^(\d{4}-\d{2}-\d{2})(?:\s+(\d{1,2}:\d{2}))?$/);
+        const m = s.trim().match(/^(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}))?$/);
         if (!m) return null;
+        if (!isValidDateStr(m[1]) || (m[2] && !isValidTimeStr(m[2]))) return null;
         return { date: m[1], time: m[2] };
       };
 
@@ -37,6 +41,9 @@ export function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travele
       let dateStartIdx = -1;
       for (let i = 1; i < parts.length; i++) {
         if (parseDT(parts[i])) { dateStartIdx = i; break; }
+        if (/\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}/.test(parts[i])) {
+          return { raw: t, error: true as const };
+        }
       }
       if (dateStartIdx === -1) return { raw: t, error: true as const };
 
@@ -44,7 +51,7 @@ export function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travele
       // For flights: "route, date [time], date [time]"
       let title: string;
       let city: string | undefined;
-      if (kind === 'hotel' && dateStartIdx >= 2) {
+      if ((kind === 'hotel' || kind === 'event') && dateStartIdx >= 2) {
         city = parts.slice(0, dateStartIdx - 1).join(', ').trim();
         title = parts[dateStartIdx - 1].trim();
       } else {
@@ -54,7 +61,11 @@ export function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travele
 
       const depart = parseDT(parts[dateStartIdx]);
       if (!depart) return { raw: t, error: true as const };
-      const arrive = parts[dateStartIdx + 1] ? parseDT(parts[dateStartIdx + 1]) : undefined;
+      const arriveRaw = parts[dateStartIdx + 1];
+      const arrive = arriveRaw ? parseDT(arriveRaw) : undefined;
+      if ((arriveRaw && !arrive) || parts.length > dateStartIdx + 2 || (kind === 'hotel' && !arrive)) {
+        return { raw: t, error: true as const };
+      }
 
       return { title, city, depart, arrive: arrive || undefined, error: false as const };
     }).filter(Boolean) as any[];
@@ -64,7 +75,11 @@ export function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travele
   const errors = parsed.filter((p: any) => p.error);
 
   const handleImport = async () => {
+    if (savingRef.current) return;
     if (!valid.length) { Alert.alert('Ошибка', 'Нет строк для импорта'); return; }
+    savingRef.current = true;
+    setSaving(true);
+    let importedCount = 0;
     try {
       const db = await getDb();
       const tids = (travelerId === ME_TRAVELER.id || travelerId === '__all__') ? [] : [travelerId];
@@ -96,10 +111,17 @@ export function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travele
         }
       });
       useFlightStore.setState((s) => ({ flights: [...flights, ...s.flights] }));
-      onDone(flights.length);
+      for (const flight of flights) {
+        await reconcileFlightReminder(flight).catch(() => {});
+      }
+      importedCount = flights.length;
     } catch (e: any) {
       Alert.alert('Ошибка импорта', String(e?.message || e));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
+    if (importedCount > 0) onDone(importedCount);
   };
 
   return (
@@ -153,10 +175,10 @@ export function ImportFlightsForm({ travelerId, onDone, onCancel, c }: { travele
       )}
 
       <View style={{ flexDirection: 'row', gap: 10 }}>
-        <TouchableOpacity style={[s.formBtn, { backgroundColor: c.primary, flex: 1 }]} onPress={handleImport}>
-          <Text style={{ color: '#FFF', fontWeight: '700' }}>Импорт ({valid.length})</Text>
+        <TouchableOpacity disabled={saving} style={[s.formBtn, { backgroundColor: c.primary, flex: 1, opacity: saving ? 0.6 : 1 }]} onPress={handleImport}>
+          <Text style={{ color: '#FFF', fontWeight: '700' }}>{saving ? 'Импорт…' : `Импорт (${valid.length})`}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.formBtn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border, flex: 1 }]} onPress={onCancel}>
+        <TouchableOpacity disabled={saving} style={[s.formBtn, { backgroundColor: c.card, borderWidth: 1, borderColor: c.border, flex: 1, opacity: saving ? 0.6 : 1 }]} onPress={onCancel}>
           <Text style={{ color: c.text, fontWeight: '600' }}>Отмена</Text>
         </TouchableOpacity>
       </View>

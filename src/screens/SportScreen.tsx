@@ -7,7 +7,7 @@ import { ExercisesScreen } from './ExercisesScreen';
 import { WorkoutPlanScreen } from './WorkoutPlanScreen';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
-import { WEEKDAYS_SUN_LOWER } from '../utils/date';
+import { parseLocalDate, shiftDateStr, todayStr, WEEKDAYS_SUN_LOWER } from '../utils/date';
 import { calcDailyEntryKcal as utilCalcCalories, calcDailyEntriesKcal as utilCalcCaloriesForEntries, exerciseKcal, getBodyWeightAt } from '../utils/calories';
 import {
   DailyType,
@@ -27,14 +27,11 @@ import {
 const SportTab = createBottomTabNavigator();
 
 function useTodayStr() {
-  return useMemo(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  }, []);
+  return useMemo(todayStr, []);
 }
 
 const WEEKDAYS_SHORT = WEEKDAYS_SUN_LOWER;
-function weekdayOf(d: string): string { return WEEKDAYS_SHORT[new Date(d).getDay()]; }
+function weekdayOf(d: string): string { return WEEKDAYS_SHORT[parseLocalDate(d).getDay()]; }
 
 // ─── Reusable exercise tab ───
 function ExerciseTab({ type, unit, quickCounts }: { type: SportEntry['type']; unit: string; quickCounts: number[] }) {
@@ -78,9 +75,7 @@ function ExerciseTab({ type, unit, quickCounts }: { type: SportEntry['type']; un
   };
 
   const changeDate = (offset: number) => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() + offset);
-    setSelectedDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    setSelectedDate(shiftDateStr(selectedDate, offset));
   };
   const MONTHS_SHORT = ['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'];
   const fmtD = (d: string) => { const [,m,day] = d.split('-').map(Number); return `${day} ${MONTHS_SHORT[m-1]}`; };

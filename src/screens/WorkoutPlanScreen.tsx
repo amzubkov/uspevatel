@@ -37,6 +37,7 @@ export function WorkoutPlanScreen() {
   const plan = useExerciseStore((s) => s.plan);
   const addPlanItem = useExerciseStore((s) => s.addPlanItem);
   const removePlanItem = useExerciseStore((s) => s.removePlanItem);
+  const movePlanItem = useExerciseStore((s) => s.movePlanItem);
   const copyPlanFromDate = useExerciseStore((s) => s.copyPlanFromDate);
   const addProgram = useExerciseStore((s) => s.addProgram);
   const removeProgram = useExerciseStore((s) => s.removeProgram);
@@ -48,10 +49,13 @@ export function WorkoutPlanScreen() {
   const [date, setDate] = useState(toDateStr(new Date()));
   const [showPicker, setShowPicker] = useState(false);
   const [showPrograms, setShowPrograms] = useState(false);
+  const [showCopyPicker, setShowCopyPicker] = useState(false);
   const [search, setSearch] = useState('');
   const [pickerTag, setPickerTag] = useState<string | null>(null);
   // picker destination: today's plan or a program day being edited
   const [pickerTargetDay, setPickerTargetDay] = useState<number | null>(null);
+  // when set, picking an exercise replaces this plan item instead of adding
+  const [replaceItem, setReplaceItem] = useState<{ planId: number; name: string; sets?: number; reps?: number } | null>(null);
   const [newProgName, setNewProgName] = useState('');
   const [addDayFor, setAddDayFor] = useState<number | null>(null);
   const [newDayName, setNewDayName] = useState('');
@@ -146,7 +150,10 @@ export function WorkoutPlanScreen() {
     Alert.alert('Добавлено в план', `${dayName || 'День'}: ${added} упражн. на ${fmtDate(date).toLowerCase()}`);
   };
 
-  const dayPlan = useMemo(() => plan.filter((p) => p.date === date), [plan, date]);
+  const dayPlan = useMemo(
+    () => plan.filter((p) => p.date === date).sort((a, b) => a.orderNum - b.orderNum || a.id - b.id),
+    [plan, date],
+  );
 
   // Exercise is "done" when it has logged sets on the plan's date
   const dayLogsByEx = useMemo(() => {
@@ -185,6 +192,29 @@ export function WorkoutPlanScreen() {
     return best || null;
   }, [logs, plan, date]);
 
+  // Past workout days with a short preview (planned exercises, or logged if no plan existed)
+  const pastWorkoutDays = useMemo(() => {
+    const planned = new Map<string, number[]>();
+    for (const p of plan) {
+      if (p.date >= date) continue;
+      const arr = planned.get(p.date) || [];
+      arr.push(p.exerciseId);
+      planned.set(p.date, arr);
+    }
+    const logged = new Map<string, Set<number>>();
+    for (const l of logs) {
+      if (l.date >= date || planned.has(l.date)) continue;
+      const s = logged.get(l.date) || new Set<number>();
+      s.add(l.exerciseId);
+      logged.set(l.date, s);
+    }
+    const days: { date: string; names: string[] }[] = [];
+    const nameOf = (id: number) => exercises.find((e) => e.id === id)?.name || `#${id}`;
+    for (const [d, ids] of planned) days.push({ date: d, names: ids.map(nameOf) });
+    for (const [d, ids] of logged) days.push({ date: d, names: Array.from(ids).map(nameOf) });
+    return days.sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 30);
+  }, [plan, logs, exercises, date]);
+
   const allTags = useMemo(() => {
     const tags = new Set<string>();
     for (const ex of exercises) for (const t of splitTags(ex.tag)) tags.add(t);
@@ -211,14 +241,38 @@ export function WorkoutPlanScreen() {
     if (added === 0) Alert.alert('Нечего копировать', 'Все упражнения уже в плане');
   };
 
-  const handleRemove = (planId: number, name: string) => {
-    Alert.alert('Убрать из плана?', name, [
+  const handleCopyFrom = async (srcDate: string) => {
+    setShowCopyPicker(false);
+    const added = await copyPlanFromDate(srcDate, date);
+    if (added === 0) Alert.alert('Нечего копировать', 'Все упражнения уже в плане');
+  };
+
+  const handleRemove = (item: { id: number; sets?: number; reps?: number }, ex: Exercise) => {
+    Alert.alert(ex.name, undefined, [
       { text: 'Отмена', style: 'cancel' },
-      { text: 'Убрать', style: 'destructive', onPress: () => removePlanItem(planId) },
+      {
+        text: 'Заменить',
+        onPress: () => {
+          setReplaceItem({ planId: item.id, name: ex.name, sets: item.sets, reps: item.reps });
+          setPickerTag(splitTags(ex.tag)[0] || null);
+          setShowPicker(true);
+        },
+      },
+      { text: 'Убрать', style: 'destructive', onPress: () => removePlanItem(item.id) },
     ]);
   };
 
-  const renderItem = ({ item }: { item: { id: number; exerciseId: number; sets?: number; reps?: number; weight?: number } }) => {
+  const handleReplacePick = async (newExerciseId: number) => {
+    if (!replaceItem) return;
+    await removePlanItem(replaceItem.planId);
+    await addPlanItem(date, newExerciseId, { sets: replaceItem.sets, reps: replaceItem.reps });
+    setReplaceItem(null);
+    setShowPicker(false);
+    setSearch('');
+    setPickerTag(null);
+  };
+
+  const renderItem = ({ item, index }: { item: { id: number; exerciseId: number; sets?: number; reps?: number; weight?: number }; index: number }) => {
     const ex = exercises.find((e) => e.id === item.exerciseId);
     if (!ex) return null;
     const done = dayLogsByEx.get(ex.id);
@@ -230,7 +284,7 @@ export function WorkoutPlanScreen() {
       <TouchableOpacity
         style={[styles.exRow, { backgroundColor: c.card, borderColor: done ? '#22C55E' : c.border }]}
         onPress={() => navigation.navigate('ExerciseDetail', { exerciseId: ex.id })}
-        onLongPress={() => handleRemove(item.id, ex.name)}
+        onLongPress={() => handleRemove(item, ex)}
       >
         {(ex.imageBase64 || ex.imageUri) ? (
           <Image source={{ uri: ex.imageBase64 || ex.imageUri! }} style={styles.exImage} />
@@ -254,6 +308,24 @@ export function WorkoutPlanScreen() {
           )}
         </View>
         <Text style={{ fontSize: 22 }}>{done ? '✅' : '⬜'}</Text>
+        {dayPlan.length > 1 && (
+          <View style={{ gap: 2 }}>
+            <TouchableOpacity
+              hitSlop={{ top: 8, bottom: 4, left: 8, right: 8 }}
+              disabled={index === 0}
+              onPress={() => movePlanItem(item.id, -1)}
+            >
+              <Text style={{ fontSize: 16, color: index === 0 ? c.border : c.textSecondary }}>▲</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              hitSlop={{ top: 4, bottom: 8, left: 8, right: 8 }}
+              disabled={index === dayPlan.length - 1}
+              onPress={() => movePlanItem(item.id, 1)}
+            >
+              <Text style={{ fontSize: 16, color: index === dayPlan.length - 1 ? c.border : c.textSecondary }}>▼</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </TouchableOpacity>
     );
   };
@@ -295,6 +367,13 @@ export function WorkoutPlanScreen() {
                 </Text>
               </TouchableOpacity>
             )}
+            {pastWorkoutDays.length > 0 && (
+              <TouchableOpacity style={[styles.copyBtn, { borderColor: c.border }]} onPress={() => setShowCopyPicker(true)}>
+                <Text style={{ color: c.textSecondary, fontWeight: '600', fontSize: 14 }}>
+                  Выбрать день для копирования…
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         }
       />
@@ -310,6 +389,42 @@ export function WorkoutPlanScreen() {
           {aiLoading ? <ActivityIndicator color="#FFF" /> : <Text numberOfLines={1} adjustsFontSizeToFit style={styles.fabText}>🤖 AI-план</Text>}
         </TouchableOpacity>
       </View>
+
+      {/* Copy-from-day picker with brief per-day preview */}
+      <Modal visible={showCopyPicker} animationType="slide" onRequestClose={() => setShowCopyPicker(false)}>
+        <View style={[styles.container, { backgroundColor: c.background, paddingTop: insets.top }]}>
+          <View style={styles.pickerHeader}>
+            <Text style={[styles.pickerTitle, { color: c.text }]}>Копировать в план на {fmtDate(date).toLowerCase()}</Text>
+            <TouchableOpacity onPress={() => setShowCopyPicker(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+              <Text style={{ color: c.primary, fontSize: 16, fontWeight: '600' }}>Закрыть</Text>
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={pastWorkoutDays}
+            keyExtractor={(d) => d.date}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={[styles.dayRow, { backgroundColor: c.card, borderColor: c.border, marginHorizontal: 12 }]}
+                onPress={() => handleCopyFrom(item.date)}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: c.text, fontSize: 14, fontWeight: '600' }}>
+                    {fmtDate(item.date)} · {item.names.length} упражн.
+                  </Text>
+                  <Text style={{ color: c.textSecondary, fontSize: 12, marginTop: 2 }} numberOfLines={2}>
+                    {item.names.join(', ')}
+                  </Text>
+                </View>
+                <Text style={{ color: c.primary, fontSize: 22, fontWeight: '600' }}>+</Text>
+              </TouchableOpacity>
+            )}
+            contentContainerStyle={{ paddingBottom: 24 }}
+            ListEmptyComponent={
+              <Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Прошлых тренировок нет</Text>
+            }
+          />
+        </View>
+      </Modal>
 
       {/* AI plan setup: model, goal, notes, time */}
       <Modal visible={showAiSetup} animationType="slide" onRequestClose={() => setShowAiSetup(false)}>
@@ -542,12 +657,14 @@ export function WorkoutPlanScreen() {
       <Modal visible={showPicker} animationType="slide" onRequestClose={() => setShowPicker(false)}>
         <View style={[styles.container, { backgroundColor: c.background, paddingTop: insets.top }]}>
           <View style={styles.pickerHeader}>
-            <Text style={[styles.pickerTitle, { color: c.text }]}>
-              {pickerTargetDay != null ? 'В день программы' : `В план на ${fmtDate(date).toLowerCase()}`}
+            <Text style={[styles.pickerTitle, { color: c.text }]} numberOfLines={1}>
+              {replaceItem
+                ? `Замена: ${replaceItem.name}`
+                : pickerTargetDay != null ? 'В день программы' : `В план на ${fmtDate(date).toLowerCase()}`}
             </Text>
             <TouchableOpacity
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              onPress={() => { setShowPicker(false); setSearch(''); setPickerTag(null); setPickerTargetDay(null); }}
+              onPress={() => { setShowPicker(false); setSearch(''); setPickerTag(null); setPickerTargetDay(null); setReplaceItem(null); }}
             >
               <Text style={{ color: c.primary, fontSize: 16, fontWeight: '600' }}>Готово</Text>
             </TouchableOpacity>
@@ -585,7 +702,9 @@ export function WorkoutPlanScreen() {
               <TouchableOpacity
                 style={styles.pickerRow}
                 onPress={async () => {
-                  if (pickerTargetDay != null) {
+                  if (replaceItem) {
+                    await handleReplacePick(item.id);
+                  } else if (pickerTargetDay != null) {
                     await addExerciseToDay(pickerTargetDay, item.id);
                     await reloadEditDay(pickerTargetDay);
                   } else {

@@ -1,9 +1,10 @@
-// Food lookup: bundled offline catalog first, then Open Food Facts (free, no key,
-// crowd-sourced, has RU products + barcodes). AI stays as the last-resort fallback.
+// Food lookup: bundled offline catalog first, then FatSecret (if keys are set)
+// and Open Food Facts (free, no key, crowd-sourced, has RU products + barcodes)
+// in parallel. AI stays as the last-resort fallback.
 
 import { getDb } from '../db/database';
 
-export type FoodSource = 'RU' | 'USDA' | 'OFF';
+export type FoodSource = 'RU' | 'USDA' | 'OFF' | 'FS';
 
 export interface FoodHit {
   name: string;
@@ -29,31 +30,62 @@ const num = (v: any): number => {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 };
 
-/** Search the bundled offline catalog by RU or EN name. */
-export async function searchLocalFood(query: string, limit = 12): Promise<FoodHit[]> {
-  const q = query.trim();
-  if (!q) return [];
+function rowToFoodHit(row: CatalogRow): FoodHit {
+  return {
+    name: row.name,
+    kcalPer100: row.kcal_per_100,
+    proteinPer100: row.protein_per_100,
+    fatPer100: row.fat_per_100,
+    carbsPer100: row.carbs_per_100,
+    source: (row.source as FoodSource) || 'RU',
+  };
+}
+
+// The catalog is static at runtime (seed + offline imports), so it is loaded
+// once and searched in JS: SQLite's lower()/LIKE are ASCII-only and miss
+// case-insensitive Cyrillic matches («гречка» vs «Гречка»).
+let catalogCache: { hits: FoodHit[]; keys: string[] } | null = null;
+
+async function loadCatalog(): Promise<{ hits: FoodHit[]; keys: string[] }> {
+  if (catalogCache) return catalogCache;
   const db = await getDb();
-  const like = `%${q.toLowerCase()}%`;
   const rows = await db.getAllAsync<CatalogRow>(
     `SELECT name, name_en, kcal_per_100, protein_per_100, fat_per_100, carbs_per_100, source
        FROM food_catalog
-      WHERE lower(name) LIKE ? OR lower(name_en) LIKE ?
-      ORDER BY CASE WHEN lower(name) LIKE ? THEN 0 ELSE 1 END, length(name)
-      LIMIT ?`,
-    [like, like, `${q.toLowerCase()}%`, limit],
+      ORDER BY name COLLATE NOCASE`,
   );
-  return rows.map((r) => ({
-    name: r.name,
-    kcalPer100: r.kcal_per_100,
-    proteinPer100: r.protein_per_100,
-    fatPer100: r.fat_per_100,
-    carbsPer100: r.carbs_per_100,
-    source: (r.source as FoodSource) || 'RU',
-  }));
+  const hits = rows.map(rowToFoodHit);
+  catalogCache = {
+    hits,
+    keys: rows.map((row) => `${row.name}\n${row.name_en || ''}`.toLowerCase()),
+  };
+  return catalogCache;
+}
+
+/** Read the bundled catalog without making a network request. */
+export async function listLocalFoods(): Promise<FoodHit[]> {
+  return (await loadCatalog()).hits;
+}
+
+/** Search the bundled offline catalog by RU or EN name (Cyrillic case-insensitive). */
+export async function searchLocalFood(query: string, limit = 12): Promise<FoodHit[]> {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const { hits, keys } = await loadCatalog();
+  const matched: { hit: FoodHit; prefix: boolean }[] = [];
+  for (let i = 0; i < keys.length; i += 1) {
+    const at = keys[i].indexOf(q);
+    if (at === -1) continue;
+    matched.push({ hit: hits[i], prefix: at === 0 });
+  }
+  return matched
+    .sort((a, b) => Number(b.prefix) - Number(a.prefix) || a.hit.name.length - b.hit.name.length)
+    .slice(0, limit)
+    .map((m) => m.hit);
 }
 
 const OFF_SEARCH = 'https://world.openfoodfacts.org/cgi/search.pl';
+const OFF_TIMEOUT_MS = 15_000;
 
 /** Search Open Food Facts by name (online). Returns items with complete macros. */
 export async function searchOpenFoodFacts(query: string, limit = 12): Promise<FoodHit[]> {
@@ -62,9 +94,22 @@ export async function searchOpenFoodFacts(query: string, limit = 12): Promise<Fo
   const url =
     `${OFF_SEARCH}?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1` +
     `&fields=product_name,product_name_ru,brands,nutriments&page_size=${limit}&lc=ru`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'UspevatelApp/1.0 (personal)' } });
-  if (!res.ok) throw new Error(`Open Food Facts ${res.status}`);
-  const data = await res.json();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OFF_TIMEOUT_MS);
+  let data: any;
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'UspevatelApp/1.0 (personal)' },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`Open Food Facts ${res.status}`);
+    data = await res.json();
+  } catch (error: any) {
+    if (controller.signal.aborted) throw new Error(`Open Food Facts timeout (${OFF_TIMEOUT_MS / 1000}s)`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
   const products: any[] = Array.isArray(data?.products) ? data.products : [];
   const hits: FoodHit[] = [];
   for (const p of products) {
@@ -89,16 +134,20 @@ export async function searchOpenFoodFacts(query: string, limit = 12): Promise<Fo
   return hits;
 }
 
-/** Offline catalog first; top up with Open Food Facts, de-duplicated by name. */
+/** Offline catalog first; top up with FatSecret and Open Food Facts, de-duplicated by name. */
 export async function searchFood(query: string, limit = 12): Promise<FoodHit[]> {
   const local = await searchLocalFood(query, limit);
   const seen = new Set(local.map((h) => h.name.toLowerCase()));
-  let remote: FoodHit[] = [];
-  try {
-    remote = await searchOpenFoodFacts(query, limit);
-  } catch {
-    // offline / OFF down — local results are still fine
-  }
+  const { hasFatSecretKeys, searchFatSecret } = await import('./fatSecretService');
+  const [fs, off] = await Promise.allSettled([
+    hasFatSecretKeys().then((ok) => (ok ? searchFatSecret(query, limit) : [])),
+    searchOpenFoodFacts(query, limit),
+  ]);
+  // FatSecret data is curated — merge it before crowd-sourced OFF.
+  const remote = [
+    ...(fs.status === 'fulfilled' ? fs.value : []),
+    ...(off.status === 'fulfilled' ? off.value : []),
+  ];
   for (const hit of remote) {
     const key = hit.name.toLowerCase();
     if (seen.has(key)) continue;

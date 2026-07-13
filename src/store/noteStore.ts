@@ -3,6 +3,7 @@ import { Alert } from 'react-native';
 import * as Crypto from 'expo-crypto';
 import { File, Directory } from 'expo-file-system';
 import { getDb, getImageBaseDir } from '../db/database';
+import { deleteStoredFile, safeFileExtension } from './attachmentStore';
 
 export interface Note {
   id: string;
@@ -75,11 +76,12 @@ export const useNoteStore = create<NoteState>()((set, get) => ({
       try {
         const dir = new Directory(getImageBaseDir(), 'note_images');
         if (!dir.exists) dir.create();
-        const ext = imageUri.split('.').pop()?.split('?')[0] || 'jpg';
+        const ext = safeFileExtension(imageUri, 'jpg');
         relPath = `note_images/${id}.${ext}`;
         const dest = new File(dir, `${id}.${ext}`);
         const src = new File(imageUri);
         if (src.exists) src.move(dest);
+        if (!dest.exists) throw new Error('Файл изображения не найден');
         absUri = dest.uri;
       } catch (e: any) {
         Alert.alert('Ошибка картинки', String(e?.message || e));
@@ -87,61 +89,85 @@ export const useNoteStore = create<NoteState>()((set, get) => ({
     }
 
     const note: Note = { id, text, imagePath: absUri, tags, createdAt: now };
+    const db = await getDb();
+    try {
+      await db.withExclusiveTransactionAsync(async (tx) => {
+        await tx.runAsync('INSERT INTO notes (id, text, image_path, created_at) VALUES (?,?,?,?)', [id, text, relPath, now]);
+        for (const tag of tags) {
+          await tx.runAsync('INSERT OR IGNORE INTO note_tags (note_id, tag) VALUES (?,?)', [id, tag]);
+        }
+      });
+    } catch (error) {
+      deleteStoredFile(relPath);
+      throw error;
+    }
     set((s) => {
       const notes = [note, ...s.notes];
       return { notes, allTags: collectTags(notes) };
     });
-
-    const db = await getDb();
-    await db.runAsync('INSERT INTO notes (id, text, image_path, created_at) VALUES (?,?,?,?)', [id, text, relPath, now]);
-    for (const tag of tags) {
-      await db.runAsync('INSERT OR IGNORE INTO note_tags (note_id, tag) VALUES (?,?)', [id, tag]);
-    }
   },
 
   updateNote: async (id, text, tags) => {
+    const db = await getDb();
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      await tx.runAsync('UPDATE notes SET text = ? WHERE id = ?', [text, id]);
+      await tx.runAsync('DELETE FROM note_tags WHERE note_id = ?', [id]);
+      for (const tag of tags) {
+        await tx.runAsync('INSERT OR IGNORE INTO note_tags (note_id, tag) VALUES (?,?)', [id, tag]);
+      }
+    });
     set((s) => {
       const notes = s.notes.map((n) => n.id === id ? { ...n, text, tags } : n);
       return { notes, allTags: collectTags(notes) };
     });
-    const db = await getDb();
-    await db.runAsync('UPDATE notes SET text = ? WHERE id = ?', [text, id]);
-    await db.runAsync('DELETE FROM note_tags WHERE note_id = ?', [id]);
-    for (const tag of tags) {
-      await db.runAsync('INSERT OR IGNORE INTO note_tags (note_id, tag) VALUES (?,?)', [id, tag]);
-    }
   },
 
   removeNote: async (id) => {
+    const db = await getDb();
+    let imagePath: string | null = null;
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      const row = await tx.getFirstAsync<{ image_path: string | null }>('SELECT image_path FROM notes WHERE id = ?', [id]);
+      imagePath = row?.image_path || null;
+      await tx.runAsync('DELETE FROM note_tags WHERE note_id = ?', [id]);
+      await tx.runAsync('DELETE FROM notes WHERE id = ?', [id]);
+    });
     set((s) => {
       const notes = s.notes.filter((n) => n.id !== id);
       return { notes, allTags: collectTags(notes) };
     });
-    const db = await getDb();
-    await db.runAsync('DELETE FROM notes WHERE id = ?', [id]);
+    deleteStoredFile(imagePath);
   },
 
   addImage: async (id, imageUri) => {
+    let newPath: string | null = null;
     try {
       const dir = new Directory(getImageBaseDir(), 'note_images');
       if (!dir.exists) dir.create();
-      const ext = imageUri.split('.').pop()?.split('?')[0] || 'jpg';
-      const relPath = `note_images/${id}.${ext}`;
-      const dest = new File(dir, `${id}.${ext}`);
+      const ext = safeFileExtension(imageUri, 'jpg');
+      const fileName = `${id}-${Crypto.randomUUID()}.${ext}`;
+      const relPath = `note_images/${fileName}`;
+      newPath = relPath;
+      const dest = new File(dir, fileName);
       const src = new File(imageUri);
       if (src.exists) src.move(dest);
+      if (!dest.exists) throw new Error('Файл изображения не найден');
       const absUri = dest.uri;
-      set((s) => ({ notes: s.notes.map((n) => n.id === id ? { ...n, imagePath: absUri } : n) }));
       const db = await getDb();
+      const old = await db.getFirstAsync<{ image_path: string | null }>('SELECT image_path FROM notes WHERE id = ?', [id]);
       await db.runAsync('UPDATE notes SET image_path = ? WHERE id = ?', [relPath, id]);
+      set((s) => ({ notes: s.notes.map((n) => n.id === id ? { ...n, imagePath: absUri } : n) }));
+      deleteStoredFile(old?.image_path);
     } catch (e: any) {
+      deleteStoredFile(newPath);
       Alert.alert('Ошибка картинки', String(e?.message || e));
     }
   },
 
   removeImage: async (id) => {
-    set((s) => ({ notes: s.notes.map((n) => n.id === id ? { ...n, imagePath: undefined } : n) }));
     const db = await getDb();
+    const row = await db.getFirstAsync<{ image_path: string | null }>('SELECT image_path FROM notes WHERE id = ?', [id]);
     await db.runAsync('UPDATE notes SET image_path = NULL WHERE id = ?', [id]);
+    set((s) => ({ notes: s.notes.map((n) => n.id === id ? { ...n, imagePath: undefined } : n) }));
+    deleteStoredFile(row?.image_path);
   },
 }));

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Image, Alert, ScrollView, Linking } from 'react-native';
 import { ZoomableImage } from '../components/ZoomableImage';
 import * as ImagePicker from 'expo-image-picker';
+import { toAiBase64 } from '../utils/aiImage';
 import { useFlightStore, Flight, FlightStatus } from '../store/flightStore';
 import { useTravelerStore, Traveler, ME_TRAVELER } from '../store/travelerStore';
 import { AttachmentList } from '../components/AttachmentList';
@@ -40,11 +41,13 @@ function FlightsContent({ travelerId }: { travelerId: string }) {
   };
 
   const handleAiScan = async () => {
-    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8, base64: true });
-    if (r.canceled || !r.assets[0]?.base64) return;
+    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
+    if (r.canceled || !r.assets[0]?.uri) return;
     setAiScanning(true);
     try {
-      const items = await parseTravelPhoto(r.assets[0].base64);
+      const base64 = await toAiBase64(r.assets[0].uri, 1600, 0.7);
+      if (!base64) throw new Error('Не удалось обработать фото');
+      const items = await parseTravelPhoto(base64);
       setAiItems({ items, photoUri: r.assets[0].uri });
     } catch (e: any) {
       Alert.alert('AI-скан', String(e?.message || e));

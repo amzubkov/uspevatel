@@ -156,10 +156,6 @@ export function DoctorContactsContent() {
     Alert.alert('Удалить контакт?', d.name, [
       { text: 'Отмена', style: 'cancel' },
       { text: 'Удалить', style: 'destructive', onPress: async () => {
-        // Cascade-delete attached card photos for this doctor.
-        for (const a of cardsForDoctor(d.id)) {
-          try { await removeAttachment(a.id); } catch {}
-        }
         await removeDoctor(d.id);
       } },
     ]);

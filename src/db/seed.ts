@@ -38,25 +38,50 @@ async function loadImageBlob(exerciseId: number): Promise<Uint8Array | null> {
 }
 
 export async function seedExercises(db: SQLiteDatabase) {
-  // Check if already seeded
-  const count = await db.getFirstAsync<{ c: number }>('SELECT COUNT(*) as c FROM exercises WHERE is_preset = 1');
-  if (count && count.c > 0) return;
+  // Never assume that numeric IDs are free. Older, interrupted AsyncStorage
+  // migrations could already have inserted user exercises starting at ID 1.
+  // Resolve every seeded entity by its natural key and keep an explicit map
+  // from the legacy seed ID to the actual SQLite ID.
+  const programIds = new Map<number, number>();
+  const programs: [number, string][] = [
+    [1, 'Семенихин, Зал'],
+    [2, 'Семенихин. С весом собственного тела'],
+  ];
+  for (const [seedId, name] of programs) {
+    let row = await db.getFirstAsync<{ id: number }>('SELECT id FROM programs WHERE name = ?', [name]);
+    if (!row) {
+      const result = await db.runAsync('INSERT INTO programs (name) VALUES (?)', [name]);
+      row = { id: result.lastInsertRowId };
+    }
+    programIds.set(seedId, row.id);
+  }
 
-  await db.execAsync('BEGIN TRANSACTION;');
-  try {
-    // Programs
-    await db.runAsync('INSERT INTO programs (id, name) VALUES (1, ?)', ['Семенихин, Зал']);
-    await db.runAsync('INSERT INTO programs (id, name) VALUES (2, ?)', ['Семенихин. С весом собственного тела']);
-
-    // Days
-    await db.runAsync('INSERT INTO days (id, program_id, day_number, name, description) VALUES (1, 1, 1, ?, NULL)', ['1. Широчайшие+Трицепс+Гиперэкстензия']);
-    await db.runAsync('INSERT INTO days (id, program_id, day_number, name, description) VALUES (2, 1, 2, ?, NULL)', ['2. Грудь-Бицепс-Плечи']);
-    await db.runAsync('INSERT INTO days (id, program_id, day_number, name, description) VALUES (3, 2, 1, ?, NULL)', ['1.Круговая тренировка день 1. 45-60 мин']);
-    await db.runAsync('INSERT INTO days (id, program_id, day_number, name, description) VALUES (4, 2, 2, ?, ?)', ['2.Круговая тренировка день 2. 45-60 мин', '🟢 2 круга, отдых между кругами 3–4 мин;\n🟡 3 круга, отдых между кругами 2–3 мин;\n🔴 4 круга, отдых между кругами 1–2 мин.']);
-    await db.runAsync('INSERT INTO days (id, program_id, day_number, name, description) VALUES (5, 2, 3, ?, ?)', ['3.Круговая тренировка день 3. 45-60 мин', 'Круговая тренировка\n\nВсе упражнения выполняются подряд, без отдыха.\nПо завершении круга делается пауза.']);
-    await db.runAsync('INSERT INTO days (id, program_id, day_number, name, description) VALUES (6, 2, 4, ?, NULL)', ['4.Круговая тренировка день 4. 45-60 мин. Ноги+грудь']);
-    await db.runAsync('INSERT INTO days (id, program_id, day_number, name, description) VALUES (7, 2, 5, ?, NULL)', ['5.Круговая тренировка день 5.45-60мин.']);
-    await db.runAsync('INSERT INTO days (id, program_id, day_number, name, description) VALUES (8, 2, 6, ?, NULL)', ['6.Круговая тренировка день 6. 45-60, Кор и ноги']);
+  const dayIds = new Map<number, number>();
+  const days: [number, number, number, string, string | null][] = [
+    [1, 1, 1, '1. Широчайшие+Трицепс+Гиперэкстензия', null],
+    [2, 1, 2, '2. Грудь-Бицепс-Плечи', null],
+    [3, 2, 1, '1.Круговая тренировка день 1. 45-60 мин', null],
+    [4, 2, 2, '2.Круговая тренировка день 2. 45-60 мин', '🟢 2 круга, отдых между кругами 3–4 мин;\n🟡 3 круга, отдых между кругами 2–3 мин;\n🔴 4 круга, отдых между кругами 1–2 мин.'],
+    [5, 2, 3, '3.Круговая тренировка день 3. 45-60 мин', 'Круговая тренировка\n\nВсе упражнения выполняются подряд, без отдыха.\nПо завершении круга делается пауза.'],
+    [6, 2, 4, '4.Круговая тренировка день 4. 45-60 мин. Ноги+грудь', null],
+    [7, 2, 5, '5.Круговая тренировка день 5.45-60мин.', null],
+    [8, 2, 6, '6.Круговая тренировка день 6. 45-60, Кор и ноги', null],
+  ];
+  for (const [seedId, seedProgramId, dayNumber, name, description] of days) {
+    const programId = programIds.get(seedProgramId)!;
+    let row = await db.getFirstAsync<{ id: number }>(
+      'SELECT id FROM days WHERE program_id = ? AND day_number = ?',
+      [programId, dayNumber],
+    );
+    if (!row) {
+      const result = await db.runAsync(
+        'INSERT INTO days (program_id, day_number, name, description) VALUES (?, ?, ?, ?)',
+        [programId, dayNumber, name, description],
+      );
+      row = { id: result.lastInsertRowId };
+    }
+    dayIds.set(seedId, row.id);
+  }
 
     // Exercises (all 48, is_preset=1)
     const exercises: [number, string, string | null, string | null, number, number][] = [
@@ -110,12 +135,21 @@ export async function seedExercises(db: SQLiteDatabase) {
       [52, 'Лодочка', 'Лодочка (Гиперэкстензия на полу): 20 повторений с фиксацией в верхней точке на 2 сек. (Одновременный подъем рук и ног, взгляд в пол).', 'кор, спина', 0, 0],
     ];
 
-    for (const [id, name, desc, tag, wt, orderNum] of exercises) {
-      const blob = await loadImageBlob(id);
-      await db.runAsync(
-        'INSERT INTO exercises (id, name, description, tag, weight_type, order_num, image_data, is_preset) VALUES (?, ?, ?, ?, ?, ?, ?, 1)',
-        [id, name, desc, tag, wt, orderNum, blob]
+    const exerciseIds = new Map<number, number>();
+    for (const [seedId, name, desc, tag, wt, orderNum] of exercises) {
+      let row = await db.getFirstAsync<{ id: number }>(
+        'SELECT id FROM exercises WHERE is_preset = 1 AND name = ? ORDER BY id LIMIT 1',
+        [name],
       );
+      if (!row) {
+        const blob = await loadImageBlob(seedId);
+        const result = await db.runAsync(
+          'INSERT INTO exercises (name, description, tag, weight_type, order_num, image_data, is_preset) VALUES (?, ?, ?, ?, ?, ?, 1)',
+          [name, desc, tag, wt, orderNum, blob],
+        );
+        row = { id: result.lastInsertRowId };
+      }
+      exerciseIds.set(seedId, row.id);
     }
 
     // Day-exercise links
@@ -138,18 +172,17 @@ export async function seedExercises(db: SQLiteDatabase) {
       [8, 48, 0], [8, 49, 10], [8, 35, 20], [8, 50, 30], [8, 51, 40], [8, 52, 50], [8, 36, 60], [8, 38, 70],
     ];
 
-    for (const [dayId, exId, orderNum] of dayExercises) {
+    for (const [seedDayId, seedExerciseId, orderNum] of dayExercises) {
+      const dayId = dayIds.get(seedDayId);
+      const exId = exerciseIds.get(seedExerciseId);
+      if (dayId == null || exId == null) {
+        throw new Error(`Не найдена seed-связь day=${seedDayId}, exercise=${seedExerciseId}`);
+      }
       await db.runAsync(
-        'INSERT INTO day_exercises (day_id, exercise_id, order_num) VALUES (?, ?, ?)',
+        'INSERT OR IGNORE INTO day_exercises (day_id, exercise_id, order_num) VALUES (?, ?, ?)',
         [dayId, exId, orderNum]
       );
     }
-
-    await db.execAsync('COMMIT;');
-  } catch (e) {
-    await db.execAsync('ROLLBACK;');
-    throw e;
-  }
 }
 
 /** Backfill image_data for all preset exercises that don't have it yet */

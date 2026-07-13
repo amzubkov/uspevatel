@@ -1,11 +1,14 @@
 import { create } from 'zustand';
 import * as Crypto from 'expo-crypto';
 import { getDb } from '../db/database';
-import { useMoneyStore } from './moneyStore';
-import { todayStr } from '../utils/date';
+import { insertLedgerTransaction, reloadMoneyTransactions } from './moneyStore';
+import { isValidDateStr, todayStr } from '../utils/date';
+import { recurringPaymentTransactionId } from '../utils/moneyLogic';
+import { nextAnchoredDueDate, nextDueDate, type Recurrence } from '../utils/recurrence';
 import { schedulePaymentReminders, cancelPaymentReminders } from '../utils/notifications';
 
-export type Recurrence = 'once' | 'weekly' | 'monthly' | 'quarterly' | 'semiannual' | 'yearly';
+export { nextDueDate };
+export type { Recurrence };
 
 const CUR_SYMBOL: Record<string, string> = { RUB: '₽', EUR: '€', USD: '$', USDT: '₮' };
 
@@ -19,6 +22,7 @@ export interface RecurringPayment {
   amount: number;
   currency: string;
   dueDate: string;      // YYYY-MM-DD, next due date
+  anchorDate: string;   // persisted original/manual due date for calendar clamping
   recurrence: Recurrence;
   accountId: string | null;
   category: string;
@@ -27,7 +31,7 @@ export interface RecurringPayment {
   createdAt: string;
 }
 
-export type RecurringPaymentInput = Omit<RecurringPayment, 'id' | 'createdAt' | 'active'>;
+export type RecurringPaymentInput = Omit<RecurringPayment, 'id' | 'createdAt' | 'active' | 'anchorDate'>;
 
 interface RecurringPaymentRow {
   id: string;
@@ -35,6 +39,7 @@ interface RecurringPaymentRow {
   amount: number;
   currency: string;
   due_date: string;
+  anchor_date: string;
   recurrence: Recurrence;
   account_id: string | null;
   category: string;
@@ -50,6 +55,7 @@ function rowToPayment(r: RecurringPaymentRow): RecurringPayment {
     amount: r.amount,
     currency: r.currency,
     dueDate: r.due_date,
+    anchorDate: r.anchor_date || r.due_date,
     recurrence: r.recurrence,
     accountId: r.account_id,
     category: r.category,
@@ -59,20 +65,7 @@ function rowToPayment(r: RecurringPaymentRow): RecurringPayment {
   };
 }
 
-/** Advance a YYYY-MM-DD date by one recurrence period (calendar-aware). */
-export function nextDueDate(dateStr: string, recurrence: Recurrence): string {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const base = new Date(y, m - 1, d);
-  if (recurrence === 'weekly') base.setDate(base.getDate() + 7);
-  else if (recurrence === 'monthly') base.setMonth(base.getMonth() + 1);
-  else if (recurrence === 'quarterly') base.setMonth(base.getMonth() + 3);
-  else if (recurrence === 'semiannual') base.setMonth(base.getMonth() + 6);
-  else if (recurrence === 'yearly') base.setFullYear(base.getFullYear() + 1);
-  const yy = base.getFullYear();
-  const mm = String(base.getMonth() + 1).padStart(2, '0');
-  const dd = String(base.getDate()).padStart(2, '0');
-  return `${yy}-${mm}-${dd}`;
-}
+const markPaidInFlight = new Set<string>();
 
 interface RecurringPaymentState {
   payments: RecurringPayment[];
@@ -98,25 +91,32 @@ export const useRecurringPaymentStore = create<RecurringPaymentState>()((set, ge
   },
 
   addPayment: async (input) => {
+    if (!isValidDateStr(input.dueDate)) throw new Error('Некорректная дата платежа');
     const payment: RecurringPayment = {
       ...input,
       id: Crypto.randomUUID(),
+      anchorDate: input.dueDate,
       active: true,
       createdAt: new Date().toISOString(),
     };
     const db = await getDb();
     await db.runAsync(
       `INSERT INTO recurring_payments
-        (id, name, amount, currency, due_date, recurrence, account_id, category, notes, active, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-      [payment.id, payment.name, payment.amount, payment.currency, payment.dueDate,
+        (id, name, amount, currency, due_date, anchor_date, recurrence, account_id, category, notes, active, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      [payment.id, payment.name, payment.amount, payment.currency, payment.dueDate, payment.anchorDate,
        payment.recurrence, payment.accountId, payment.category, payment.notes, payment.createdAt],
     );
     set((state) => ({ payments: [...state.payments, payment] }));
-    schedulePaymentReminders(payment.id, payment.name, reminderLabel(payment), payment.dueDate);
+    void schedulePaymentReminders(payment.id, payment.name, reminderLabel(payment), payment.dueDate).catch(() => {});
   },
 
   updatePayment: async (id, fields) => {
+    if (fields.dueDate !== undefined && !isValidDateStr(fields.dueDate)) {
+      throw new Error('Некорректная дата платежа');
+    }
+    const existing = get().payments.find((payment) => payment.id === id);
+    const dueDateChanged = fields.dueDate !== undefined && fields.dueDate !== existing?.dueDate;
     const map: Record<string, string> = {
       name: 'name', amount: 'amount', currency: 'currency', dueDate: 'due_date',
       recurrence: 'recurrence', accountId: 'account_id', category: 'category', notes: 'notes',
@@ -129,16 +129,25 @@ export const useRecurringPaymentStore = create<RecurringPaymentState>()((set, ge
         values.push((fields as any)[key] ?? null);
       }
     }
+    if (dueDateChanged && fields.dueDate !== undefined) {
+      assignments.push('anchor_date = ?');
+      values.push(fields.dueDate);
+    }
     if (assignments.length === 0) return;
     const db = await getDb();
     await db.runAsync(`UPDATE recurring_payments SET ${assignments.join(', ')} WHERE id = ?`, [...values, id]);
     set((state) => ({
-      payments: state.payments.map((p) => (p.id === id ? { ...p, ...fields } : p)),
+      payments: state.payments.map((p) => (p.id === id
+        ? { ...p, ...fields, ...(dueDateChanged && fields.dueDate !== undefined ? { anchorDate: fields.dueDate } : {}) }
+        : p)),
     }));
     const updated = get().payments.find((p) => p.id === id);
     if (updated) {
-      if (updated.active) schedulePaymentReminders(updated.id, updated.name, reminderLabel(updated), updated.dueDate);
-      else cancelPaymentReminders(id);
+      if (updated.active) {
+        void schedulePaymentReminders(updated.id, updated.name, reminderLabel(updated), updated.dueDate).catch(() => {});
+      } else {
+        void cancelPaymentReminders(id).catch(() => {});
+      }
     }
   },
 
@@ -146,34 +155,54 @@ export const useRecurringPaymentStore = create<RecurringPaymentState>()((set, ge
     const db = await getDb();
     await db.runAsync('DELETE FROM recurring_payments WHERE id = ?', [id]);
     set((state) => ({ payments: state.payments.filter((p) => p.id !== id) }));
-    cancelPaymentReminders(id);
+    void cancelPaymentReminders(id).catch(() => {});
   },
 
   markPaid: async (id, createTransaction) => {
+    if (markPaidInFlight.has(id)) return;
     const payment = get().payments.find((p) => p.id === id);
     if (!payment) return;
-
-    if (createTransaction && payment.accountId) {
-      await useMoneyStore.getState().addTransaction({
-        accountId: payment.accountId,
-        amount: -Math.abs(payment.amount),
-        date: payment.dueDate,
-        category: payment.category || 'Платежи',
-        tag: '',
-        comment: payment.name,
+    markPaidInFlight.add(id);
+    try {
+      const recurrence = payment.recurrence;
+      const isOnce = recurrence === 'once';
+      const next = recurrence === 'once'
+        ? null
+        : nextAnchoredDueDate(payment.anchorDate, payment.dueDate, recurrence, todayStr());
+      let insertedTransaction = false;
+      const db = await getDb();
+      await db.withExclusiveTransactionAsync(async (tx) => {
+        if (createTransaction && payment.accountId) {
+          const result = await insertLedgerTransaction(tx, {
+            accountId: payment.accountId,
+            amount: -Math.abs(payment.amount),
+            date: payment.dueDate,
+            category: payment.category || 'Платежи',
+            tag: '',
+            comment: payment.name,
+          }, {
+            id: recurringPaymentTransactionId(payment.id, payment.dueDate),
+            idempotent: true,
+          });
+          insertedTransaction = result.inserted;
+        }
+        if (isOnce) {
+          await tx.runAsync('UPDATE recurring_payments SET active = 0 WHERE id = ?', [id]);
+        } else {
+          await tx.runAsync('UPDATE recurring_payments SET due_date = ? WHERE id = ?', [next, id]);
+        }
       });
-    }
 
-    const db = await getDb();
-    if (payment.recurrence === 'once') {
-      await db.runAsync('UPDATE recurring_payments SET active = 0 WHERE id = ?', [id]);
-      set((state) => ({ payments: state.payments.map((p) => (p.id === id ? { ...p, active: false } : p)) }));
-      cancelPaymentReminders(id);
-    } else {
-      const next = nextDueDate(payment.dueDate < todayStr() ? todayStr() : payment.dueDate, payment.recurrence);
-      await db.runAsync('UPDATE recurring_payments SET due_date = ? WHERE id = ?', [next, id]);
-      set((state) => ({ payments: state.payments.map((p) => (p.id === id ? { ...p, dueDate: next } : p)) }));
-      schedulePaymentReminders(payment.id, payment.name, reminderLabel(payment), next);
+      if (insertedTransaction) await reloadMoneyTransactions();
+      if (isOnce) {
+        set((state) => ({ payments: state.payments.map((p) => (p.id === id ? { ...p, active: false } : p)) }));
+        void cancelPaymentReminders(id).catch(() => {});
+      } else if (next) {
+        set((state) => ({ payments: state.payments.map((p) => (p.id === id ? { ...p, dueDate: next } : p)) }));
+        void schedulePaymentReminders(payment.id, payment.name, reminderLabel(payment), next).catch(() => {});
+      }
+    } finally {
+      markPaidInFlight.delete(id);
     }
   },
 }));

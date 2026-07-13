@@ -28,6 +28,8 @@ interface NutritionState {
   loaded: boolean;
   load: () => Promise<void>;
   addEntry: (input: NutritionEntryInput) => Promise<void>;
+  addEntries: (inputs: NutritionEntryInput[]) => Promise<void>;
+  addPlanEntries: (items: { sourceId: string; input: NutritionEntryInput }[]) => Promise<number>;
   updateEntry: (id: string, fields: NutritionEntryUpdate) => Promise<void>;
   removeEntry: (id: string) => Promise<void>;
 }
@@ -122,6 +124,72 @@ export const useNutritionStore = create<NutritionState>()((set, get) => ({
       ],
     );
     set((state) => ({ entries: [entry, ...state.entries] }));
+  },
+
+  addEntries: async (inputs) => {
+    if (inputs.length === 0) return;
+    const entries: NutritionEntry[] = inputs.map((input) => ({
+      ...input,
+      id: Crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+    }));
+    const db = await getDb();
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      for (const entry of entries) {
+        await tx.runAsync(
+          `INSERT INTO nutrition_entries
+            (id, name, date, time, meal_type, amount_grams, kcal_per_100,
+             protein_per_100, fat_per_100, carbs_per_100, kcal_auto, notes, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            entry.id,
+            entry.name,
+            entry.date,
+            entry.time,
+            entry.mealType,
+            entry.amountGrams,
+            entry.kcalPer100,
+            entry.proteinPer100,
+            entry.fatPer100,
+            entry.carbsPer100,
+            entry.kcalAuto ? 1 : 0,
+            entry.notes,
+            entry.createdAt,
+          ],
+        );
+      }
+    });
+    set((state) => ({ entries: [...entries, ...state.entries] }));
+  },
+
+  addPlanEntries: async (items) => {
+    if (items.length === 0) return 0;
+    const createdAt = new Date().toISOString();
+    const candidates = items.map(({ sourceId, input }) => ({
+      ...input,
+      id: `nutrition-plan:${sourceId}`,
+      createdAt,
+    }));
+    const inserted: NutritionEntry[] = [];
+    const db = await getDb();
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      for (const entry of candidates) {
+        const result = await tx.runAsync(
+          `INSERT OR IGNORE INTO nutrition_entries
+            (id, name, date, time, meal_type, amount_grams, kcal_per_100,
+             protein_per_100, fat_per_100, carbs_per_100, kcal_auto, notes, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [entry.id, entry.name, entry.date, entry.time, entry.mealType, entry.amountGrams,
+           entry.kcalPer100, entry.proteinPer100, entry.fatPer100, entry.carbsPer100,
+           entry.kcalAuto ? 1 : 0, entry.notes, entry.createdAt],
+        );
+        if (result.changes > 0) inserted.push(entry);
+      }
+    });
+    if (inserted.length > 0) {
+      set((state) => ({ entries: [...inserted, ...state.entries] }));
+    }
+    return inserted.length;
   },
 
   updateEntry: async (id, fields) => {

@@ -11,6 +11,9 @@ import {
   Platform,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
+import * as Notifications from "expo-notifications";
+import * as Crypto from "expo-crypto";
 import { StorageAccessFramework } from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as DocumentPicker from "expo-document-picker";
@@ -22,11 +25,32 @@ import { useProjectStore } from "../store/projectStore";
 import { colors } from "../utils/theme";
 import { useRoutineStore } from "../store/routineStore";
 import { CHANGELOG } from "../changelog";
-import { getSyncFolder, setSyncFolder, getDb } from "../db/database";
+import {
+  getSyncFolder,
+  setSyncFolder,
+  getDb,
+  inspectSerializedDatabase,
+  recreateEmptyDatabase,
+  replaceDatabaseFromBytes,
+  SCHEMA_VERSION,
+} from "../db/database";
 import { validateToken } from "../services/telegramService";
 import { getSecret, setSecret, deleteSecret } from "../services/secrets";
-
-const IMAGE_DIRS = ['task_images', 'flight_images', 'document_images', 'note_images', 'exercise_images'];
+import {
+  BACKUP_ASSET_DIRECTORIES,
+  BACKUP_DATABASE_FILENAME,
+  BACKUP_MANIFEST_FILENAME,
+  BackupAssetEntry,
+  createBackupManifest,
+  parseBackupManifest,
+  safDisplayName,
+} from "../utils/backupManifest";
+import { reloadDatabaseStores } from "../utils/reloadStores";
+import {
+  scheduleFlightReminder,
+  schedulePaymentReminders,
+  scheduleTaskReminder,
+} from "../utils/notifications";
 
 function bytesToBase64(bytes: Uint8Array): string {
   let bin = '';
@@ -37,54 +61,198 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function sha256(bytes: Uint8Array): Promise<string> {
+  const input = new Uint8Array(bytes.length);
+  input.set(bytes);
+  const digest = new Uint8Array(await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, input.buffer));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function writeSafBytes(parentUri: string, name: string, bytes: Uint8Array, mime: string) {
+  const uri = await StorageAccessFramework.createFileAsync(parentUri, name, mime);
+  await StorageAccessFramework.writeAsStringAsync(uri, bytesToBase64(bytes), { encoding: 'base64' as any });
+}
+
+async function writeSafText(parentUri: string, name: string, value: string) {
+  const uri = await StorageAccessFramework.createFileAsync(parentUri, name, 'application/json');
+  await StorageAccessFramework.writeAsStringAsync(uri, value);
+}
+
+function collectFiles(directory: Directory, relativeRoot: string, result: { file: File; relativePath: string }[]) {
+  if (!directory.exists) return;
+  for (const item of directory.list()) {
+    const relativePath = `${relativeRoot}/${item instanceof File ? item.name : safDisplayName(item.uri)}`;
+    if (item instanceof File) result.push({ file: item, relativePath });
+    else collectFiles(item, relativePath, result);
+  }
+}
+
+function cleanDirectory(parent: Directory, name: string): Directory {
+  const directory = new Directory(parent, name);
+  if (directory.exists) directory.delete();
+  directory.create({ intermediates: true, idempotent: true });
+  return directory;
+}
+
+function writeRelativeFile(root: Directory, relativePath: string, bytes: Uint8Array) {
+  const parts = relativePath.split('/');
+  const fileName = parts.pop()!;
+  let directory = root;
+  for (const part of parts) {
+    const child = new Directory(directory, part);
+    if (!child.exists) child.create({ intermediates: true, idempotent: true });
+    directory = child;
+  }
+  new File(directory, fileName).write(bytes);
+}
+
+function snapshotAssetDirectories(destination: Directory) {
+  for (const name of BACKUP_ASSET_DIRECTORIES) {
+    const source = new Directory(Paths.document, name);
+    if (source.exists) source.copy(new Directory(destination, name));
+  }
+}
+
+function replaceAssetDirectories(sourceRoot: Directory) {
+  for (const name of BACKUP_ASSET_DIRECTORIES) {
+    const destination = new Directory(Paths.document, name);
+    if (destination.exists) destination.delete();
+    const source = new Directory(sourceRoot, name);
+    if (source.exists) source.copy(destination);
+  }
+}
+
+async function deleteAllPersistedData(): Promise<string[]> {
+  const warnings: string[] = [];
+  const attempt = async (label: string, operation: () => Promise<unknown>) => {
+    try { await operation(); } catch (error) { warnings.push(`${label}: ${String(error)}`); }
+  };
+
+  await attempt('уведомления', async () => {
+    await Notifications.cancelAllScheduledNotificationsAsync();
+    await Notifications.dismissAllNotificationsAsync();
+    await Notifications.setBadgeCountAsync(0);
+  });
+  await attempt('Telegram token', () => SecureStore.deleteItemAsync('secret_tgBotToken'));
+  await attempt('AI token', () => SecureStore.deleteItemAsync('secret_ollamaApiKey'));
+
+  // Clear the in-memory sync path as well as its persisted value.
+  await setSyncFolder(null);
+  await AsyncStorage.clear();
+  for (const name of BACKUP_ASSET_DIRECTORIES) {
+    const directory = new Directory(Paths.document, name);
+    if (directory.exists) directory.delete();
+  }
+  await recreateEmptyDatabase();
+  await reloadDatabaseStores();
+  return warnings;
+}
+
+async function reconcileRestoredNotifications(): Promise<string[]> {
+  const warnings: string[] = [];
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  for (const notification of scheduled) {
+    if (/^(?:task-|flight-|payment-)/.test(notification.identifier)) {
+      try { await Notifications.cancelScheduledNotificationAsync(notification.identifier); }
+      catch (error) { warnings.push(`отмена ${notification.identifier}: ${String(error)}`); }
+    }
+  }
+
+  const permission = await Notifications.getPermissionsAsync();
+  if (permission.status !== 'granted') return warnings;
+  const db = await getDb();
+  const now = Date.now();
+  const tasks = await db.getAllAsync<{ id: string; action: string; reminder_at: string }>(
+    `SELECT id, action, reminder_at FROM tasks
+      WHERE completed = 0 AND reminder_at IS NOT NULL AND reminder_at <> ''`,
+  );
+  for (const task of tasks) {
+    const date = new Date(task.reminder_at);
+    if (!Number.isFinite(date.getTime()) || date.getTime() <= now) continue;
+    try { await scheduleTaskReminder(task.id, task.action, date); }
+    catch (error) { warnings.push(`задача ${task.id}: ${String(error)}`); }
+  }
+
+  const flights = await db.getAllAsync<{
+    id: string; title: string; flight_number: string | null; depart_date: string; depart_time: string | null;
+  }>(
+    `SELECT id, title, flight_number, depart_date, depart_time FROM flights
+      WHERE kind = 'flight' AND status IN ('planned','reserved','booked')
+        AND depart_time IS NOT NULL AND depart_time <> ''`,
+  );
+  for (const flight of flights) {
+    const label = flight.flight_number ? `${flight.title} (${flight.flight_number})` : flight.title;
+    try { await scheduleFlightReminder(flight.id, label, flight.depart_date, flight.depart_time || undefined); }
+    catch (error) { warnings.push(`рейс ${flight.id}: ${String(error)}`); }
+  }
+
+  const payments = await db.getAllAsync<{
+    id: string; name: string; amount: number; currency: string; due_date: string;
+  }>('SELECT id, name, amount, currency, due_date FROM recurring_payments WHERE active = 1');
+  const symbols: Record<string, string> = { RUB: '₽', EUR: '€', USD: '$', USDT: '₮' };
+  for (const payment of payments) {
+    const amount = `${Math.round(payment.amount)} ${symbols[payment.currency] || payment.currency}`;
+    try { await schedulePaymentReminders(payment.id, payment.name, amount, payment.due_date); }
+    catch (error) { warnings.push(`платёж ${payment.id}: ${String(error)}`); }
+  }
+  return warnings;
+}
+
 function BackupRestore({ c }: { c: any }) {
   const handleBackup = useCallback(async () => {
     try {
       if (Platform.OS !== 'android') { Alert.alert('Только Android'); return; }
       const perm = await StorageAccessFramework.requestDirectoryPermissionsAsync();
       if (!perm.granted || !perm.directoryUri) { Alert.alert('Отменено'); return; }
-      const destUri = perm.directoryUri;
+      const suffix = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+      const backupFolderName = `uspevatel-backup-${suffix}`;
+      const destUri = await StorageAccessFramework.makeDirectoryAsync(perm.directoryUri, backupFolderName);
 
-      // Copy DB — checkpoint first, otherwise recent writes stay in -wal and are lost from the copy
+      // serializeAsync creates a consistent snapshot even while the live DB is in WAL mode.
       const liveDb = await getDb();
-      await liveDb.execAsync('PRAGMA wal_checkpoint(TRUNCATE)');
-      const dbSrc = new File(Paths.document, 'SQLite/uspevatel.db');
-      if (dbSrc.exists) {
-        const dbBytes = await dbSrc.bytes();
-        const base64 = bytesToBase64(dbBytes);
-        await StorageAccessFramework.createFileAsync(destUri, 'uspevatel.db', 'application/x-sqlite3')
-          .then(async (uri) => {
-            await StorageAccessFramework.writeAsStringAsync(uri, base64, { encoding: 'base64' as any });
-          });
+      const dbBytes = await liveDb.serializeAsync();
+      const versionRow = await liveDb.getFirstAsync<{ value: string }>(
+        "SELECT value FROM settings WHERE key = 'schema_version'",
+      );
+      const schemaVersion = Number(versionRow?.value);
+      if (!Number.isInteger(schemaVersion)) throw new Error('В рабочей БД нет schema_version');
+      await writeSafBytes(destUri, BACKUP_DATABASE_FILENAME, dbBytes, 'application/x-sqlite3');
+
+      const files: { file: File; relativePath: string }[] = [];
+      for (const directoryName of BACKUP_ASSET_DIRECTORIES) {
+        collectFiles(new Directory(Paths.document, directoryName), directoryName, files);
+      }
+      const assets: BackupAssetEntry[] = [];
+      for (let index = 0; index < files.length; index++) {
+        const bytes = await files[index].file.bytes();
+        const backupName = `asset-${String(index + 1).padStart(6, '0')}.bin`;
+        await writeSafBytes(destUri, backupName, bytes, 'application/octet-stream');
+        assets.push({
+          backupName,
+          relativePath: files[index].relativePath,
+          size: bytes.length,
+          sha256: await sha256(bytes),
+        });
       }
 
-      // Copy photos
-      let photoCount = 0;
-      for (const dirName of IMAGE_DIRS) {
-        const srcDir = new Directory(Paths.document, dirName);
-        if (!srcDir.exists) continue;
-        for (const item of srcDir.list()) {
-          if (item instanceof File) {
-            const bytes = await item.bytes();
-            const b64 = bytesToBase64(bytes);
-            const fileName = `${dirName}__${item.name}`;
-            await StorageAccessFramework.createFileAsync(destUri, fileName, 'image/jpeg')
-              .then(async (uri) => {
-                await StorageAccessFramework.writeAsStringAsync(uri, b64, { encoding: 'base64' as any });
-              });
-            photoCount++;
-          }
-        }
-      }
-
-      Alert.alert('Бэкап готов', `БД + ${photoCount} фото сохранены`);
+      // Manifest is written last; a partially-created folder is therefore never accepted as a backup.
+      const manifest = createBackupManifest(schemaVersion, dbBytes.length, await sha256(dbBytes), assets);
+      await writeSafText(destUri, BACKUP_MANIFEST_FILENAME, JSON.stringify(manifest, null, 2));
+      Alert.alert('Бэкап готов', `${backupFolderName}\nБД + ${assets.length} файлов`);
     } catch (e: any) {
       Alert.alert('Ошибка', String(e?.message || e));
     }
   }, []);
 
   const handleRestore = useCallback(async () => {
-    Alert.alert('Восстановить?', 'Текущие данные будут заменены. Перезапустите приложение после.', [
+    Alert.alert('Восстановить?', 'Текущие данные будут заменены проверенным бэкапом.', [
       { text: 'Отмена', style: 'cancel' },
       { text: 'Выбрать папку', onPress: async () => {
         try {
@@ -92,36 +260,82 @@ function BackupRestore({ c }: { c: any }) {
           const perm = await StorageAccessFramework.requestDirectoryPermissionsAsync();
           if (!perm.granted || !perm.directoryUri) return;
 
-          // Read DB file
           const files = await StorageAccessFramework.readDirectoryAsync(perm.directoryUri);
-          const dbFile = files.find((f) => decodeURIComponent(f).includes('uspevatel.db'));
-          if (dbFile) {
-            const db = await getDb();
-            await db.closeAsync();
-            const b64 = await StorageAccessFramework.readAsStringAsync(dbFile, { encoding: 'base64' as any });
-            const destPath = Paths.document.uri + '/SQLite/uspevatel.db';
-            const dest = new File(destPath);
-            await dest.write(b64, { encoding: 'base64' });
+          const byName = new Map<string, string>();
+          for (const uri of files) {
+            const name = safDisplayName(uri);
+            if (byName.has(name)) throw new Error(`В папке несколько файлов ${name}`);
+            byName.set(name, uri);
           }
 
-          // Restore photos
-          let photoCount = 0;
-          for (const fileUri of files) {
-            const name = decodeURIComponent(fileUri).split('/').pop() || '';
-            const sep = name.indexOf('__');
-            if (sep === -1) continue;
-            const dirName = name.substring(0, sep);
-            const fileName = name.substring(sep + 2);
-            if (!IMAGE_DIRS.includes(dirName)) continue;
-            const imgDir = new Directory(Paths.document, dirName);
-            if (!imgDir.exists) imgDir.create();
-            const b64 = await StorageAccessFramework.readAsStringAsync(fileUri, { encoding: 'base64' as any });
-            const dest = new File(imgDir, fileName);
-            await dest.write(b64, { encoding: 'base64' });
-            photoCount++;
+          const manifestUri = byName.get(BACKUP_MANIFEST_FILENAME);
+          if (!manifestUri) throw new Error(`Не найден точный файл ${BACKUP_MANIFEST_FILENAME}`);
+          const manifest = parseBackupManifest(
+            await StorageAccessFramework.readAsStringAsync(manifestUri),
+            SCHEMA_VERSION,
+          );
+          const dbUri = byName.get(manifest.database.fileName);
+          if (!dbUri || safDisplayName(dbUri) !== BACKUP_DATABASE_FILENAME) {
+            throw new Error(`Не найден точный файл ${BACKUP_DATABASE_FILENAME}`);
+          }
+          const dbBytes = base64ToBytes(
+            await StorageAccessFramework.readAsStringAsync(dbUri, { encoding: 'base64' as any }),
+          );
+          if (dbBytes.length !== manifest.database.size) throw new Error('Размер файла БД не совпадает с manifest');
+          if (await sha256(dbBytes) !== manifest.database.sha256) throw new Error('Контрольная сумма БД не совпадает');
+          await inspectSerializedDatabase(dbBytes, manifest.schemaVersion);
+
+          const cacheRoot = new Directory(Paths.cache);
+          const stage = cleanDirectory(cacheRoot, 'uspevatel-restore-stage');
+          const rollbackAssets = cleanDirectory(cacheRoot, 'uspevatel-restore-rollback');
+          try {
+            for (const asset of manifest.assets) {
+              const uri = byName.get(asset.backupName);
+              if (!uri) throw new Error(`Не найден файл ${asset.backupName}`);
+              const bytes = base64ToBytes(
+                await StorageAccessFramework.readAsStringAsync(uri, { encoding: 'base64' as any }),
+              );
+              if (bytes.length !== asset.size) throw new Error(`Повреждён файл ${asset.relativePath}`);
+              if (await sha256(bytes) !== asset.sha256) throw new Error(`Контрольная сумма не совпадает: ${asset.relativePath}`);
+              writeRelativeFile(stage, asset.relativePath, bytes);
+            }
+
+            snapshotAssetDirectories(rollbackAssets);
+            const previousDbBytes = await (await getDb()).serializeAsync();
+            let databaseReplaced = false;
+            try {
+              await replaceDatabaseFromBytes(dbBytes, manifest.schemaVersion);
+              databaseReplaced = true;
+              replaceAssetDirectories(stage);
+              await reloadDatabaseStores();
+            } catch (restoreError) {
+              let rollbackError: unknown = null;
+              try {
+                replaceAssetDirectories(rollbackAssets);
+                if (databaseReplaced) await replaceDatabaseFromBytes(previousDbBytes);
+                await reloadDatabaseStores();
+              } catch (error) {
+                rollbackError = error;
+              }
+              if (rollbackError) {
+                throw new Error(`Ошибка восстановления: ${String(restoreError)}; ошибка отката: ${String(rollbackError)}`);
+              }
+              throw restoreError;
+            }
+          } finally {
+            if (stage.exists) stage.delete();
+            if (rollbackAssets.exists) rollbackAssets.delete();
           }
 
-          Alert.alert('Готово', `БД${dbFile ? '' : ' (не найдена)'} + ${photoCount} фото восстановлены.\nПерезапустите приложение.`);
+          let notificationWarnings: string[] = [];
+          try { notificationWarnings = await reconcileRestoredNotifications(); }
+          catch (error) { notificationWarnings = [String(error)]; }
+          Alert.alert(
+            'Готово',
+            `Восстановлены БД и ${manifest.assets.length} файлов${
+              notificationWarnings.length ? `\nПредупреждения напоминаний: ${notificationWarnings.join('; ')}` : ''
+            }`,
+          );
         } catch (e: any) {
           Alert.alert('Ошибка', String(e?.message || e));
         }
@@ -253,9 +467,13 @@ export function SettingsScreen() {
       const db = await getDb();
       if (!token) {
         await deleteSecret('tgBotToken');
-        await db.runAsync('DELETE FROM settings WHERE key IN (?, ?)', ['tgUpdateOffset', 'tgAllowedChatId']);
+        await db.withExclusiveTransactionAsync(async (tx) => {
+          await tx.runAsync(
+            "DELETE FROM settings WHERE key IN ('tgUpdateOffset','tgAllowedChatId','tgBotTokenHash','tgPairedTokenHash','tgPairingCode','tgPlanLastUpdateId')",
+          );
+          await tx.runAsync('DELETE FROM telegram_inbox');
+        });
         setTgStatus('Токен удалён');
-        setTgSaving(false);
         return;
       }
       const botName = await validateToken(token);
@@ -263,8 +481,9 @@ export function SettingsScreen() {
       setTgStatus(`Подключён: ${botName}`);
     } catch (e: any) {
       setTgStatus(String(e?.message || e));
+    } finally {
+      setTgSaving(false);
     }
-    setTgSaving(false);
   }, [tgToken]);
 
   // Ollama AI (модель, цель и замечания задаются на экране «План» при запуске AI-плана)
@@ -306,6 +525,39 @@ export function SettingsScreen() {
       setOllamaStatus(String(e?.message || e));
     }
   }, [ollamaKey]);
+
+  // FatSecret (food search)
+  const [fsClientId, setFsClientId] = useState('');
+  const [fsClientSecret, setFsClientSecret] = useState('');
+  const [fsStatus, setFsStatus] = useState<string | null>(null);
+  React.useEffect(() => {
+    (async () => {
+      const id = await getSecret('fatSecretClientId');
+      const secret = await getSecret('fatSecretClientSecret');
+      if (id) setFsClientId(id);
+      if (secret) setFsClientSecret(secret);
+    })();
+  }, []);
+  const handleSaveFatSecret = useCallback(async () => {
+    const id = fsClientId.trim();
+    const secret = fsClientSecret.trim();
+    try {
+      if (!id || !secret) {
+        await deleteSecret('fatSecretClientId');
+        await deleteSecret('fatSecretClientSecret');
+        setFsStatus('Ключи удалены');
+        return;
+      }
+      await setSecret('fatSecretClientId', id);
+      await setSecret('fatSecretClientSecret', secret);
+      setFsStatus('Проверяю…');
+      const { searchFatSecret } = await import('../services/fatSecretService');
+      const hits = await searchFatSecret('apple', 3);
+      setFsStatus(hits.length > 0 ? '✓ Работает' : 'Ключи сохранены, но поиск пуст');
+    } catch (e: any) {
+      setFsStatus(String(e?.message || e));
+    }
+  }, [fsClientId, fsClientSecret]);
 
   // Sync folder
   const [syncFolderInput, setSyncFolderInput] = useState(getSyncFolder() || "");
@@ -693,6 +945,54 @@ export function SettingsScreen() {
         <Text style={{ color: c.textSecondary, fontSize: 13, marginTop: 6 }}>{ollamaStatus}</Text>
       )}
 
+      {/* FatSecret */}
+      <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>
+        FatSecret (поиск еды)
+      </Text>
+      <Text style={[styles.hint, { color: c.textSecondary }]}>
+        Client ID и Secret с platform.fatsecret.com. Подключает базу продуктов к поиску в «Питании».
+      </Text>
+      <View style={styles.addContextRow}>
+        <TextInput
+          style={[
+            styles.addContextInput,
+            { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13 },
+          ]}
+          value={fsClientId}
+          onChangeText={setFsClientId}
+          placeholder="Client ID"
+          placeholderTextColor={c.textSecondary}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+      </View>
+      <View style={[styles.addContextRow, { marginTop: 6 }]}>
+        <TextInput
+          style={[
+            styles.addContextInput,
+            { color: c.text, backgroundColor: c.card, borderColor: c.border, fontSize: 13 },
+          ]}
+          value={fsClientSecret}
+          onChangeText={setFsClientSecret}
+          placeholder="Client Secret"
+          placeholderTextColor={c.textSecondary}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry
+        />
+      </View>
+      <TouchableOpacity
+        style={[styles.exportBtn, { backgroundColor: c.primary, marginTop: 8 }]}
+        onPress={handleSaveFatSecret}
+      >
+        <Text style={styles.exportBtnText}>
+          {fsClientId.trim() && fsClientSecret.trim() ? 'Проверить и сохранить' : 'Удалить ключи'}
+        </Text>
+      </TouchableOpacity>
+      {fsStatus && (
+        <Text style={{ color: c.textSecondary, fontSize: 13, marginTop: 6 }}>{fsStatus}</Text>
+      )}
+
       {/* Data */}
       <Text style={[styles.sectionTitle, { color: c.text, marginTop: 24 }]}>
         Данные
@@ -734,8 +1034,20 @@ export function SettingsScreen() {
               text: "Удалить",
               style: "destructive",
               onPress: async () => {
-                await AsyncStorage.clear();
-                Alert.alert("Готово", "Перезапустите приложение");
+                try {
+                  const warnings = await deleteAllPersistedData();
+                  setTgToken('');
+                  setOllamaKeyState('');
+                  setSyncFolderInput('');
+                  Alert.alert(
+                    "Готово",
+                    warnings.length > 0
+                      ? `Данные удалены. Не удалось очистить: ${warnings.join('; ')}`
+                      : "SQLite, файлы, ключи и уведомления удалены",
+                  );
+                } catch (error: any) {
+                  Alert.alert("Ошибка удаления", String(error?.message || error));
+                }
               },
             },
           ])

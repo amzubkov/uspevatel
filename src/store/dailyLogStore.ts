@@ -6,7 +6,7 @@ export interface DailyLog {
   id: string;
   date: string;           // YYYY-MM-DD
   sleepHours?: number;
-  sleepQuality?: number;  // 1-5
+  sleepQuality?: number;  // percent; current UI uses 70, 75, 80, 85, 90
   productivity?: number;  // 1-5, legacy read-only: UI input removed in v8.13, old values still shown in history
   motivation?: number;    // 1-5
   dayRating?: number;     // 1-5

@@ -70,6 +70,7 @@ export async function ollamaChatJson(opts: OllamaChatOpts): Promise<any> {
   const timeoutMs = opts.timeoutMs ?? 120000;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
+  let responseText: string;
   try {
     res = await fetch(OLLAMA_URL, {
       method: 'POST',
@@ -77,13 +78,21 @@ export async function ollamaChatJson(opts: OllamaChatOpts): Promise<any> {
       body: JSON.stringify({ model, stream: false, ...(opts.format ? { format: opts.format } : {}), messages }),
       signal: controller.signal,
     });
+    // Keep the abort timer alive while the body is downloading too. fetch()
+    // resolves as soon as headers arrive, which is not the end of a response.
+    responseText = await res.text();
   } catch (e: any) {
     if (e?.name === 'AbortError') throw new Error(`Модель «${model}» не ответила за ${Math.round(timeoutMs / 1000)} с. Попробуйте другую модель (Спорт → 🤖 План) или повторите.`);
     throw new Error(`Сеть недоступна: ${String(e?.message || e)}`);
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) throw new Error(`Ollama API ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const data = await res.json();
+  if (!res.ok) throw new Error(`Ollama API ${res.status}: ${responseText.slice(0, 200)}`);
+  let data: any;
+  try {
+    data = JSON.parse(responseText);
+  } catch {
+    throw new Error(`Ollama API вернул некорректный ответ: ${responseText.slice(0, 120)}`);
+  }
   return extractJson(String(data?.message?.content || ''));
 }

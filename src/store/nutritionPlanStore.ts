@@ -72,6 +72,8 @@ interface PlanState {
   loaded: boolean;
   load: () => Promise<void>;
   addItem: (input: PlanItemInput) => Promise<void>;
+  addItems: (inputs: PlanItemInput[]) => Promise<void>;
+  replaceDate: (date: string, inputs: PlanItemInput[]) => Promise<void>;
   updateItem: (id: string, fields: Partial<PlanItemInput>) => Promise<void>;
   toggleDone: (id: string) => Promise<void>;
   removeItem: (id: string) => Promise<void>;
@@ -90,6 +92,26 @@ const COLS: Record<keyof PlanItemInput, string> = {
   ingredients: 'ingredients',
 };
 
+function makeItem(input: PlanItemInput): PlanItem {
+  return {
+    ...input,
+    ingredients: input.ingredients || [],
+    id: Crypto.randomUUID(),
+    done: false,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+async function insertItem(db: Awaited<ReturnType<typeof getDb>>, item: PlanItem): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO nutrition_plan
+      (id, date, meal_type, name, amount_grams, kcal_per_100, protein_per_100, fat_per_100, carbs_per_100, done, ingredients, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+    [item.id, item.date, item.mealType, item.name, item.amountGrams, item.kcalPer100,
+     item.proteinPer100, item.fatPer100, item.carbsPer100, JSON.stringify(item.ingredients), item.createdAt],
+  );
+}
+
 export const useNutritionPlanStore = create<PlanState>()((set, get) => ({
   items: [],
   loaded: false,
@@ -102,16 +124,32 @@ export const useNutritionPlanStore = create<PlanState>()((set, get) => ({
   },
 
   addItem: async (input) => {
-    const item: PlanItem = { ...input, ingredients: input.ingredients || [], id: Crypto.randomUUID(), done: false, createdAt: new Date().toISOString() };
+    const item = makeItem(input);
     const db = await getDb();
-    await db.runAsync(
-      `INSERT INTO nutrition_plan
-        (id, date, meal_type, name, amount_grams, kcal_per_100, protein_per_100, fat_per_100, carbs_per_100, done, ingredients, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
-      [item.id, item.date, item.mealType, item.name, item.amountGrams, item.kcalPer100,
-       item.proteinPer100, item.fatPer100, item.carbsPer100, JSON.stringify(item.ingredients), item.createdAt],
-    );
+    await insertItem(db, item);
     set((state) => ({ items: [...state.items, item] }));
+  },
+
+  addItems: async (inputs) => {
+    if (inputs.length === 0) return;
+    const added = inputs.map(makeItem);
+    const db = await getDb();
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      for (const item of added) await insertItem(tx, item);
+    });
+    set((state) => ({ items: [...state.items, ...added] }));
+  },
+
+  replaceDate: async (date, inputs) => {
+    const replacements = inputs.map((input) => makeItem({ ...input, date }));
+    const db = await getDb();
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      await tx.runAsync('DELETE FROM nutrition_plan WHERE date = ?', [date]);
+      for (const item of replacements) await insertItem(tx, item);
+    });
+    set((state) => ({
+      items: [...state.items.filter((item) => item.date !== date), ...replacements],
+    }));
   },
 
   updateItem: async (id, fields) => {
