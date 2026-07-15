@@ -55,6 +55,12 @@ export function inferKcalPerKgRep(ex: Pick<Exercise, 'name' | 'weightType'>): nu
 // → kcal/kg/rep = (9.81 × 0.4 × 1.5) / 0.22 / 4184 ≈ 0.0064
 const KCAL_PER_KG_LIFTED_REP = (9.81 * 0.4 * 1.5) / 0.22 / 4184;
 
+// Gym sessions spend most wall-clock time resting between sets with an
+// elevated heart rate; pure per-rep mechanics undercounts a workout ~3x
+// versus tracker-style MET accounting (60 min strength ≈ MET 5.5).
+// Applied to workout_logs (gym sessions), NOT to casual daily counters.
+const SESSION_REST_AMORTIZATION = 3;
+
 // Calories burned by a number of reps of an exercise.
 // Order of preference:
 //   1) weighted exercise with lifted weight: physics-based (weight × reps × amplitude)
@@ -68,16 +74,20 @@ export function exerciseKcal(
 ): number {
   if (totalReps <= 0) return 0;
   if (ex.weightType > 0 && liftedWeightKg && liftedWeightKg > 0) {
-    return totalReps * liftedWeightKg * KCAL_PER_KG_LIFTED_REP;
+    return totalReps * liftedWeightKg * KCAL_PER_KG_LIFTED_REP * SESSION_REST_AMORTIZATION;
   }
   const perKgRep = inferKcalPerKgRep(ex);
-  if (perKgRep > 0 && bodyWeightKg > 0) return totalReps * perKgRep * bodyWeightKg;
+  if (perKgRep > 0 && bodyWeightKg > 0) {
+    return totalReps * perKgRep * bodyWeightKg * SESSION_REST_AMORTIZATION;
+  }
   if (ex.caloriesPerRep && ex.caloriesPerRep > 0) return totalReps * ex.caloriesPerRep;
   return 0;
 }
 
-// Lookup table used for daily sport entries (legacy 5km/10km/20km labels and football).
-const CAL_RUN_PER_KG: Record<string, number> = { football: 7, '5km': 5, '10km': 10, '20km': 20 };
+// Lookup table used for daily sport entries (5km/10km run labels, football,
+// walking, and the retired 20km preset kept for old entries).
+// walk1k/walk5k: 1000 steps ~= 0.76 km walking at ~0.55 kcal/kg/km.
+const CAL_RUN_PER_KG: Record<string, number> = { football: 7, '5km': 5, '10km': 10, '20km': 20, walk1k: 0.42, walk5k: 2.1 };
 const DAILY_PER_REP_PER_KG: Record<string, number> = {
   pullups: 0.005,
   abs: 0.003,
@@ -95,6 +105,7 @@ export function calcDailyEntryKcal(entry: SportEntry, bodyWeightKg: number): num
     }
     return Math.round(entry.count * bodyWeightKg); // ~1 kcal/kg/km
   }
+  if (entry.type === 'walk') return Math.round((entry.count / 1000) * 0.42 * bodyWeightKg); // steps: 1000 ≈ 0.76 km × 0.55 kcal/kg/km
   if (entry.type === 'bike') return Math.round(entry.count * 0.375 * bodyWeightKg); // MET 7.5
   if (entry.type === 'football') return Math.round((entry.count * 7 * bodyWeightKg) / 60); // MET 7, minutes
   if (entry.type === 'swim') return Math.round((entry.count * 6 * bodyWeightKg) / 60); // MET 6, minutes

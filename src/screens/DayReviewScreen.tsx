@@ -12,6 +12,8 @@ import { sumNutrition } from '../utils/nutrition';
 import { colors } from '../utils/theme';
 import { exerciseKcal, calcDailyEntriesKcal, getBodyWeightAt } from '../utils/calories';
 import { useNavigation } from '@react-navigation/native';
+import { VoiceInputButton } from '../components/VoiceInputButton';
+import { PolishTextButton } from '../components/PolishTextButton';
 
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 const WEEKDAYS = WEEKDAYS_SUN_LOWER;
@@ -113,7 +115,9 @@ export function DayReviewScreen() {
       triceps: dayEntries.filter((e) => e.type === 'triceps').reduce((s, e) => s + e.count, 0),
       squats: dayEntries.filter((e) => e.type === 'squats').reduce((s, e) => s + e.count, 0),
       football: dayEntries.filter((e) => e.type === 'football').reduce((s, e) => s + e.count, 0),
-      run: dayEntries.filter((e) => e.type === 'run').reduce((s, e) => s + e.count, 0),
+      // legacy run rows labeled 'football' carry count=1, not km — exclude
+      run: dayEntries.filter((e) => e.type === 'run' && e.label !== 'football').reduce((s, e) => s + e.count, 0),
+      walk: dayEntries.filter((e) => e.type === 'walk').reduce((s, e) => s + e.count, 0),
       bike: dayEntries.filter((e) => e.type === 'bike').reduce((s, e) => s + e.count, 0),
       swim: dayEntries.filter((e) => e.type === 'swim').reduce((s, e) => s + e.count, 0),
     };
@@ -121,6 +125,14 @@ export function DayReviewScreen() {
 
   // Body weight on this date (last known weight entry on/before date).
   const bodyWeight = useMemo(() => getBodyWeightAt(sportEntries, date), [sportEntries, date]);
+
+  // kcal per cardio type for the day chips
+  const sportKcal = useMemo(() => {
+    const day = sportEntries.filter((e) => e.date === date);
+    const kcalOf = (type: string) =>
+      Math.round(calcDailyEntriesKcal(day.filter((e) => e.type === type), bodyWeight));
+    return { run: kcalOf('run'), walk: kcalOf('walk'), football: kcalOf('football'), bike: kcalOf('bike'), swim: kcalOf('swim') };
+  }, [sportEntries, date, bodyWeight]);
 
   // Workout logs from exerciseStore (gym exercises)
   const dayWorkouts = useMemo(() => {
@@ -203,12 +215,18 @@ export function DayReviewScreen() {
       </View>
 
       {/* Notes */}
-      <TextInput
-        style={[s.notesInput, { color: c.text, backgroundColor: c.card, borderColor: c.border }]}
-        value={notes} onChangeText={setNotes}
-        placeholder="Заметки к дню..." placeholderTextColor={c.textSecondary}
-        multiline numberOfLines={2}
-      />
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+        <TextInput
+          style={[s.notesInput, { color: c.text, backgroundColor: c.card, borderColor: c.border, flex: 1 }]}
+          value={notes} onChangeText={setNotes}
+          placeholder="Заметки к дню..." placeholderTextColor={c.textSecondary}
+          multiline numberOfLines={2}
+        />
+        <View style={{ paddingTop: 10, gap: 10, alignItems: 'center' }}>
+          <VoiceInputButton onText={(text) => setNotes((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))} />
+          <PolishTextButton text={notes} onText={setNotes} />
+        </View>
+      </View>
 
       {/* Sleep */}
       <View style={[s.section, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -243,18 +261,28 @@ export function DayReviewScreen() {
             )}
           </View>
           {/* Daily counters */}
-          {(sportData.pullups > 0 || sportData.abs > 0 || sportData.triceps > 0 || sportData.squats > 0 || sportData.run > 0 || sportData.bike > 0 || sportData.football > 0 || sportData.swim > 0) && (
+          {(sportData.pullups > 0 || sportData.abs > 0 || sportData.triceps > 0 || sportData.squats > 0) && (
             <View style={s.sportAutoRow}>
               {sportData.pullups > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏋️ {sportData.pullups}</Text>}
               {sportData.abs > 0 && <Text style={[s.sportChip, { color: c.text }]}>🔥 {sportData.abs}</Text>}
               {sportData.triceps > 0 && <Text style={[s.sportChip, { color: c.text }]}>💪 {sportData.triceps}</Text>}
               {sportData.squats > 0 && <Text style={[s.sportChip, { color: c.text }]}>🦵 {sportData.squats}</Text>}
-              {sportData.football > 0 && <Text style={[s.sportChip, { color: c.text }]}>⚽ {sportData.football}мин</Text>}
-              {sportData.run > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏃 {sportData.run}км</Text>}
-              {sportData.bike > 0 && <Text style={[s.sportChip, { color: c.text }]}>🚴 {sportData.bike}км</Text>}
-              {sportData.swim > 0 && <Text style={[s.sportChip, { color: c.text }]}>🏊 {sportData.swim}мин</Text>}
             </View>
           )}
+          {/* Cardio: same row layout as gym exercises — kcal right, orange */}
+          {([
+            { key: 'run', name: '🏃 Бег', amount: `${sportData.run} км`, show: sportData.run > 0, kcal: sportKcal.run },
+            { key: 'walk', name: '🚶 Ходьба', amount: `${sportData.walk} шагов`, show: sportData.walk > 0, kcal: sportKcal.walk },
+            { key: 'football', name: '⚽ Футбол', amount: `${sportData.football} мин`, show: sportData.football > 0, kcal: sportKcal.football },
+            { key: 'bike', name: '🚴 Вело', amount: `${sportData.bike} км`, show: sportData.bike > 0, kcal: sportKcal.bike },
+            { key: 'swim', name: '🏊 Плавание', amount: `${sportData.swim} мин`, show: sportData.swim > 0, kcal: sportKcal.swim },
+          ].filter((row) => row.show)).map((row) => (
+            <View key={row.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+              <Text style={{ color: c.text, fontSize: 13, flex: 1 }} numberOfLines={1}>{row.name}</Text>
+              <Text style={{ color: c.textSecondary, fontSize: 12 }}>{row.amount}</Text>
+              {row.kcal > 0 && <Text style={{ color: '#F59E0B', fontSize: 11 }}>{row.kcal}ккал</Text>}
+            </View>
+          ))}
           {/* Gym exercises */}
           {dayWorkouts.length > 0 && (
             <View style={{ gap: 2, marginTop: sportData.pullups > 0 || sportData.abs > 0 ? 4 : 0 }}>

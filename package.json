@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@expo/metro-runtime": "~55.0.6",
+    "@fugood/react-native-audio-pcm-stream": "^1.1.4",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "^8.6.0",
     "@react-navigation/bottom-tabs": "^7.15.2",
@@ -45,6 +46,7 @@
     "react-native-screens": "~4.23.0",
     "react-native-svg": "15.15.3",
     "react-native-web": "^0.21.0",
+    "whisper.rn": "^0.6.0",
     "zustand": "^5.0.11"
   },
   "devDependencies": {

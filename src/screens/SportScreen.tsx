@@ -46,9 +46,10 @@ function ExerciseTab({ type, unit, quickCounts }: { type: SportEntry['type']; un
   // Reset date when switching types
   useEffect(() => { setSelectedDate(today); }, [type]);
 
-  // Run tab also shows football entries (added via ⚽ quick button)
+  // Run tab also shows football and walking entries (added via quick buttons)
   const includeFootball = type === 'run';
-  const matchesType = (e: SportEntry) => e.type === type || (includeFootball && e.type === 'football');
+  const matchesType = (e: SportEntry) =>
+    e.type === type || (includeFootball && (e.type === 'football' || e.type === 'walk'));
 
   const dateEntries = useMemo(() => entries.filter((e) => matchesType(e) && e.date === selectedDate), [entries, selectedDate, type]);
   const dateTotal = useMemo(() => dateEntries.filter((e) => e.type === type).reduce((sum, e) => sum + e.count, 0), [dateEntries, type]);
@@ -64,8 +65,8 @@ function ExerciseTab({ type, unit, quickCounts }: { type: SportEntry['type']; un
     return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [entries, type]);
 
-  const entryUnit = (e: SportEntry) => (e.type === 'football' ? 'мин' : unit);
-  const entryPrefix = (e: SportEntry) => (e.type === 'football' ? '⚽ ' : '');
+  const entryUnit = (e: SportEntry) => (e.type === 'football' ? 'мин' : e.type === 'walk' ? 'шагов' : unit);
+  const entryPrefix = (e: SportEntry) => (e.type === 'football' ? '⚽ ' : e.type === 'walk' ? '🚶 ' : '');
 
   const handleRemove = (entry: SportEntry) => {
     Alert.alert('Удалить?', `${entryPrefix(entry)}${entry.count} ${entryUnit(entry)} в ${entry.time}`, [
@@ -126,6 +127,15 @@ function ExerciseTab({ type, unit, quickCounts }: { type: SportEntry['type']; un
             <Text style={styles.quickBtnText}>+{n}</Text>
           </TouchableOpacity>
         ))}
+        {type === 'run' && [1000, 5000].map((steps) => (
+          <TouchableOpacity
+            key={`walk${steps}`}
+            style={[styles.quickBtn, { backgroundColor: '#0EA5E9' }]}
+            onPress={() => addEntry('walk', steps, undefined, selectedDate)}
+          >
+            <Text style={styles.quickBtnText}>🚶{steps >= 5000 ? '5т' : '1т'}</Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
       {/* Day entries */}
@@ -152,9 +162,11 @@ function ExerciseTab({ type, unit, quickCounts }: { type: SportEntry['type']; un
               {groupedByDate.filter(([date]) => date !== today).slice(0, 14).map(([date, dayEntries]) => {
                 const runTotal = dayEntries.filter((e) => e.type === type).reduce((s, e) => s + e.count, 0);
                 const footballMin = dayEntries.filter((e) => e.type === 'football').reduce((s, e) => s + e.count, 0);
+                const walkSteps = dayEntries.filter((e) => e.type === 'walk').reduce((s, e) => s + e.count, 0);
                 const parts: string[] = [];
                 if (runTotal > 0) parts.push(`${runTotal} ${unit}`);
                 if (footballMin > 0) parts.push(`⚽ ${footballMin} мин`);
+                if (walkSteps > 0) parts.push(`🚶 ${walkSteps}`);
                 return (
                   <TouchableOpacity
                     key={date}
@@ -185,7 +197,7 @@ const DAILY_MODES_ROW1 = [
   { key: 'squats' as const, label: 'Присед', icon: '🦵', unit: 'раз', quickCounts: [5, 10, 20, 30] },
 ];
 const DAILY_MODES_ROW2 = [
-  { key: 'run' as const, label: 'Бег', icon: '🏃', unit: 'км', quickCounts: [5, 10, 15, 20] },
+  { key: 'run' as const, label: 'Бег', icon: '🏃', unit: 'км', quickCounts: [5, 10] },
   { key: 'bike' as const, label: 'Вело', icon: '🚴', unit: 'км', quickCounts: [5, 10, 15, 20, 25, 30] },
   { key: 'swim' as const, label: 'Плавание', icon: '🏊', unit: 'мин', quickCounts: [15, 30, 45, 60] },
   { key: 'water' as const, label: 'Вода', icon: '💧', unit: 'мл', quickCounts: [200, 500] },
@@ -195,7 +207,7 @@ const DAILY_MODES = [...DAILY_MODES_ROW1, ...DAILY_MODES_ROW2];
 function DailyTab() {
   const theme = useSettingsStore((s) => s.theme);
   const c = colors[theme];
-  const [mode, setMode] = useState<'pullups' | 'abs' | 'triceps' | 'squats' | 'football' | 'run' | 'bike' | 'swim' | 'water'>('pullups');
+  const [mode, setMode] = useState<'pullups' | 'abs' | 'triceps' | 'squats' | 'football' | 'run' | 'bike' | 'swim' | 'water'>('run');
   const current = DAILY_MODES.find((m) => m.key === mode)!;
 
   return (
@@ -224,92 +236,6 @@ function DailyTab() {
 
       {/* Content */}
       <ExerciseTab type={current.key as SportEntry['type']} unit={current.unit} quickCounts={current.quickCounts} />
-    </View>
-  );
-}
-
-function RunContent() {
-  const theme = useSettingsStore((s) => s.theme);
-  const c = colors[theme];
-  const entries = useSportStore((s) => s.entries);
-  const addEntry = useSportStore((s) => s.addEntry);
-  const removeEntry = useSportStore((s) => s.removeEntry);
-  const today = useTodayStr();
-
-  const todayRuns = useMemo(() => entries.filter((e) => e.type === 'run' && e.date === today), [entries, today]);
-  const allRuns = useMemo(() => entries.filter((e) => e.type === 'run'), [entries]);
-
-  const groupedByDate = useMemo(() => {
-    const map = new Map<string, SportEntry[]>();
-    for (const e of allRuns) {
-      const arr = map.get(e.date) || [];
-      arr.push(e);
-      map.set(e.date, arr);
-    }
-    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
-  }, [allRuns]);
-
-  const handleRemove = (entry: SportEntry) => {
-    Alert.alert('Удалить?', `${entry.label || 'бег'} в ${entry.time}`, [
-      { text: 'Отмена', style: 'cancel' },
-      { text: 'Удалить', style: 'destructive', onPress: () => removeEntry(entry.id) },
-    ]);
-  };
-
-  return (
-    <View style={{ flex: 1 }}>
-      <View style={[styles.todayCard, { backgroundColor: c.card, borderColor: c.border }]}>
-        <Text style={[styles.todayLabel, { color: c.textSecondary }]}>Сегодня</Text>
-        <Text style={[styles.todayCount, { color: c.primary }]}>{todayRuns.length}</Text>
-        <Text style={[styles.todayUnit, { color: c.textSecondary }]}>тренировок</Text>
-      </View>
-
-      <View style={styles.quickRow}>
-        {RUN_OPTIONS.map((opt) => (
-          <TouchableOpacity
-            key={opt.value}
-            style={[styles.runBtn, { backgroundColor: c.primary }]}
-            onPress={() => addEntry('run', 1, opt.value)}
-          >
-            <Text style={styles.runBtnText}>{opt.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {todayRuns.length > 0 && (
-        <Text style={[styles.sectionTitle, { color: c.textSecondary }]}>Сегодня</Text>
-      )}
-      <FlatList
-        data={todayRuns}
-        keyExtractor={(e) => e.id}
-        renderItem={({ item, index }) => (
-          <TouchableOpacity
-            onLongPress={() => handleRemove(item)}
-            style={[styles.entryRow, { backgroundColor: index % 2 === 1 ? (theme === 'dark' ? '#252525' : '#F0F0F0') : 'transparent' }]}
-          >
-            <Text style={[styles.entryTime, { color: c.textSecondary }]}>{item.time}</Text>
-            <Text style={[styles.entryCount, { color: c.text }]}>
-              {RUN_OPTIONS.find((o) => o.value === item.label)?.label || item.label}
-            </Text>
-          </TouchableOpacity>
-        )}
-        contentContainerStyle={{ paddingBottom: 16 }}
-        ListFooterComponent={
-          groupedByDate.length > 1 ? (
-            <View style={{ marginTop: 16 }}>
-              <Text style={[styles.sectionTitle, { color: c.textSecondary }]}>История</Text>
-              {groupedByDate.filter(([date]) => date !== today).slice(0, 14).map(([date, dayEntries]) => (
-                <View key={date} style={[styles.historyRow, { borderColor: c.border }]}>
-                  <Text style={[styles.historyDate, { color: c.text }]}>{date} {weekdayOf(date)}</Text>
-                  <Text style={[styles.historyTotal, { color: c.primary }]}>
-                    {dayEntries.map((e) => RUN_OPTIONS.find((o) => o.value === e.label)?.label || e.label).join(', ')}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ) : null
-        }
-      />
     </View>
   );
 }
@@ -382,21 +308,23 @@ function WeightTab() {
   );
 }
 
+// Labeled run entries (legacy quick-preset UI); used when editing old records.
 const RUN_OPTIONS = [
   { label: '⚽ Футбол', value: 'football' },
   { label: '5 км', value: '5km' },
   { label: '10 км', value: '10km' },
   { label: '20 км', value: '20km' },
 ];
+const RUN_LABELS = [...RUN_OPTIONS, { label: '🚶 1000', value: 'walk1k' }, { label: '🚶 5000', value: 'walk5k' }];
 
-const TYPE_LABELS: Record<string, string> = { pullups: 'подтяг.', abs: 'пресс', triceps: 'трицепс', run: 'бег', bike: 'вело', weight: 'вес', water: 'вода' };
+const TYPE_LABELS: Record<string, string> = { pullups: 'подтяг.', abs: 'пресс', triceps: 'трицепс', run: 'бег', walk: '🚶 шагов', bike: 'вело', weight: 'вес', water: 'вода' };
 
 // Calorie calc moved to ../utils/calories. Thin aliases for callsite stability.
 const calcCalories = utilCalcCalories;
 const calcCaloriesForEntries = utilCalcCaloriesForEntries;
 
 function formatEntryLabel(e: SportEntry): string {
-  if (e.type === 'run') return RUN_OPTIONS.find((o) => o.value === e.label)?.label || e.label || 'бег';
+  if (e.type === 'run') return RUN_LABELS.find((o) => o.value === e.label)?.label || e.label || 'бег';
   if (e.type === 'bike') return `🚴 ${e.count} км`;
   if (e.type === 'weight') return `${e.count} кг`;
   return `${e.count} ${TYPE_LABELS[e.type] || ''}`;

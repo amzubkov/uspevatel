@@ -191,37 +191,30 @@ export function NutritionScreen() {
     || (goalFat > 0 && remaining.fat >= goalFat * 0.6)
     || (goalCarbs > 0 && remaining.carbs >= goalCarbs * 0.6);
 
+  // Computed ONLY on button press over the full catalog (13k+ rows): the beam
+  // search blocks the JS thread for a while, so it must never run
+  // automatically on mount or after every diary change.
+  const [suggestionsReady, setSuggestionsReady] = useState(false);
   useEffect(() => {
-    let active = true;
-    if (dayEntries.length === 0 || catalogFoods.length === 0 || macroGoalsClosed || largeRemainder) {
-      setSuggestions([]);
-      setSuggestionsLoading(false);
-      return () => { active = false; };
-    }
+    setSuggestions([]);
+    setSuggestionsReady(false);
+    setSuggestionsLoading(false);
+  }, [date, totals.kcal, totals.protein, totals.fat, totals.carbs]);
 
+  const computeSuggestions = () => {
+    if (suggestionsLoading) return;
     setSuggestionsLoading(true);
-    // The beam search below blocks the JS thread for hundreds of ms on a phone.
-    // Debounce past the mount/tap window and wait for an idle slot so touches
-    // (FAB, 📷) are handled first.
     const idle = (cb: () => void) =>
       typeof (global as any).requestIdleCallback === 'function'
         ? (global as any).requestIdleCallback(cb)
         : setTimeout(cb, 0);
-    const timer = setTimeout(() => {
-      idle(() => {
-        if (!active) return;
-        const next = suggestFoodsForDay(catalogFoods, nutritionGoals, totals);
-        if (active) {
-          setSuggestions(next);
-          setSuggestionsLoading(false);
-        }
-      });
-    }, 300);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [catalogFoods, dayEntries.length, largeRemainder, macroGoalsClosed, nutritionGoals, totals]);
+    idle(() => {
+      const next = suggestFoodsForDay(catalogFoods, nutritionGoals, totals);
+      setSuggestions(next);
+      setSuggestionsReady(true);
+      setSuggestionsLoading(false);
+    });
+  };
 
   const suggestedTotals = useMemo(
     () => sumNutrition(suggestions.map((suggestion) => ({
@@ -617,9 +610,31 @@ export function NutritionScreen() {
     }
   };
 
+  const copyToToday = async (entry: NutritionEntry) => {
+    const time = currentTime();
+    try {
+      await addEntry({
+        name: entry.name,
+        date: toDateStr(new Date()),
+        time,
+        mealType: inferMeal(time),
+        amountGrams: entry.amountGrams,
+        kcalPer100: entry.kcalPer100,
+        proteinPer100: entry.proteinPer100,
+        fatPer100: entry.fatPer100,
+        carbsPer100: entry.carbsPer100,
+        kcalAuto: entry.kcalAuto,
+        notes: entry.notes,
+      });
+    } catch (error: any) {
+      Alert.alert('Не удалось добавить', String(error?.message || error));
+    }
+  };
+
   const confirmRemove = (entry: NutritionEntry) => {
-    Alert.alert('Удалить запись?', `${entry.name}, ${entry.amountGrams} г`, [
+    Alert.alert(`${entry.name}, ${entry.amountGrams} г`, undefined, [
       { text: 'Отмена', style: 'cancel' },
+      { text: '→ В сегодня', onPress: () => copyToToday(entry) },
       {
         text: 'Удалить',
         style: 'destructive',
@@ -809,6 +824,10 @@ export function NutritionScreen() {
 
               {suggestionsLoading ? (
                 <Text style={[styles.suggestionsEmpty, { color: c.textSecondary }]}>Ищу подходящие порции…</Text>
+              ) : !suggestionsReady ? (
+                <TouchableOpacity style={styles.suggestionsMenuLink} onPress={computeSuggestions}>
+                  <Text style={[styles.suggestionsMenuLinkText, { color: c.primary }]}>🔍 Подобрать продукты</Text>
+                </TouchableOpacity>
               ) : suggestions.length > 0 ? suggestions.map((suggestion) => {
                 const key = `${suggestion.food.name}:${suggestion.amountGrams}`;
                 const adding = addingSuggestion === key;

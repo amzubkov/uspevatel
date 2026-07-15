@@ -31,6 +31,14 @@ function DocsContent() {
   const [editName, setEditName] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [fullImg, setFullImg] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+
+  const visibleDocs = useMemo(() => {
+    const base = documents.filter((d) => !d.notes?.startsWith('insurance:'));
+    const q = search.trim().toLowerCase();
+    if (!q) return base;
+    return base.filter((d) => d.name.toLowerCase().includes(q) || d.notes?.toLowerCase().includes(q));
+  }, [documents, search]);
 
   const imagesFor = useCallback(
     (docId: string) => images.filter((i) => i.documentId === docId).sort((a, b) => a.sortOrder - b.sortOrder),
@@ -171,9 +179,17 @@ function DocsContent() {
           <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 15 }}>+ Документ</Text>
         </TouchableOpacity>
       )}
-      <FlatList data={documents.filter((d) => !d.notes?.startsWith('insurance:'))} keyExtractor={(d) => d.id} renderItem={renderDoc}
+      <TextInput
+        style={[s.input, { color: c.text, borderColor: c.border, marginHorizontal: 12, marginBottom: 8 }]}
+        placeholder="🔍 Поиск документа..."
+        placeholderTextColor={c.textSecondary}
+        value={search}
+        onChangeText={setSearch}
+        autoCorrect={false}
+      />
+      <FlatList data={visibleDocs} keyExtractor={(d) => d.id} renderItem={renderDoc}
         contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
-        ListEmptyComponent={<Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>Добавьте документы</Text>} />
+        ListEmptyComponent={<Text style={{ color: c.textSecondary, textAlign: 'center', marginTop: 40 }}>{search.trim() ? 'Ничего не найдено' : 'Добавьте документы'}</Text>} />
     </View>
   );
 }

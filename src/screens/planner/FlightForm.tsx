@@ -155,11 +155,9 @@ export function FlightForm({ editing, travelerId, onDone, onCancel }: {
         label={kind === 'flight' ? 'Время вылета' : kind === 'event' ? 'Время начала' : 'Время заезда'}
         textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
 
-      {kind !== 'event' && (
-        <DatePickerField value={arriveDate} onChange={setArriveDate}
-          label={kind === 'flight' ? 'Дата прилёта' : 'Дата выезда'}
-          textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
-      )}
+      <DatePickerField value={arriveDate} onChange={setArriveDate}
+        label={kind === 'flight' ? 'Дата прилёта' : kind === 'event' ? 'Дата окончания' : 'Дата выезда'}
+        textColor={c.text} borderColor={c.border} secondaryColor={c.textSecondary} backgroundColor={c.card} />
 
       <TimePickerField value={arriveTime} onChange={setArriveTime}
         label={kind === 'flight' ? 'Время прилёта' : kind === 'event' ? 'Время окончания' : 'Время выезда'}

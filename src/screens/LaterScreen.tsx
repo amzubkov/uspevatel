@@ -22,8 +22,10 @@ export function LaterScreen() {
   const [deadlineFilter, setDeadlineFilter] = useState<'all' | 'today'>('all');
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
+  // Merged Control/Later/Maybe tab: segment picker on top switches the category
+  const [segment, setSegment] = useState<'CONTROL' | 'LATER' | 'MAYBE'>('CONTROL');
 
-  const categoryTasks = useMemo(() => allTasks.filter((t) => t.category === 'LATER' && !t.completed), [allTasks]);
+  const categoryTasks = useMemo(() => allTasks.filter((t) => t.category === segment && !t.completed), [allTasks, segment]);
 
   const monthGoals = useMemo(() => sortByPriorityDeadline(allTasks.filter((t) => t.goalType === 'month' && !t.completed)), [allTasks]);
   const quarterGoals = useMemo(() => sortByPriorityDeadline(allTasks.filter((t) => t.goalType === 'quarter' && !t.completed)), [allTasks]);
@@ -52,21 +54,34 @@ export function LaterScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
+      <View style={styles.segmentRow}>
+        {([['CONTROL', '👁 Control'], ['LATER', '📋 Later'], ['MAYBE', '💭 Maybe']] as const).map(([key, label]) => (
+          <TouchableOpacity
+            key={key}
+            style={[styles.segmentChip, { backgroundColor: segment === key ? c.primary : c.card, borderColor: c.border }]}
+            onPress={() => setSegment(key)}
+          >
+            <Text style={{ color: segment === key ? '#FFF' : c.textSecondary, fontSize: 13, fontWeight: '700' }}>{label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
       <QuickAddBar
-        placeholder="Добавить в LATER..."
-        onAdd={(action) => addTask({ subject: '', action, category: 'LATER', notes: '', priority: 'normal', isRecurring: false })}
+        placeholder={segment === 'CONTROL' ? 'Добавить в CONTROL...' : segment === 'LATER' ? 'Добавить в LATER...' : 'Новая идея...'}
+        onAdd={(action) => addTask({ subject: '', action, category: segment, notes: '', priority: 'normal', isRecurring: false })}
       />
       <SearchBar value={searchQuery} onChangeText={setSearchQuery} />
       {tasks.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={{ fontSize: 48 }}>📋</Text>
-          <Text style={[styles.emptyText, { color: c.textSecondary }]}>Нет отложенных задач</Text>
+          <Text style={{ fontSize: 48 }}>{segment === 'CONTROL' ? '👁' : segment === 'LATER' ? '📋' : '💭'}</Text>
+          <Text style={[styles.emptyText, { color: c.textSecondary }]}>
+            {segment === 'CONTROL' ? 'Нет задач на контроле' : segment === 'LATER' ? 'Нет отложенных задач' : 'Нет идей и мечтаний'}
+          </Text>
         </View>
       ) : (
         <FlatList
           data={tasks}
           keyExtractor={(t) => t.id}
-          ListHeaderComponent={(monthGoals.length > 0 || quarterGoals.length > 0 || yearGoals.length > 0) ? (
+          ListHeaderComponent={segment === 'LATER' && (monthGoals.length > 0 || quarterGoals.length > 0 || yearGoals.length > 0) ? (
             <View style={[styles.goalsSection, { borderColor: c.border }]}>
               {monthGoals.map((g) => (
                 <TouchableOpacity key={g.id} style={styles.goalRow} onPress={() => navigation.navigate('TaskDetail', { taskId: g.id })}>
@@ -109,6 +124,8 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { fontSize: 18, fontWeight: '600', marginTop: 12 },
+  segmentRow: { flexDirection: 'row', gap: 6, paddingHorizontal: 10, paddingTop: 6 },
+  segmentChip: { paddingHorizontal: 14, paddingVertical: 5, borderRadius: 14, borderWidth: 1 },
   goalsSection: { borderBottomWidth: 2, paddingBottom: 2, marginBottom: 2 },
   goalRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 5 },
   goalLabel: { color: '#7C3AED', fontSize: 12, fontWeight: '700', marginRight: 8, width: 80 },

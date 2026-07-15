@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { View, TextInput, TouchableOpacity, Text, StyleSheet } from 'react-native';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
+import { VoiceInputButton } from './VoiceInputButton';
+import { PolishTextButton } from './PolishTextButton';
 
 interface Props {
   onAdd: (action: string) => void;
@@ -31,6 +33,8 @@ export function QuickAddBar({ onAdd, placeholder = 'Быстрое добавл�
         onSubmitEditing={handleAdd}
         returnKeyType="done"
       />
+      <VoiceInputButton size={18} onText={(t) => setText((prev) => (prev.trim() ? `${prev.trim()} ${t}` : t))} />
+      <PolishTextButton size={16} text={text} onText={setText} />
       <TouchableOpacity
         style={[styles.button, { backgroundColor: c.primary, opacity: text.trim() ? 1 : 0.4 }]}
         onPress={handleAdd}

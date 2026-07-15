@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Modal, Alert } from 'react-native';
-import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
+import { ensureModel, isModelReady, startDictation, stopDictation } from '../services/whisperService';
 import { useTaskStore } from '../store/taskStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { colors } from '../utils/theme';
@@ -28,19 +28,6 @@ export function QuickAddModal({ visible, mode, onClose }: Props) {
 
   visibleRef.current = visible;
 
-  useSpeechRecognitionEvent('result', (event) => {
-    const transcript = event.results[0]?.transcript;
-    if (visible && transcript) setText(transcript);
-  });
-  useSpeechRecognitionEvent('end', () => {
-    if (visible) setListening(false);
-  });
-  useSpeechRecognitionEvent('error', (event) => {
-    if (!visible || event.error === 'aborted') return;
-    setListening(false);
-    setError(event.message || event.error || 'Ошибка распознавания');
-  });
-
   useEffect(() => {
     if (!visible) return;
     setText('');
@@ -55,39 +42,42 @@ export function QuickAddModal({ visible, mode, onClose }: Props) {
 
     return () => {
       recognitionRequestRef.current += 1;
-      try { ExpoSpeechRecognitionModule.abort(); } catch {}
       startedRef.current = false;
       setListening(false);
     };
   }, [visible, mode]);
 
+  // Offline whisper dictation: start recording; stop transcribes and appends.
   const startListening = async () => {
     const request = ++recognitionRequestRef.current;
     try {
       setError(null);
-      const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!(await isModelReady())) {
+        setError('Скачиваю модель распознавания…');
+        await ensureModel();
+        setError(null);
+      }
       if (request !== recognitionRequestRef.current || !visibleRef.current) return;
-      if (!permission.granted) throw new Error('Нет разрешения на микрофон и распознавание речи');
+      startDictation();
       setListening(true);
-      ExpoSpeechRecognitionModule.start({
-        lang: 'ru-RU',
-        interimResults: true,
-        continuous: false,
-        // Android may support on-device recognition while the ru-RU model is
-        // not installed. Network-backed recognition is the safe default.
-        requiresOnDeviceRecognition: false,
-      });
     } catch (e: any) {
       if (request !== recognitionRequestRef.current || !visibleRef.current) return;
-      setListening(false);
       setError(String(e?.message || e));
+      setListening(false);
     }
   };
 
   const stopListening = async () => {
     recognitionRequestRef.current += 1;
-    try { ExpoSpeechRecognitionModule.stop(); } catch {}
     setListening(false);
+    try {
+      const transcript = await stopDictation();
+      if (visibleRef.current && transcript) {
+        setText((prev) => (prev.trim() ? `${prev.trim()} ${transcript}` : transcript));
+      }
+    } catch (e: any) {
+      if (visibleRef.current) setError(String(e?.message || e));
+    }
   };
 
   const handleConfirm = async () => {

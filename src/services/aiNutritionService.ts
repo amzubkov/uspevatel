@@ -52,6 +52,29 @@ function normalizeFood(parsed: ParsedFood, fallbackName = ''): ParsedFood {
   return food;
 }
 
+const MACRO_KEYS = ['kcalPer100', 'proteinPer100', 'fatPer100', 'carbsPer100'] as const;
+
+function median(values: number[]): number {
+  const sorted = values.filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
+  if (sorted.length === 0) return 0;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+async function lookupWithModel(model: string, name: string): Promise<ParsedFood> {
+  const parsed: ParsedFood = await ollamaChatJson({
+    model,
+    user: `${LOOKUP_PROMPT}\n\nБлюдо: ${name}`,
+    format: FOOD_SCHEMA,
+    timeoutMs: 45_000,
+  });
+  return normalizeFood(parsed, name);
+}
+
+// Vision model reads the photo (name + portion + macros); two text models
+// independently estimate macros for the recognized dish; each per-100g value
+// is the median of the available estimates so one hallucinating model can't
+// skew the result.
 export async function parseFoodPhoto(base64Image: string): Promise<ParsedFood> {
   const parsed: ParsedFood = await ollamaChatJson({
     model: VISION_MODEL,
@@ -59,8 +82,25 @@ export async function parseFoodPhoto(base64Image: string): Promise<ParsedFood> {
     images: [base64Image],
     format: FOOD_SCHEMA,
   });
-  const food = normalizeFood(parsed);
-  if (!food.name) throw new Error('На фото не удалось распознать еду');
+  const visionFood = normalizeFood(parsed);
+  if (!visionFood.name) throw new Error('На фото не удалось распознать еду');
+
+  const textEstimates = await Promise.allSettled([
+    lookupWithModel('glm-5.2', visionFood.name),
+    lookupWithModel('qwen3.5', visionFood.name),
+  ]);
+  const estimates: ParsedFood[] = [
+    visionFood,
+    ...textEstimates
+      .filter((r): r is PromiseFulfilledResult<ParsedFood> => r.status === 'fulfilled')
+      .map((r) => r.value),
+  ];
+
+  const food: ParsedFood = { ...visionFood };
+  for (const key of MACRO_KEYS) {
+    const value = median(estimates.map((estimate) => estimate[key]));
+    if (value > 0) food[key] = Math.round(value * 10) / 10;
+  }
   return food;
 }
 

@@ -2,6 +2,11 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    "paths": {
+      // whisper.rn's exports map has no "." entry; point TS at its sources
+      // (Metro resolves the same files via the react-native condition).
+      "whisper.rn/index": ["./node_modules/whisper.rn/src/index"],
+    },
   },
   "include": ["App.tsx", "index.ts", "src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["desktop", "dist", "node_modules"],

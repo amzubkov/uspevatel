@@ -7,6 +7,7 @@ import {
   DarkTheme,
 } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { VoiceCommandButton } from "../components/VoiceCommandButton";
 import { createStackNavigator } from "@react-navigation/stack";
 import { useSettingsStore } from "../store/settingsStore";
 import { colors } from "../utils/theme";
@@ -15,8 +16,6 @@ import { colors } from "../utils/theme";
 import { InboxScreen } from "../screens/InboxScreen";
 import { DayScreen } from "../screens/DayScreen";
 import { LaterScreen } from "../screens/LaterScreen";
-import { ControlScreen } from "../screens/ControlScreen";
-import { MaybeScreen } from "../screens/MaybeScreen";
 import { AddTaskScreen } from "../screens/AddTaskScreen";
 import { TaskDetailScreen } from "../screens/TaskDetailScreen";
 import { ProjectsScreen } from "../screens/ProjectsScreen";
@@ -46,6 +45,11 @@ const Stack = createStackNavigator();
 
 function TabEmoji({ emoji, color }: { emoji: string; color: string }) {
   return <Text style={{ fontSize: 18 }}>{emoji}</Text>;
+}
+
+
+function VoiceTabPlaceholder() {
+  return null;
 }
 
 const HeaderButtons = React.memo(function HeaderButtons() {
@@ -149,29 +153,41 @@ function CategoryTabs() {
         }}
       />
       <Tab.Screen
+        name="VOICE"
+        component={VoiceTabPlaceholder}
+        options={{
+          title: "",
+          tabBarButton: () => (
+            <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+              <View
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 24,
+                  backgroundColor: c.primary,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginTop: -14,
+                  elevation: 6,
+                  shadowColor: "#000",
+                  shadowOpacity: 0.3,
+                  shadowRadius: 4,
+                  shadowOffset: { width: 0, height: 2 },
+                }}
+              >
+                <VoiceCommandButton size={24} />
+              </View>
+            </View>
+          ),
+        }}
+        listeners={{ tabPress: (e) => e.preventDefault() }}
+      />
+      <Tab.Screen
         name="LATER"
         component={LaterScreen}
         options={{
-          title: "Later",
-          tabBarIcon: ({ color }) => <TabEmoji emoji="📋" color={color} />,
-          headerRight: renderHeaderRight,
-        }}
-      />
-      <Tab.Screen
-        name="CTRL"
-        component={ControlScreen}
-        options={{
           title: "Control",
           tabBarIcon: ({ color }) => <TabEmoji emoji="👁" color={color} />,
-          headerRight: renderHeaderRight,
-        }}
-      />
-      <Tab.Screen
-        name="MAYBE"
-        component={MaybeScreen}
-        options={{
-          title: "MAYBE",
-          tabBarIcon: ({ color }) => <TabEmoji emoji="💭" color={color} />,
           headerRight: renderHeaderRight,
         }}
       />
