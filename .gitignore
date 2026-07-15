@@ -52,3 +52,4 @@ yarn-error.*
 !/android/app/src/main/AndroidManifest.xml
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
+data/off-all-foods.zip
